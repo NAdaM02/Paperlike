@@ -37,9 +37,11 @@ A build leaves a few gigabytes of temporary files. To remove them:
 
 It lists what it will delete and asks before doing it. It does not delete your notes, and it does not delete the shortcut. The shortcut will not open until you run `.\build.ps1` again.
 
+## Recap of the commands
+
 | Command | What it does |
 | --- | --- |
-| `.\build.ps1` | Builds Paperlike and puts **Paperlike.lnk** in this folder. |
+| `.\build.ps1` | Builds Paperlike executables and puts **Paperlike.lnk** in the root folder. |
 | `.\clean.ps1` | Shows the build files and, if you answer `y`, deletes them. |
 | `.\clean.ps1 -WhatIf` | Only lists those files. Nothing is deleted. |
 | `.\clean.ps1 -Force` | Deletes them without asking. |
