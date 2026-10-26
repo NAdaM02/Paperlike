@@ -1,0 +1,31 @@
+{
+  "id": "tum-aerospace",
+  "name": "TUM Aerospace (Bachelor, semester 1)",
+  "root_default": "TUM",
+  "thumbnail": "thumbnail.png",
+  "notebooks": [
+    "Lectures/Advanced Math 1",
+    "Lectures/CAD & Technical Drawing",
+    "Lectures/Computational Foundations 1",
+    "Lectures/Electrical Engineering I",
+    "Lectures/Intro to Aerospace",
+    "Lectures/Materials Science",
+    "Lectures/Mechanics 1"
+  ],
+  "folders": [
+    "Lectures/Advanced Math 1/Material",
+    "Exercises/Advanced Math 1",
+    "Lectures/CAD & Technical Drawing/Material",
+    "Exercises/CAD & Technical Drawing",
+    "Lectures/Computational Foundations 1/Material",
+    "Exercises/Computational Foundations 1",
+    "Lectures/Electrical Engineering I/Material",
+    "Exercises/Electrical Engineering I",
+    "Lectures/Intro to Aerospace/Material",
+    "Exercises/Intro to Aerospace",
+    "Lectures/Materials Science/Material",
+    "Exercises/Materials Science",
+    "Lectures/Mechanics 1/Material",
+    "Exercises/Mechanics 1"
+  ]
+}
