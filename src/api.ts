@@ -130,7 +130,7 @@ export type TextObject = {
   x: number;
   y: number;
   z: number;
-  /** Position lock: inert to move, marquee and context menu unless Shift is held. */
+  /** Position lock: inert to move and marquee unless Shift is held. The context menu can still delete it. */
   locked?: boolean;
   width: number;
   /** Optional floor for box height; content can still grow taller. */
@@ -149,7 +149,7 @@ export type ImageObject = {
   x: number;
   y: number;
   z: number;
-  /** Position lock: inert to move, marquee and context menu unless Shift is held. */
+  /** Position lock: inert to move and marquee unless Shift is held. The context menu can still delete it. */
   locked?: boolean;
   media: string;
   width: number;
@@ -204,7 +204,7 @@ export type DrawingObject = {
   x: number;
   y: number;
   z: number;
-  /** Position lock: inert to move, marquee and context menu unless Shift is held. */
+  /** Position lock: inert to move and marquee unless Shift is held. The context menu can still delete it. */
   locked?: boolean;
   item: DrawingItem;
 };
@@ -216,7 +216,7 @@ export type GroupObject = {
   x: number;
   y: number;
   z: number;
-  /** Position lock: inert to move, marquee and context menu unless Shift is held. */
+  /** Position lock: inert to move and marquee unless Shift is held. The context menu can still delete it. */
   locked?: boolean;
   width: number;
   /** Floor for the frame height. Content can grow the frame past this. */
@@ -244,7 +244,7 @@ export type PdfObject = {
   x: number;
   y: number;
   z: number;
-  /** Position lock: inert to move, marquee and context menu unless Shift is held. */
+  /** Position lock: inert to move and marquee unless Shift is held. The context menu can still delete it. */
   locked?: boolean;
   media: string;
   pages: number[];

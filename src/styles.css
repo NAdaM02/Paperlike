@@ -1946,6 +1946,16 @@ math-field::part(placeholder) { color: var(--ink-3); }
   z-index: 100000;
 }
 .sel-move:active { cursor: grabbing; }
+/* Lasso keeps objects from swallowing the loop, but the move bar stays a handle. */
+.canvas-world.drawing.lasso > .sel-move,
+.canvas-world.drawing.lasso .draw-obj.selected .draw-grip,
+.canvas-world.drawing.lasso .text-window.selected .drag-bar,
+.canvas-world.drawing.lasso .text-window:hover .drag-bar,
+.canvas-world.drawing.lasso .text-window.moving .drag-bar,
+.canvas-world.drawing.lasso .fold-grip,
+.canvas-world.drawing.lasso .shape-drag-bar {
+  pointer-events: auto;
+}
 .draw-resize { z-index: 100000; }
 .img-obj img { display: block; width: 100%; height: 100%; pointer-events: none; border-radius: 3px; }
 .handle {

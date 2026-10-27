@@ -1767,13 +1767,14 @@ export function NotebookView({
     restyleSelectedDrawings({ color: c });
   };
 
-  /** The colour next to this button, painted onto the stroke just drawn. */
+  /** The colour and width next to this button, painted onto the stroke just drawn. */
   const applyColorToLast = () => {
     const id = liveDrawRef.current;
     const n = noteRef.current;
     if (!id || !n) return;
     if (!n.doc.canvas.objects.some((o) => o.type === "drawing" && o.id === id)) return;
     const color = tool === "highlighter" ? drawPrefs.hlColor : (drawPrefs.color ?? themeInk(settings.theme));
+    const width = tool === "highlighter" ? drawPrefs.hlWidth : drawPrefs.width;
     snapshot("restyle-drawing", 400);
     updateNote((cur) => ({
       ...cur,
@@ -1782,7 +1783,7 @@ export function NotebookView({
         canvas: {
           ...cur.doc.canvas,
           objects: cur.doc.canvas.objects.map((o) =>
-            o.type === "drawing" && o.id === id ? { ...o, item: { ...o.item, color } } : o,
+            o.type === "drawing" && o.id === id ? { ...o, item: { ...o.item, color, width } } : o,
           ),
         },
       },
@@ -1801,6 +1802,7 @@ export function NotebookView({
 
   const pickDrawWidth = (w: number) => {
     updateDrawPrefs({ width: w });
+    if (!canvasSelRef.current.length) return;
     restyleSelectedDrawings({ width: w });
   };
 
@@ -3085,7 +3087,7 @@ export function NotebookView({
                 [
                   ["pen", <IcPen key="p" size={15} />, "Pen", "P · Shift = straight · side button lassos · eraser end erases · hold right-click to erase"],
                   ["highlighter", <IcHighlighter key="h" size={15} />, "Marker", "H · Shift = straight · side button lassos · eraser end erases · hold right-click to erase"],
-                  ["smart", <IcSpark key="g" size={15} />, "Smart", "G · lightly straightens lines and tidy shapes. Writing stays writing."],
+                  ["smart", <IcSpark key="g" size={15} />, "Smart", "G · lightly straightens lines and tidy shapes. Writing stays writing. Hold right-click to erase."],
                   ["eraser", <IcEraser key="e" size={15} />, "Eraser", "E · set mode and size here"],
                 ] as [Tool, React.ReactNode, string, string][]
               ).map(([t, icon, label, hint]) => (
@@ -3103,10 +3105,10 @@ export function NotebookView({
             <div className="seg">
               {(
                 [
-                  ["line", <IcLine key="l" size={15} />, "Line", "Line (L · Shift = 45° steps)"],
-                  ["arrow", <IcArrow key="a" size={15} />, "Arrow", "Arrow (A · Shift = 45° steps)"],
-                  ["rect", <IcRect key="r" size={15} />, "Rect", "Rectangle (R · Shift = square)"],
-                  ["ellipse", <IcEllipse key="o" size={15} />, "Ellipse", "Ellipse (O · Shift = circle)"],
+                  ["line", <IcLine key="l" size={15} />, "Line", "Line (L · Shift = 45° steps · hold right-click to erase)"],
+                  ["arrow", <IcArrow key="a" size={15} />, "Arrow", "Arrow (A · Shift = 45° steps · hold right-click to erase)"],
+                  ["rect", <IcRect key="r" size={15} />, "Rect", "Rectangle (R · Shift = square · hold right-click to erase)"],
+                  ["ellipse", <IcEllipse key="o" size={15} />, "Ellipse", "Ellipse (O · Shift = circle · hold right-click to erase)"],
                 ] as [Tool, React.ReactNode, string, string][]
               ).map(([t, icon, label, hint]) => (
                 <button
@@ -3202,7 +3204,7 @@ export function NotebookView({
                       onClick={() => pickHlColor(c)}
                     />
                   ))}
-                  <button type="button" className="btn apply-last" title="Apply this colour to the last stroke" onClick={applyColorToLast}>
+                  <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
                     Last
                   </button>
                 </div>
@@ -3260,7 +3262,7 @@ export function NotebookView({
                       />
                     );
                   })}
-                  <button type="button" className="btn apply-last" title="Apply this colour to the last stroke" onClick={applyColorToLast}>
+                  <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
                     Last
                   </button>
                 </div>
@@ -4141,7 +4143,7 @@ export function NotebookView({
                       />
                     );
                   })}
-                  <button type="button" className="btn apply-last" title="Apply this colour to the last stroke" onClick={applyColorToLast}>
+                  <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
                     Last
                   </button>
                 </div>

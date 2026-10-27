@@ -1143,14 +1143,24 @@ export const WEEK_SCRIPT = `(async () => {
     if (m && months[m[1]] && months[m[4]]) return containsToday({ d: +m[2], m: months[m[1]], y: yearOf(m[3]) }, { d: +m[5], m: months[m[4]], y: yearOf(m[6] || m[3]) });
     return false;
   };
-  const sections = [];
-  const seen = new Set();
-  for (const n of document.querySelectorAll("li.section, div.section, [data-sectionid]")) {
-    if (seen.has(n)) continue;
-    if (n.parentElement && n.parentElement.closest("li.section, [data-sectionid]")) continue;
-    seen.add(n);
-    sections.push(n);
-  }
+  if (window.__plWeekObs) { try { window.__plWeekObs.disconnect(); } catch (e) {} window.__plWeekObs = null; }
+  if (window.__plWeekTimer) { clearTimeout(window.__plWeekTimer); window.__plWeekTimer = 0; }
+  window.__plWeekGen = (window.__plWeekGen || 0) + 1;
+  const gen = window.__plWeekGen;
+  const stale = () => window.__plWeekGen !== gen;
+  const onCourse = () => /course\\/view\\.php/i.test(location.pathname);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const listSections = () => {
+    const sections = [];
+    const seen = new Set();
+    for (const n of document.querySelectorAll("li.section, div.section, [data-sectionid]")) {
+      if (seen.has(n)) continue;
+      if (n.parentElement && n.parentElement.closest("li.section, [data-sectionid]")) continue;
+      seen.add(n);
+      sections.push(n);
+    }
+    return sections;
+  };
   const titleOf = (section) => {
     const name = section.querySelector(".sectionname") || section.querySelector("h3, h4");
     return ((name && name.textContent) || section.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim();
@@ -1161,38 +1171,240 @@ export const WEEK_SCRIPT = `(async () => {
     const text = (header.innerText || header.textContent || "").toLowerCase();
     return text.indexOf("aktuelle woche") >= 0 || text.indexOf("current week") >= 0;
   };
-  let picked = null;
-  let confidence = "low";
-  let currentHit = false;
-  let phaseN = -1;
-  for (const section of sections) {
-    const title = titleOf(section);
-    if (!title || /^general$/i.test(title) || title.toLowerCase() === "allgemein") continue;
-    if (marked(section)) {
-      if (!currentHit) { picked = section; confidence = "high"; currentHit = true; }
-    } else if (!currentHit && confidence !== "high" && rangeOf(title)) { picked = section; confidence = "high"; }
-    const pm = title.match(/\\b(phase|woche|week)\\s*(\\d{1,2})\\b/i);
-    if (pm && confidence !== "high") {
-      const n = Number(pm[2]);
-      if (n >= phaseN) { phaseN = n; picked = section; }
+  const pickFrom = (sections) => {
+    let picked = null;
+    let confidence = "low";
+    let currentHit = false;
+    let phaseN = -1;
+    for (const section of sections) {
+      const title = titleOf(section);
+      if (!title || /^general$/i.test(title) || title.toLowerCase() === "allgemein") continue;
+      if (marked(section)) {
+        if (!currentHit) { picked = section; confidence = "high"; currentHit = true; }
+      } else if (!currentHit && confidence !== "high" && rangeOf(title)) { picked = section; confidence = "high"; }
+      const pm = title.match(/\\b(phase|woche|week)\\s*(\\d{1,2})\\b/i);
+      if (pm && confidence !== "high") {
+        const n = Number(pm[2]);
+        if (n >= phaseN) { phaseN = n; picked = section; }
+      }
     }
-  }
-  if (!picked) { await post({ type: "week", title: "", confidence: "low" }); return; }
-  const title = titleOf(picked).slice(0, 240);
-  const buttons = picked.querySelectorAll("[aria-expanded='false']");
-  for (const el of buttons) {
-    if (el.tagName === "A") {
-      const href = el.getAttribute("href") || "";
-      if (href && href !== "#" && href.indexOf("javascript:") !== 0) continue;
+    return { picked: picked, confidence: confidence };
+  };
+  const sectionOf = (el) => el && el.closest("li.section, div.section, [data-for='section']");
+  const inActivity = (el) => !!el.closest("li.activity, .activity-item, .activityinstance, [data-for='cmitem']");
+  const navigates = (el) => {
+    if (!el || String(el.tagName || "").toUpperCase() !== "A") return false;
+    const href = (el.getAttribute("href") || "").trim();
+    if (!href || href === "#" || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return false;
+    return true;
+  };
+  const isAllToggle = (el) => {
+    if (!el) return true;
+    if ((el.id || "") === "collapsesections") return true;
+    const mode = el.getAttribute("data-toggle") || el.getAttribute("data-bs-toggle") || "";
+    if (mode === "toggleall") return true;
+    const controls = el.getAttribute("aria-controls") || "";
+    return controls.indexOf(" ") >= 0;
+  };
+  const contentOf = (section) => {
+    const num = section.getAttribute("data-number") || section.getAttribute("data-sectionnum") || "";
+    if (num) {
+      const byNum = document.getElementById("coursecontentcollapse" + num);
+      if (byNum && section.contains(byNum)) return byNum;
     }
-    el.click();
-    break;
+    const id = section.id || "";
+    if (id.indexOf("section-") === 0) {
+      const byId = document.getElementById("coursecontentcollapse" + id.slice(8));
+      if (byId && section.contains(byId)) return byId;
+    }
+    const prefer = section.querySelectorAll(".course-section-content, [data-region='section-content'], .course-content-item-content, [id^='coursecontentcollapse']");
+    for (const el of prefer) {
+      if (inActivity(el)) continue;
+      const owner = sectionOf(el);
+      if (owner && owner !== section) continue;
+      return el;
+    }
+    const contents = section.querySelectorAll(".content");
+    for (const el of contents) {
+      if (inActivity(el)) continue;
+      const owner = sectionOf(el);
+      if (owner && owner !== section) continue;
+      return el;
+    }
+    return null;
+  };
+  const inSectionChrome = (section, el) => {
+    if (!el || !section.contains(el) || inActivity(el)) return false;
+    const owner = sectionOf(el);
+    if (owner && owner !== section) return false;
+    if (isAllToggle(el) || navigates(el)) return false;
+    const controls = el.getAttribute("aria-controls") || "";
+    if (controls && controls.indexOf(" ") < 0) {
+      const target = document.getElementById(controls);
+      if (target && !section.contains(target)) return false;
+    }
+    const href = (el.getAttribute("href") || "").trim();
+    if (href.length > 1 && href.charAt(0) === "#") {
+      const target = document.getElementById(href.slice(1));
+      if (target && !section.contains(target)) return false;
+    }
+    return true;
+  };
+  const toggleOf = (section) => {
+    const selectors = [
+      "[data-for='sectiontoggler']",
+      "button.section-collapsemenu",
+      "a.section-collapsemenu",
+      "[data-action='togglecoursecontentsection']",
+      "a[data-bs-toggle='collapse'], button[data-bs-toggle='collapse'], a[data-toggle='collapse'], button[data-toggle='collapse']"
+    ];
+    for (let i = 0; i < selectors.length; i++) {
+      const nodes = section.querySelectorAll(selectors[i]);
+      for (const el of nodes) {
+        if (inSectionChrome(section, el)) return el;
+      }
+    }
+    const header = section.querySelector(".course-section-header") || section.querySelector(".sectionname");
+    if (!header) return null;
+    const buttons = header.querySelectorAll("button, a[role='button']");
+    for (const el of buttons) {
+      if (!inSectionChrome(section, el)) continue;
+      if (el.closest(".action-menu, .dropdown, [data-for='section-control-menu'], .section-actions")) continue;
+      if (el.getAttribute("aria-expanded") != null || el.classList.contains("icons-collapse-expand") || el.classList.contains("collapsed")) return el;
+    }
+    return null;
+  };
+  const contentHidden = (el) => {
+    if (!el) return false;
+    if (el.classList.contains("collapsing")) return false;
+    if (el.classList.contains("collapse")) return !el.classList.contains("show");
+    if (el.classList.contains("collapsed") || el.classList.contains("hidden") || el.classList.contains("d-none")) return true;
+    if (el.hasAttribute("hidden")) return true;
+    if (el.getAttribute("aria-hidden") === "true") return true;
+    try {
+      const cs = window.getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden") return true;
+    } catch (e) {}
+    return false;
+  };
+  const isCollapsed = (section) => {
+    const content = contentOf(section);
+    if (content) return contentHidden(content);
+    const toggle = toggleOf(section);
+    if (toggle) {
+      if (toggle.getAttribute("aria-expanded") === "false") return true;
+      if (toggle.classList.contains("collapsed") && toggle.getAttribute("aria-expanded") !== "true") return true;
+      return false;
+    }
+    if (section.classList.contains("collapsed")) return true;
+    return null;
+  };
+  const clickToggle = (section) => {
+    const el = toggleOf(section);
+    if (!el || navigates(el)) return false;
+    try { el.click(); } catch (e) { return false; }
+    return true;
+  };
+  const reveal = (section) => {
+    section.classList.remove("collapsed");
+    const content = contentOf(section);
+    if (content) {
+      content.classList.remove("collapsed", "hidden", "d-none");
+      if (content.classList.contains("collapse")) content.classList.add("show");
+      content.removeAttribute("hidden");
+      if (content.getAttribute("aria-hidden") === "true") content.setAttribute("aria-hidden", "false");
+      if (content.style && content.style.display === "none") content.style.display = "";
+    }
+    const toggle = toggleOf(section);
+    if (toggle) {
+      toggle.classList.remove("collapsed");
+      if (toggle.getAttribute("aria-expanded") === "false") toggle.setAttribute("aria-expanded", "true");
+    }
+  };
+  const openSection = async (section) => {
+    if (!section || stale()) return;
+    let waited = 0;
+    while (isCollapsed(section) === null && waited < 1500 && !stale()) {
+      await sleep(200);
+      waited += 200;
+    }
+    if (stale() || isCollapsed(section) !== true) return;
+    waited = 0;
+    while (!toggleOf(section) && waited < 1200 && !stale() && isCollapsed(section) === true) {
+      await sleep(200);
+      waited += 200;
+    }
+    if (stale() || isCollapsed(section) !== true) return;
+    if (clickToggle(section)) {
+      await sleep(400);
+      if (stale() || isCollapsed(section) !== true) return;
+      clickToggle(section);
+      await sleep(400);
+      if (stale() || isCollapsed(section) !== true) return;
+    }
+    reveal(section);
+  };
+  let finishing = false;
+  const stopWait = () => {
+    if (window.__plWeekObs) { try { window.__plWeekObs.disconnect(); } catch (e) {} window.__plWeekObs = null; }
+    if (window.__plWeekTimer) { clearTimeout(window.__plWeekTimer); window.__plWeekTimer = 0; }
+  };
+  const finish = async (picked, confidence) => {
+    if (finishing || stale()) return;
+    finishing = true;
+    stopWait();
+    if (!picked) {
+      if (!stale()) await post({ type: "week", title: "", confidence: "low" });
+      return;
+    }
+    await openSection(picked);
+    if (stale()) return;
+    const title = titleOf(picked).slice(0, 240);
+    try { picked.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (e) {}
+    picked.style.outline = "2px solid #6d4fc4";
+    picked.style.outlineOffset = "2px";
+    setTimeout(() => { picked.style.outline = ""; picked.style.outlineOffset = ""; }, 1600);
+    if (!stale()) await post({ type: "week", title: title, confidence: confidence });
+  };
+  const decide = () => {
+    const sections = listSections();
+    if (!sections.length) return null;
+    const found = pickFrom(sections);
+    if (found.picked && found.confidence === "high") return found;
+    if (document.readyState !== "complete") return null;
+    return found;
+  };
+  const deadline = Date.now() + 4500;
+  const kick = () => {
+    if (finishing || stale()) return;
+    if (!onCourse()) { finishing = true; stopWait(); return; }
+    const found = decide();
+    if (found) { finish(found.picked, found.confidence); return; }
+    if (Date.now() >= deadline) {
+      const late = pickFrom(listSections());
+      finish(late.picked, late.confidence);
+    }
+  };
+  kick();
+  if (!finishing && !stale()) {
+    const root = document.documentElement || document.body;
+    if (root && typeof MutationObserver === "function") {
+      let queued = false;
+      const obs = new MutationObserver(() => {
+        if (queued || finishing || stale()) return;
+        queued = true;
+        setTimeout(() => { queued = false; if (!finishing && !stale()) kick(); }, 40);
+      });
+      window.__plWeekObs = obs;
+      obs.observe(root, { childList: true, subtree: true });
+    }
+    window.__plWeekTimer = setTimeout(function arm() {
+      if (finishing || stale()) return;
+      kick();
+      if (finishing || stale()) return;
+      window.__plWeekTimer = setTimeout(arm, 200);
+    }, 200);
   }
-  try { picked.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (e) {}
-  picked.style.outline = "2px solid #6d4fc4";
-  picked.style.outlineOffset = "2px";
-  setTimeout(() => { picked.style.outline = ""; picked.style.outlineOffset = ""; }, 1600);
-  await post({ type: "week", title: title, confidence: confidence });
 })();`;
 
 /** Fetch one Moodle file with the signed-in session and hand it to the note. */

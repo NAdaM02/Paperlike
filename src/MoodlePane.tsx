@@ -542,6 +542,7 @@ export function MoodlePane({
     setStatus(isMoodleHome(parsed) ? "Dashboard" : "");
     evalScript(FILE_ACTIONS_SCRIPT, true);
     paintRef.current();
+    if (path.includes("course/view.php") && customRef.current) evalScript(WEEK_SCRIPT);
   };
   onPageRef.current = onPage;
 

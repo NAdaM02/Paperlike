@@ -426,7 +426,10 @@ export function contentBBox(
 }
 
 /** Objects copied inside the app. Survives switching notes. */
+/** Marks a clipboard write that belongs to the in-app object clipboard, so a stale image does not win the next paste. */
+const OBJECT_CLIP_MARKER = "\u200bpaperlike-objects\u200b";
 let objectClip: { objects: CanvasObject[]; media: Record<string, string> } | null = null;
+let pasteBusy = false;
 
 export function CanvasEditor({
   note,
@@ -601,6 +604,13 @@ export function CanvasEditor({
   const pendingTextRef = useRef<string | null>(null);
   /** After a deselect-click on empty canvas, typing creates a text box here. */
   const pendingTypeAt = useRef<{ x: number; y: number } | null>(null);
+  /** This press closed a menu, so the click must not also drop a text box. */
+  const menuDismissRef = useRef(false);
+  /** A text box just opened here; the second half of a double-click must not open another. */
+  const spawnedTextRef = useRef({ t: 0, x: 0, y: 0 });
+  /** Bumps when a paste event is handled, so a keydown fallback does not paste twice. */
+  const pasteGenRef = useRef(0);
+  const handlePasteRef = useRef<(e: ClipboardEvent) => void>(() => {});
   const createTextAtRef = useRef<(x: number, y: number, initial?: string) => void>(() => {});
   /** Suppress the browser context menu after a right-button pan. */
   const suppressCtxMenu = useRef(false);
@@ -645,12 +655,13 @@ export function CanvasEditor({
       }
     }
     objectClip = { objects: objs, media };
+    void navigator.clipboard.writeText(OBJECT_CLIP_MARKER).catch(() => {});
   }, []);
 
   const deleteIds = useCallback(
-    (rawIds: string[]) => {
-      // Locked objects survive unless Shift is held.
-      const ids = rawIds.filter((id) => shiftRef.current || !objectsRef.current.find((x) => x.id === id)?.locked);
+    (rawIds: string[], force = false) => {
+      // Locked objects survive a keypress. The context menu passes force: the user asked.
+      const ids = rawIds.filter((id) => force || shiftRef.current || !objectsRef.current.find((x) => x.id === id)?.locked);
       if (!ids.length) return;
       snapshot("delete");
       updateObjects((objs) => {
@@ -687,6 +698,30 @@ export function CanvasEditor({
     }));
     const tops = clones.filter((o) => !clones.some((g) => g.type === "group" && g.children.includes(o.id))).map((o) => o.id);
     setSelected(tops);
+    const wrap = wrapRef.current;
+    if (!wrap || !clones.length) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const o of clones) {
+      const b = objectBBox(o, heightsRef.current);
+      minX = Math.min(minX, b.x);
+      minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w);
+      maxY = Math.max(maxY, b.y + Math.max(b.h, 28));
+    }
+    if (!Number.isFinite(minX)) return;
+    const c = camRef.current;
+    const view = wrap.getBoundingClientRect();
+    const left = c.x + minX * c.z;
+    const top = c.y + minY * c.z;
+    const right = c.x + maxX * c.z;
+    const bottom = c.y + maxY * c.z;
+    if (left >= 8 && top >= 8 && right <= view.width - 8 && bottom <= view.height - 8) return;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    setCam((cam) => ({ ...cam, x: view.width / 2 - cx * cam.z, y: view.height / 2 - cy * cam.z }));
   }, [onUpdate, snapshot]);
 
   const restack = useCallback(
@@ -711,8 +746,11 @@ export function CanvasEditor({
   openObjMenu.current = (e: MouseEvent) => {
     const host = (e.target as Element | null)?.closest?.("[data-oid]") as HTMLElement | null;
     let id = host?.dataset.oid;
-    // A locked object is inert: its right-click falls through to the canvas menu.
-    if (id && !shiftRef.current && !e.shiftKey && objectsRef.current.find((x) => x.id === id)?.locked) id = undefined;
+    // Locked ink often has no pointer target. Hit-test so Delete still finds it.
+    if (!id) {
+      const pt = toCanvas(e.clientX, e.clientY);
+      id = objectAtPoint(pt.x, pt.y) ?? undefined;
+    }
     const cur = selectedRef.current;
     const ids = id ? (cur.includes(id) ? cur : [id]) : [];
     if (id && !cur.includes(id)) setSelected([id]);
@@ -1018,7 +1056,15 @@ export function CanvasEditor({
         const t = e.target as Element | null;
         if (t?.closest?.("table.plt, .pdf-page")) return;
         if (e.pointerType === "pen") return;
-        const draw = toolRef.current === "pen" || toolRef.current === "highlighter";
+        // Pen, marker, and the shape tools erase while the button is held. Select and lasso still pan.
+        const draw =
+          toolRef.current === "pen" ||
+          toolRef.current === "highlighter" ||
+          toolRef.current === "smart" ||
+          toolRef.current === "rect" ||
+          toolRef.current === "ellipse" ||
+          toolRef.current === "line" ||
+          toolRef.current === "arrow";
         if (draw) {
           eraseChordRef.current = { x: e.clientX, y: e.clientY, objects: objectsRef.current.slice() };
           beginErase(e);
@@ -1296,16 +1342,16 @@ export function CanvasEditor({
         setSelected(objects.map((o) => o.id));
         return;
       }
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && !inEditable() && (e.key === "c" || e.key === "C") && selected.length) {
-        e.preventDefault();
-        copyObjects(selected);
-        return;
-      }
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && !inEditable() && (e.key === "x" || e.key === "X") && selected.length) {
-        e.preventDefault();
-        copyObjects(selected);
-        deleteIds(selected);
-        return;
+      // Ctrl+V is owned by the paste event when the webview delivers one. If it
+      // never arrives (focus was on a button), paste the object clipboard anyway.
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "v" || e.key === "V") && !inEditable()) {
+        const gen = ++pasteGenRef.current;
+        window.setTimeout(() => {
+          if (pasteGenRef.current !== gen || !objectClip) return;
+          const ae = document.activeElement as HTMLElement | null;
+          if (ae && (ae.isContentEditable || ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
+          pasteObjects();
+        }, 60);
       }
       if ((e.key === "Delete" || e.key === "Backspace") && selected.length) {
         const ae = document.activeElement as HTMLElement | null;
@@ -1369,13 +1415,41 @@ export function CanvasEditor({
     const up = (e: KeyboardEvent) => {
       if (e.code === "Space") setSpaceDown(false);
     };
+    const takeObjectClip = (e: ClipboardEvent, cut: boolean) => {
+      if (!canEdit || inEditable()) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+      const ids = selectedRef.current;
+      if (!ids.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      copyObjects(ids);
+      try {
+        e.clipboardData?.setData("text/plain", OBJECT_CLIP_MARKER);
+      } catch {
+        /* the clipboard may refuse a custom payload */
+      }
+      if (cut) deleteIds(ids);
+    };
+    const onCopyEvt = (e: ClipboardEvent) => takeObjectClip(e, false);
+    const onCutEvt = (e: ClipboardEvent) => takeObjectClip(e, true);
     window.addEventListener("keydown", down, true);
     window.addEventListener("keyup", up);
+    window.addEventListener("copy", onCopyEvt, true);
+    window.addEventListener("cut", onCutEvt, true);
     return () => {
       window.removeEventListener("keydown", down, true);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("copy", onCopyEvt, true);
+      window.removeEventListener("cut", onCutEvt, true);
     };
   }, [selected, updateObjects, snapshot, objects, tool, highlightedTextId, copyObjects, deleteIds, pasteObjects, canEdit]);
+
+  useEffect(() => {
+    const onPasteEvt = (e: ClipboardEvent) => handlePasteRef.current(e);
+    window.addEventListener("paste", onPasteEvt, true);
+    return () => window.removeEventListener("paste", onPasteEvt, true);
+  }, []);
 
   if (tool === "pen" || tool === "highlighter") {
     lastInk.current = { hl: tool === "highlighter", color: drawColor, width: drawWidth };
@@ -1421,6 +1495,7 @@ export function CanvasEditor({
   /* ── pointer on empty canvas ── */
   const onPointerDown = (e: React.PointerEvent) => {
     if ((e.target as Element | null)?.closest?.(".menu")) return;
+    if (document.querySelector(".menu")) menuDismissRef.current = true;
     if (penBlocksTouch(e.pointerType, penSettingsRef.current, penDownRef.current, penHoverRef.current, lastPenAt.current)) {
       e.preventDefault();
       e.stopPropagation();
@@ -1493,7 +1568,9 @@ export function CanvasEditor({
       return;
     }
     if (tool === "lasso") {
-      const hitDraw = (e.target as Element | null)?.closest?.(".draw-obj, .text-window, .img-obj, .pdf-obj, .fold");
+      const hitDraw = (e.target as Element | null)?.closest?.(
+        ".draw-obj, .text-window, .img-obj, .pdf-obj, .fold, .sel-move, .draw-grip, .drag-bar, .fold-grip",
+      );
       if (hitDraw) return;
       onLiveDrawRef.current?.(null);
       setAdjustId(null);
@@ -1542,8 +1619,7 @@ export function CanvasEditor({
       return;
     }
 
-    // Select tool on empty canvas: drag → marquee. A double-click opens a text
-    // box. A single click only clears the selection.
+    // Select tool on empty canvas: drag → marquee. A plain click opens a text box.
     e.preventDefault();
     onLiveDrawRef.current?.(null);
     setAdjustId(null);
@@ -1557,6 +1633,10 @@ export function CanvasEditor({
     const prevClick = lastEmptyClick.current;
     const repeated = now - prevClick.t < 500 && Math.hypot(pt.x - prevClick.x, pt.y - prevClick.y) < 14;
     if (!additive) lastEmptyClick.current = { t: now, x: pt.x, y: pt.y };
+    const spawned =
+      now - spawnedTextRef.current.t < 600 &&
+      Math.hypot(pt.x - spawnedTextRef.current.x, pt.y - spawnedTextRef.current.y) < 28;
+    if (spawned) return;
     if (!additive && (e.detail >= 2 || repeated)) {
       createTextAt(pt.x, pt.y);
       return;
@@ -1578,8 +1658,9 @@ export function CanvasEditor({
   };
   onPointerDownRef.current = onPointerDown;
 
-  const createTextAt = (x: number, y: number, initial = "") => {
+  const createTextAt = (x: number, y: number, initial = "", history = true) => {
     pendingTypeAt.current = null;
+    spawnedTextRef.current = { t: performance.now(), x, y };
     const id = newId("t");
     const text: TextObject = {
       type: "text",
@@ -1607,7 +1688,8 @@ export function CanvasEditor({
       ],
     };
     pendingTextRef.current = initial ? null : id;
-    snapshot("create-text");
+    // A click that is abandoned (blur deletes the empty box) must not push an undo step.
+    if (history || initial) snapshot("create-text");
     updateObjects((objs) => placeNew(objs, text, x, y, boxOf));
     // A new box opens in text-edit mode (caret), never in whole-window select mode.
     onTextEditStart?.(id);
@@ -2083,6 +2165,8 @@ export function CanvasEditor({
   onPointerMoveRef.current = onPointerMove;
 
   const onPointerUp = (e: React.PointerEvent) => {
+    const dismissMenu = menuDismissRef.current;
+    menuDismissRef.current = false;
     const d = dragRef.current;
     // A pen pointerup is not the end of the stroke. Windows continues it as mouse input.
     if (d?.mode === "draw" && d.pen && !d.closing && e.pointerType === "pen") return;
@@ -2138,14 +2222,25 @@ export function CanvasEditor({
         forceRender((n) => n + 1);
         return;
       }
-      if (moved < 4 && !d.additive && !d.hadSelection) {
-        pendingTypeAt.current = null;
-      } else if (moved < 4 && !d.additive && d.hadSelection) {
-        // deselect-click: remember spot so the next keystroke can open a box here
+      const plainClick =
+        moved < 4 &&
+        !d.additive &&
+        canEdit &&
+        !dismissMenu &&
+        !shiftRef.current &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey;
+      if (plainClick) {
+        createTextAt(d.sx, d.sy, "", false);
+        return;
+      }
+      if (moved < 4 && !d.additive && d.hadSelection && !dismissMenu) {
         pendingTypeAt.current = { x: d.sx, y: d.sy };
       } else {
         pendingTypeAt.current = null;
-        if (selected.length === 1) onWindowSelect?.(selected[0]);
+        if (moved >= 4 && selected.length === 1) onWindowSelect?.(selected[0]);
       }
       forceRender((n) => n + 1);
       return;
@@ -2783,12 +2878,12 @@ export function CanvasEditor({
       onCut={() => {
         const ids = selectedRef.current.includes(o.id) ? selectedRef.current : [o.id];
         copyObjects(ids);
-        deleteIds(ids);
+        deleteIds(ids, true);
       }}
       onPaste={objectClip ? () => pasteObjects() : undefined}
       onFront={() => restack(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id], true)}
       onBack={() => restack(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id], false)}
-      onDelete={() => deleteIds(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id])}
+      onDelete={() => deleteIds(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id], true)}
       onJoin={
         selected.filter((id) => objects.some((x) => x.id === id && x.type === "pdf")).length >= 2
           ? () => joinSelectedPdfs(selectedRef.current)
@@ -2905,52 +3000,68 @@ export function CanvasEditor({
     onWindowSelect?.(id);
   };
 
-  /* ── paste image ── */
-  const onPaste = async (e: React.ClipboardEvent) => {
+  /* ── paste image or copied objects ── */
+  const onPaste = async (e: ClipboardEvent | React.ClipboardEvent) => {
     if (!canEdit) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    let sawImage = false;
-    for (const item of items) {
-      if (item.type.startsWith("image/")) {
-        sawImage = true;
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
-        const b64 = bytesToB64(new Uint8Array(await file.arrayBuffer()));
-        const ext = item.type.split("/")[1] || "png";
-        const media = `media/${newId("m").slice(2)}.${ext}`;
-        const natural = await imageSize(b64);
-        const { width, height } = fitImage(natural.width, natural.height);
-        const r = wrapRef.current!.getBoundingClientRect();
-        const center = toCanvas(r.left + r.width / 2, r.top + r.height / 2);
-        const img: ImageObject = {
-          type: "image",
-          id: newId("i"),
-          x: center.x - width / 2,
-          y: center.y - height / 2,
-          z: maxZ() + 1,
-          media,
-          width,
-          height,
-        };
-        snapshot("paste-image");
-        onUpdate((n) => ({
-          ...n,
-          media_b64: { ...n.media_b64, [media]: b64 },
-          doc: {
-            ...n.doc,
-            canvas: { ...n.doc.canvas, objects: placeNew(n.doc.canvas.objects, img, img.x + img.width / 2, img.y + img.height / 2, boxOf) },
-          },
-        }));
-        return;
+    const ae = document.activeElement as HTMLElement | null;
+    const editing = !!ae && (ae.isContentEditable || ae.tagName === "INPUT" || ae.tagName === "TEXTAREA");
+    if (editing) return;
+    // A paste event invalidates the keydown fallback, even if this call is the duplicate.
+    pasteGenRef.current++;
+    if (pasteBusy) return;
+    pasteBusy = true;
+    try {
+      const data = e.clipboardData;
+      const text = data?.getData("text/plain") ?? "";
+      const items = data?.items;
+      if (text !== OBJECT_CLIP_MARKER && items) {
+        for (const item of Array.from(items)) {
+          if (!item.type.startsWith("image/")) continue;
+          const file = item.getAsFile();
+          if (!file) continue;
+          e.preventDefault();
+          e.stopPropagation();
+          const b64 = bytesToB64(new Uint8Array(await file.arrayBuffer()));
+          const ext = item.type.split("/")[1] || "png";
+          const media = `media/${newId("m").slice(2)}.${ext}`;
+          const natural = await imageSize(b64);
+          const { width, height } = fitImage(natural.width, natural.height);
+          const r = wrapRef.current!.getBoundingClientRect();
+          const center = toCanvas(r.left + r.width / 2, r.top + r.height / 2);
+          const img: ImageObject = {
+            type: "image",
+            id: newId("i"),
+            x: center.x - width / 2,
+            y: center.y - height / 2,
+            z: maxZ() + 1,
+            media,
+            width,
+            height,
+          };
+          snapshot("paste-image");
+          onUpdate((n) => ({
+            ...n,
+            media_b64: { ...n.media_b64, [media]: b64 },
+            doc: {
+              ...n.doc,
+              canvas: { ...n.doc.canvas, objects: placeNew(n.doc.canvas.objects, img, img.x + img.width / 2, img.y + img.height / 2, boxOf) },
+            },
+          }));
+          setSelected([img.id]);
+          return;
+        }
       }
+      if (objectClip) {
+        e.preventDefault();
+        e.stopPropagation();
+        pasteObjects();
+      }
+    } finally {
+      pasteBusy = false;
     }
-    const editing = !!(document.activeElement as HTMLElement | null)?.isContentEditable;
-    if (!sawImage && objectClip && !editing) {
-      e.preventDefault();
-      pasteObjects();
-    }
+  };
+  handlePasteRef.current = (e) => {
+    void onPaste(e);
   };
 
   /* ── text window content committed ── */
@@ -3028,7 +3139,6 @@ export function CanvasEditor({
         setHoverLocked(null);
         if (dragRef.current?.mode !== "erase") moveRing(0, 0, false);
       }}
-      onPaste={onPaste}
       tabIndex={-1}
       style={{ cursor, ...paperBackground(paper, cam) }}
     >
@@ -3046,7 +3156,7 @@ export function CanvasEditor({
         <div className="shift-hint">Ctrl-click pages to select them across PDFs · Shift: pick images, move locked items, reorder pages</div>
       )}
       <div
-        className={`canvas-world ${tool === "select" ? "" : "drawing"} ${selected.length > 1 ? "multi" : ""}`}
+        className={`canvas-world ${tool === "select" ? "" : "drawing"} ${tool === "lasso" ? "lasso" : ""} ${selected.length > 1 ? "multi" : ""}`}
         style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})` }}
       >
         {dragGhost && (
@@ -3464,7 +3574,7 @@ export function CanvasEditor({
             const items: MenuItem[] = [];
             if (ids.length) {
               items.push(
-                { label: "Cut", hint: "Ctrl+X", onClick: () => { copyObjects(ids); deleteIds(ids); } },
+                { label: "Cut", hint: "Ctrl+X", onClick: () => { copyObjects(ids); deleteIds(ids, true); } },
                 { label: "Copy", hint: "Ctrl+C", onClick: () => copyObjects(ids) },
               );
             }
@@ -3491,7 +3601,7 @@ export function CanvasEditor({
                   return [item];
                 })(),
                 "sep",
-                { label: "Delete", hint: "Del", danger: true, onClick: () => deleteIds(ids) },
+                { label: "Delete", hint: "Del", danger: true, onClick: () => deleteIds(ids, true) },
               );
             }
             if (!ids.length && objects.some((o) => o.locked)) {

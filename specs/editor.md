@@ -21,10 +21,11 @@ Golden rules (from the project owner — never violate):
   Shift+wheel (horizontal). Touchpad two-finger scroll pans.
 - **Zoom**: Ctrl+wheel, 10%–500%, steps of ~10% (multiplicative 1.1). Ctrl+0 resets
   to 100%. Zoom centers on the cursor position.
-- **Click on empty canvas** with the text tool active (default tool): creates a new
-  text window at that point with a blinking caret (OneNote behavior). The window is
-  created *lazily* — if the user clicks elsewhere without typing, no object is
-  created and no undo entry is made.
+- **Click on empty canvas** with Select active, and no modifier, drag, or menu
+  just dismissed: creates an empty text window there with a blinking caret.
+  Clicking elsewhere without typing removes that empty window and does not add
+  an undo step. A drag still marquees. Ctrl-click and Shift-click do not create
+  a box.
 - Scrollbars: thin overlay scrollbars sized to the *content bounding box + one
   viewport margin*, purely as an orientation aid.
 
@@ -160,7 +161,8 @@ the first press applies it to all; a second press removes it from all.
   clicked and copied with Ctrl+C. PDF Preview and PDF export paint those same
   pages from the file.
   Shift picks a picture inside a PDF, and it is also how a locked object moves.
-  Right-click Lock pins an object so it stays put until Shift is held. When two
+  Right-click Lock pins an object so it stays put until Shift is held. Choosing
+  Delete (or Cut) in the context menu still removes a locked object. When two
   or more pieces from the same PDF are selected, Join pages stacks them into one
   object (mixed files stay disabled). Shift-drag a page inside a joined PDF to
   reorder it; releasing outside the object drops that page out. Hide page numbers
@@ -196,7 +198,9 @@ active and no type-to-create point is pending; otherwise they are text), plus st
 and pen colour: quick swatches (theme ink, red, blue, green, orange) + the full
 palette/custom picker. Theme ink resolves to dark ink on light/Mix paper and light
 ink on dark paper at the moment of drawing.
-Colour/width changes also restyle drawings currently selected with Select.
+Colour and width changes restyle drawings that are selected. Changing the width
+does not restyle the last stroke unless it is selected. The Last button applies
+the current colour and width to the last stroke.
 Tool keys only fire while no text field/window has focus; choosing a draw tool by
 key opens the Draw ribbon. Choosing any Draw tool switches the canvas out of text
 mode; Esc or choosing Select returns. Pen and marker colour/width and eraser
@@ -211,7 +215,8 @@ settings persist app-wide.
   A selected stroke or shape shows its real bounds and a grip above them; drag the
   ink or the grip to move it. A marquee shows that same frame on every hit, and
   dragging one selected drawing moves the whole selection.
-  **Hold the right mouse button** in Pen or Marker mode to erase temporarily
+  **Hold the right mouse button** in Pen, Marker, or a shape tool (rectangle,
+  ellipse, line, arrow) to erase temporarily
   (current eraser mode/size); releasing returns to the tool. The stylus side
   button lassos with any tool (same selection as the Lasso tool). The eraser end
   erases with any tool. (Right-drag still pans with the other tools.)
@@ -239,7 +244,8 @@ settings persist app-wide.
   that opacity. A click without movement draws nothing. Erasable like any stroke.
 - **Lasso**: drag a freeform loop; on release, drawings with ≥ 70 % of their
   outline inside the loop and text windows/images whose centre is inside are
-  selected and the tool switches to Select (move, delete, restyle, Ctrl+C…).
+  selected. Lasso stays the tool: the move bar above the selection can be dragged,
+  and Delete, restyle, and Ctrl+C work on the catch.
   An empty catch keeps the Lasso tool.
 - **Eraser**: shows a ring of the eraser size (S/M/L = 6/12/24 screen px radius,
   independent of zoom). Two modes, toggled in the action bar or with Shift+E:
