@@ -22,10 +22,11 @@ Golden rules (from the project owner — never violate):
 - **Zoom**: Ctrl+wheel, 10%–500%, steps of ~10% (multiplicative 1.1). Ctrl+0 resets
   to 100%. Zoom centers on the cursor position.
 - **Click on empty canvas** with Select active, and no modifier, drag, or menu
-  just dismissed: creates an empty text window there with a blinking caret.
-  Clicking elsewhere without typing removes that empty window and does not add
-  an undo step. A drag still marquees. Ctrl-click and Shift-click do not create
-  a box.
+  just dismissed: if something was selected (or a text box was being edited),
+  the click only clears that selection. If nothing was selected, it creates an
+  empty text window there with a blinking caret. Clicking elsewhere without
+  typing removes that empty window and does not add an undo step. A drag still
+  marquees. Ctrl-click and Shift-click do not create a box.
 - Scrollbars: thin overlay scrollbars sized to the *content bounding box + one
   viewport margin*, purely as an orientation aid.
 

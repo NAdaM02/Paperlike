@@ -125,6 +125,7 @@ import {
   IcHighlighter,
   IcHome,
   IcLasso,
+  IcLast,
   IcImage,
   IcPdf,
   IcFold,
@@ -3204,9 +3205,6 @@ export function NotebookView({
                       onClick={() => pickHlColor(c)}
                     />
                   ))}
-                  <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
-                    Last
-                  </button>
                 </div>
                 <ColorControl
                   glyph={<IcHighlighter size={12} />}
@@ -3228,6 +3226,10 @@ export function NotebookView({
                     </button>
                   ))}
                 </div>
+                <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
+                  <IcLast size={12} />
+                  Last
+                </button>
                 <label className="hl-opacity" title="How strong the marker is. It stays translucent, and crossing a stroke only darkens it a little.">
                   <span className="lbl">Ink</span>
                   <input
@@ -3262,9 +3264,6 @@ export function NotebookView({
                       />
                     );
                   })}
-                  <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
-                    Last
-                  </button>
                 </div>
                 <ColorControl
                   glyph={<IcPen size={12} />}
@@ -3287,6 +3286,10 @@ export function NotebookView({
                     </button>
                   ))}
                 </div>
+                <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
+                  <IcLast size={12} />
+                  Last
+                </button>
               </>
             )}
           </div>
@@ -4143,9 +4146,6 @@ export function NotebookView({
                       />
                     );
                   })}
-                  <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
-                    Last
-                  </button>
                 </div>
               </div>
               <div className="draw-pop-row">
@@ -4161,6 +4161,10 @@ export function NotebookView({
                     </button>
                   ))}
                 </div>
+                <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
+                  <IcLast size={12} />
+                  Last
+                </button>
               </div>
             </>
           )}

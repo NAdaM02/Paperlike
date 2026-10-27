@@ -3826,10 +3826,17 @@ svg.hl .hl-ink {
 .draw-pop .pen-swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 .draw-pop-hint { margin: 0; font-size: 13px; line-height: 1.4; }
 .apply-last {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   height: 22px;
   padding: 0 8px;
   border-radius: 999px;
   font-size: 11px;
+}
+.apply-last svg {
+  flex: 0 0 auto;
+  opacity: 0.85;
 }
 .gif-root { position: fixed; inset: 0; z-index: 80; }
 .gif-panel {

@@ -1619,7 +1619,8 @@ export function CanvasEditor({
       return;
     }
 
-    // Select tool on empty canvas: drag → marquee. A plain click opens a text box.
+    // Select tool on empty canvas: drag → marquee. A plain click with nothing
+    // selected opens a text box; a click that clears a selection only deselects.
     e.preventDefault();
     onLiveDrawRef.current?.(null);
     setAdjustId(null);
@@ -1641,7 +1642,6 @@ export function CanvasEditor({
       createTextAt(pt.x, pt.y);
       return;
     }
-    if (!additive) setSelected([]);
     if (!additive) setSelected([]);
     focusCanvas();
     dragRef.current = {
@@ -2232,16 +2232,14 @@ export function CanvasEditor({
         !e.altKey &&
         !e.ctrlKey &&
         !e.metaKey;
-      if (plainClick) {
+      // Selection was already cleared on pointerdown. Only spawn a text box
+      // when the click started with nothing selected.
+      if (plainClick && !d.hadSelection) {
         createTextAt(d.sx, d.sy, "", false);
         return;
       }
-      if (moved < 4 && !d.additive && d.hadSelection && !dismissMenu) {
-        pendingTypeAt.current = { x: d.sx, y: d.sy };
-      } else {
-        pendingTypeAt.current = null;
-        if (moved >= 4 && selected.length === 1) onWindowSelect?.(selected[0]);
-      }
+      pendingTypeAt.current = null;
+      if (moved >= 4 && selected.length === 1) onWindowSelect?.(selected[0]);
       forceRender((n) => n + 1);
       return;
     }

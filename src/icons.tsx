@@ -118,6 +118,10 @@ export const IcRename = (p: P) => (
 );
 export const IcUndo = (p: P) => <I {...p} d="M4 10h11a5 5 0 0 1 0 10h-3M4 10l4-4m-4 4 4 4" />;
 export const IcRedo = (p: P) => <I {...p} d="M20 10H9a5 5 0 0 0 0 10h3m8-10-4-4m4 4-4 4" />;
+/** Reapply colour/width onto the stroke just drawn. */
+export const IcLast = (p: P) => (
+  <I {...p} d="M3 17.5h10.5M18.5 6.5v5a3.5 3.5 0 0 1-3.5 3.5H12m0 0 2-2m-2 2 2 2" />
+);
 export const IcTable = (p: P) => (
   <I {...p} d="M3 4h18v16H3zM3 10h18M3 15h18M9 4v16M15 4v16" />
 );

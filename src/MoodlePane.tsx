@@ -649,6 +649,35 @@ export function MoodlePane({
     void invoke("moodle_nav", { url: MY_URL }).catch((e) => setStatus(String(e)));
   };
 
+  /** Open the linked course if needed, then expand the current week section. */
+  const goCurrentWeek = () => {
+    const id = chosen || linkedId || savedId.current;
+    let onCourse = false;
+    try {
+      const u = new URL(urlRef.current);
+      const pageId = u.searchParams.get("id");
+      onCourse =
+        u.pathname.includes("course/view.php") &&
+        (!id || !pageId || pageId === String(id));
+    } catch {
+      onCourse = false;
+    }
+    if (onCourse) {
+      evalScript(WEEK_SCRIPT);
+      return;
+    }
+    if (id) {
+      const c = courses.find((x) => x.id === id);
+      const url = c?.viewurl || courseUrl(id);
+      setStatus(`Opening ${c?.fullname || "course"}…`);
+      // onPage runs WEEK_SCRIPT once the course view finishes loading.
+      void invoke("moodle_nav", { url }).catch((e) => setStatus(String(e)));
+      return;
+    }
+    setStatus("Pick a course first.");
+    evalScript(WEEK_SCRIPT);
+  };
+
   const reload = () => {
     void invoke("moodle_reload").catch((e) => setStatus(String(e)));
   };
@@ -737,7 +766,7 @@ export function MoodlePane({
             Add to note
           </button>
         )}
-        <button type="button" className="btn" title="Expand the current week" onClick={() => evalScript(WEEK_SCRIPT)}>
+        <button type="button" className="btn" title="Open this course and expand the current week" onClick={goCurrentWeek}>
           Current week
         </button>
         <select
