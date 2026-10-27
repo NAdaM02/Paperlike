@@ -91,6 +91,7 @@ export function SettingsDialog({
 }) {
   const [tab, setTab] = useState<SettingsTab>(initialTab ?? "general");
   const [wipe, setWipe] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
   const [assocBusy, setAssocBusy] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [studyOpen, setStudyOpen] = useState(false);
@@ -123,6 +124,34 @@ export function SettingsDialog({
     window.dispatchEvent(new Event("paperlike-settings-changed"));
     if (next.autostart) await enableAuto().catch(() => {});
     else await disableAuto().catch(() => {});
+  };
+  const checkForUpdates = async () => {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (!update) {
+        onToast(messages.updateLatest);
+        return;
+      }
+      onToast(messages.updateInstalling(update.version));
+      try {
+        await invoke("record_update_note", {
+          version: update.version,
+          notes: update.body ?? "",
+          date: update.date ?? new Date().toISOString(),
+        }).catch(() => {});
+        await update.downloadAndInstall(undefined, { restartAfterInstall: true });
+      } catch (err) {
+        await update.close().catch(() => {});
+        throw err;
+      }
+    } catch (err) {
+      onToast(String(err));
+    } finally {
+      setUpdateBusy(false);
+    }
   };
   const setTheme = async (theme: string) => {
     document.documentElement.dataset.theme = ["dark", "mix"].includes(theme) ? theme : "bright";
@@ -209,6 +238,18 @@ export function SettingsDialog({
                     <span>
                       {messages.tray}
                       <span className="settings-hint">{messages.trayHint}</span>
+                    </span>
+                  </label>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={settings.update_on_exit !== false}
+                      onChange={(e) => void save({ ...settings, update_on_exit: e.target.checked })}
+                    />
+                    <span className="track" />
+                    <span>
+                      {messages.updateOnExit}
+                      <span className="settings-hint">{messages.updateOnExitHint}</span>
                     </span>
                   </label>
                   {CUSTOMER && onReplayTour && (
@@ -389,6 +430,14 @@ export function SettingsDialog({
                   <p className="settings-hint" style={{ marginTop: 0 }}>
                     {appVersion ? messages.settingsVersion(appVersion) : messages.settingsVersionLoading}
                   </p>
+                  <button
+                    className="btn"
+                    type="button"
+                    disabled={updateBusy}
+                    onClick={() => void checkForUpdates()}
+                  >
+                    {updateBusy ? messages.updateChecking : messages.updateCheck}
+                  </button>
                   {updateHistory.filter((item) => Number(String(item.version).split(".")[0]) >= 1 && item.notes.trim()).length ? (
                     <>
                       <h3 className="update-history-title">{messages.updateHistoryTitle}</h3>

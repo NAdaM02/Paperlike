@@ -9,6 +9,7 @@
     "core:window:allow-set-fullscreen",
     "dialog:default",
     "autostart:default",
-    "process:default"
+    "process:default",
+    "updater:default"
   ]
 }

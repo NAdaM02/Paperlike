@@ -237,6 +237,8 @@ export default function App() {
   const promptingRef = useRef(false);
   const trayRef = useRef(false);
   trayRef.current = !!settings?.tray;
+  const updateOnExitRef = useRef(true);
+  updateOnExitRef.current = settings?.update_on_exit !== false;
   type FetchedUpdate = {
     version: string;
     body?: string;
@@ -246,7 +248,27 @@ export default function App() {
   const pendingUpdate = useRef<FetchedUpdate | null>(null);
   const prefetchRef = useRef<Promise<FetchedUpdate | null> | null>(null);
   const beginUpdateFetch = useCallback(() => {
-    return Promise.resolve(null as FetchedUpdate | null);
+    if (!updateOnExitRef.current) return Promise.resolve(null as FetchedUpdate | null);
+    if (pendingUpdate.current) return Promise.resolve(pendingUpdate.current);
+    if (prefetchRef.current) return prefetchRef.current;
+    const job = (async (): Promise<FetchedUpdate | null> => {
+      try {
+        const { check } = await import("@tauri-apps/plugin-updater");
+        const update = await check({ timeout: 30000 });
+        if (!update) return null;
+        // Window X must not hide to the tray once an update exists.
+        await invoke("set_update_ready", { ready: true }).catch(() => {});
+        await update.download();
+        pendingUpdate.current = update;
+        return update;
+      } catch {
+        prefetchRef.current = null;
+        await invoke("set_update_ready", { ready: false }).catch(() => {});
+        return null;
+      }
+    })();
+    prefetchRef.current = job;
+    return job;
   }, []);
   const [announcement, setAnnouncement] = useState<UpdateAnnouncement | null>(null);
 
@@ -408,8 +430,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void beginUpdateFetch();
-  }, [beginUpdateFetch]);
+    if (settings?.update_on_exit === false) {
+      prefetchRef.current = null;
+      pendingUpdate.current = null;
+      void invoke("set_update_ready", { ready: false }).catch(() => {});
+      return;
+    }
+    if (settings) void beginUpdateFetch();
+  }, [beginUpdateFetch, settings, settings?.update_on_exit]);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -423,11 +451,14 @@ export default function App() {
       if (promptingRef.current) return;
       await new Promise<void>((r) => window.setTimeout(r, 0));
       if ((window as Window & { __plCloseForDirty?: boolean }).__plCloseForDirty) return;
-      let update = pendingUpdate.current;
-      if (!update && prefetchRef.current) update = await prefetchRef.current;
-      if (!update) {
-        prefetchRef.current = null;
-        update = await beginUpdateFetch();
+      let update: FetchedUpdate | null = null;
+      if (updateOnExitRef.current) {
+        update = pendingUpdate.current;
+        if (!update && prefetchRef.current) update = await prefetchRef.current;
+        if (!update) {
+          prefetchRef.current = null;
+          update = await beginUpdateFetch();
+        }
       }
       // No update: the tray keeps the process. Rust already hid the window.
       if (!update) {

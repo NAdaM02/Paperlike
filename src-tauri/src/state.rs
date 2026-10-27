@@ -59,7 +59,8 @@ pub struct Settings {
     pub export_defaults: ExportDefaults,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_export_dir: Option<String>,
-    #[serde(default)]
+    /// Prefetch updates and install them when the window closes. On by default.
+    #[serde(default = "default_true")]
     pub update_on_exit: bool,
     #[serde(default)]
     pub autostart: bool,
@@ -121,12 +122,12 @@ pub fn clamp_home_tile_size(n: u32) -> u32 {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             theme: "bright".into(),
             autosave: true,
             export_defaults: ExportDefaults::default(),
             last_export_dir: None,
-            update_on_exit: false,
+            update_on_exit: true,
             autostart: false,
             tray: false,
             welcome_dismissed: false,
@@ -263,7 +264,14 @@ fn save_json<T: Serialize>(path: &Path, v: &T) -> Result<()> {
 }
 
 pub fn load_settings(paths: &AppPaths) -> Result<Settings> {
-    load_or_default(&paths.settings)
+    let mut s: Settings = load_or_default(&paths.settings)?;
+    // v1 always wrote update_on_exit: false with no settings toggle. Enable it once.
+    if s.version < 2 {
+        s.update_on_exit = true;
+        s.version = 2;
+        let _ = save_settings(paths, &s);
+    }
+    Ok(s)
 }
 pub fn save_settings(paths: &AppPaths, s: &Settings) -> Result<()> {
     save_json(&paths.settings, s)

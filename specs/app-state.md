@@ -35,7 +35,7 @@ state files).
   "autosave": true,                    // File → Auto-save toggle (app-global)
   "export_defaults": { "page_numbers": true, "title_headers": true, "export_date": false, "geometry_block": false },
   "last_export_dir": "C:\\…",
-  "update_on_exit": false,
+  "update_on_exit": true,              // prefetch + install on close (Settings → General)
   "autostart": false,
   "tray": false,
   "welcome_dismissed": false,

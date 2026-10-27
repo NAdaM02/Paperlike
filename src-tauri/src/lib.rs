@@ -101,6 +101,7 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             apply_window_icon(app)?;
             install_tray(app)?;

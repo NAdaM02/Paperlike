@@ -14,21 +14,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Tag must match tauri.conf.json version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Tag must look like v1.2.3 (got '$tag')"
+          }
+          $want = "v" + ((Get-Content -Raw "src-tauri/tauri.conf.json" | ConvertFrom-Json).version)
+          if ($tag -ne $want) {
+            throw "Tag '$tag' does not match tauri.conf.json version '$want'. Bump the version in the repo, then tag that commit."
+          }
+          $pkg = (Get-Content -Raw "package.json" | ConvertFrom-Json).version
+          $cargo = (Select-String -Path "src-tauri/Cargo.toml" -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($pkg -ne $want.TrimStart('v') -or $cargo -ne $want.TrimStart('v')) {
+            throw "package.json ($pkg) or Cargo.toml ($cargo) does not match $want"
+          }
+
+      # push_update.ps1 already cuts the GitHub release with the signed installer.
+      # Skip the CI rebuild so a tag push from that tool does not overwrite assets.
+      - name: Skip if release already has the installer
+        id: published
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $names = ""
+          try {
+            $names = gh release view $tag --json assets --jq ".assets[].name" 2>$null
+          } catch {}
+          if ($names -match "Paperlike-setup\.exe") {
+            Write-Host "Release $tag already has Paperlike-setup.exe; skipping CI build."
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
       - uses: actions/setup-node@v4
+        if: steps.published.outputs.skip != 'true'
         with:
           node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.published.outputs.skip != 'true'
 
       - uses: swatinem/rust-cache@v2
+        if: steps.published.outputs.skip != 'true'
         with:
           workspaces: src-tauri -> ./src-tauri
 
       - name: Install frontend
+        if: steps.published.outputs.skip != 'true'
         run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
+        if: steps.published.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -39,6 +81,7 @@ jobs:
           prerelease: false
 
       - name: Publish the checksum
+        if: steps.published.outputs.skip != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

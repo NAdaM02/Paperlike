@@ -268,8 +268,9 @@ These are **explicitly out of scope**. AI models and contributors must not add t
 - **No cloud sync of note contents, accounts, or telemetry** — notes stay in local
   files. (Users may put notebooks in a Dropbox/OneDrive folder themselves;
   external-change handling is specified in [`specs/app-state.md`](specs/app-state.md) §5.)
-  The customer build may call the Paperlike server for activation, feedback, and
-  updates. The personal build does not, unless update-on-exit is turned on.
+  The customer build may call the Paperlike server for activation and feedback.
+  Updates check `https://paperlike.duckdns.org/updates/…` when “Install updates
+  when I close Paperlike” is on (default) or when the user taps Check for updates.
 - **No database/opaque library** — data lives in user-visible files and folders.
 - **No OCR** of drawings/images for search (v1).
 
