@@ -1237,6 +1237,11 @@ export const WEEK_SCRIPT = `(async () => {
     if (!el || !section.contains(el) || inActivity(el)) return false;
     const owner = sectionOf(el);
     if (owner && owner !== section) return false;
+    const content = contentOf(section);
+    if (content && content !== el && content.contains(el)) {
+      const cid = content.id || "";
+      if (cid.indexOf("coursecontentcollapse") === 0 || content.getAttribute("data-region") === "section-content" || content.classList.contains("course-section-content")) return false;
+    }
     if (isAllToggle(el) || navigates(el)) return false;
     const controls = el.getAttribute("aria-controls") || "";
     if (controls && controls.indexOf(" ") < 0) {
@@ -1269,7 +1274,9 @@ export const WEEK_SCRIPT = `(async () => {
     const buttons = header.querySelectorAll("button, a[role='button']");
     for (const el of buttons) {
       if (!inSectionChrome(section, el)) continue;
-      if (el.closest(".action-menu, .dropdown, [data-for='section-control-menu'], .section-actions")) continue;
+      if (el.closest(".action-menu, .dropdown, .dropdown-menu, [data-for='section-control-menu'], .section-actions")) continue;
+      const mode = el.getAttribute("data-toggle") || el.getAttribute("data-bs-toggle") || "";
+      if ((mode && mode !== "collapse") || el.classList.contains("dropdown-toggle")) continue;
       if (el.getAttribute("aria-expanded") != null || el.classList.contains("icons-collapse-expand") || el.classList.contains("collapsed")) return el;
     }
     return null;
@@ -1366,13 +1373,29 @@ export const WEEK_SCRIPT = `(async () => {
     setTimeout(() => { picked.style.outline = ""; picked.style.outlineOffset = ""; }, 1600);
     if (!stale()) await post({ type: "week", title: title, confidence: confidence });
   };
+  let lastCount = -1;
+  let stableSince = 0;
+  const hasReal = (sections) => {
+    for (const section of sections) {
+      const title = titleOf(section);
+      if (!title || /^general$/i.test(title) || title.toLowerCase() === "allgemein") continue;
+      return true;
+    }
+    return false;
+  };
   const decide = () => {
     const sections = listSections();
-    if (!sections.length) return null;
+    const count = sections.length;
+    if (!count) { lastCount = 0; stableSince = 0; return null; }
+    const now = Date.now();
+    if (count !== lastCount) { lastCount = count; stableSince = now; }
     const found = pickFrom(sections);
     if (found.picked && found.confidence === "high") return found;
     if (document.readyState !== "complete") return null;
-    return found;
+    const stable = stableSince && now - stableSince >= 600;
+    if (stable && hasReal(sections)) return found;
+    if (stableSince && now - stableSince >= 1200) return found;
+    return null;
   };
   const deadline = Date.now() + 4500;
   const kick = () => {
