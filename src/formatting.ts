@@ -249,13 +249,6 @@ export function selectAllInContent(content: HTMLElement): void {
   sel?.addRange(range);
 }
 
-/** Canvas-selected text window: purple wash, not being typed in. */
-export function highlightedTextContent(): HTMLElement | null {
-  const wins = document.querySelectorAll(".text-window.selected:not(:focus-within)");
-  if (wins.length !== 1) return null;
-  return wins[0].querySelector(".content") as HTMLElement | null;
-}
-
 function returnFocusToCanvas(content: HTMLElement) {
   window.getSelection()?.removeAllRanges();
   content.blur();

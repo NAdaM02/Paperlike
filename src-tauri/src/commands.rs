@@ -703,11 +703,18 @@ pub fn create_notebook(state: State<AppState>, parent: String, name: String) -> 
 #[tauri::command]
 pub fn get_notebook_ui(state: State<AppState>, path: String) -> Result<NotebookUiState, String> {
     let ui = state::load_ui_state(&state.paths).map_err(err_str)?;
-    Ok(ui
+    let mut nb = ui
         .notebooks
         .get(&path)
         .cloned()
-        .unwrap_or_default())
+        .unwrap_or_default();
+    // Sort travels with the notebook folder; ui-state is only a fallback for older notebooks.
+    if let Ok(data) = notebook::load_notebook_data(Path::new(&path)) {
+        if let Some(sort) = data.sort.filter(|s| !s.is_empty()) {
+            nb.sort = sort;
+        }
+    }
+    Ok(nb)
 }
 
 #[tauri::command]
@@ -717,8 +724,20 @@ pub fn set_notebook_ui(
     nb_ui: NotebookUiState,
 ) -> Result<(), String> {
     let mut ui = state::load_ui_state(&state.paths).map_err(err_str)?;
-    ui.notebooks.insert(path, nb_ui);
-    state::save_ui_state(&state.paths, &ui).map_err(err_str)
+    ui.notebooks.insert(path.clone(), nb_ui.clone());
+    state::save_ui_state(&state.paths, &ui).map_err(err_str)?;
+    // Persist sort in `.notebook_data` so it follows the folder across machines.
+    if let Ok(mut data) = notebook::load_notebook_data(Path::new(&path)) {
+        let sort = nb_ui.sort.trim();
+        data.sort = if sort.is_empty() || sort == "name" {
+            // Keep default explicit so a shared notebook still reads the same order.
+            Some(if sort.is_empty() { "name".into() } else { sort.into() })
+        } else {
+            Some(sort.into())
+        };
+        let _ = notebook::save_notebook_data(Path::new(&path), &data);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1745,6 +1764,8 @@ pub fn assistant_open(app: tauri::AppHandle, host: String, url: String) -> Resul
 
 /// Bumped by every new quick question and by Stop; a running read loop ends when it changes.
 static QUICK_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Serializes creating the offscreen quick webviews (avoids "label already exists" races).
+static QUICK_VIEW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn quick_label(host: &str) -> String {
     match host {
@@ -1774,6 +1795,51 @@ struct QuickEvent {
     url: Option<String>,
 }
 
+/// Chat-site status with no answer in it ("Claude is responding…", "Just now").
+fn status_line(line: &str) -> bool {
+    let l = line.trim().trim_matches(|c: char| {
+        matches!(c, '.' | '…' | '·' | ' ' | '*' | '_' | '[' | ']' | '(' | ')')
+    });
+    if l.is_empty() {
+        return true;
+    }
+    let lower = l.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "responding"
+            | "thinking"
+            | "typing"
+            | "writing"
+            | "working"
+            | "just now"
+            | "edited"
+            | "copied"
+    ) {
+        return true;
+    }
+    // "3 seconds ago", "Just now" glued on, or a short "X is responding" line.
+    if lower.chars().count() <= 48
+        && (lower.ends_with(" ago") || lower == "now" || lower.starts_with("just now"))
+    {
+        return true;
+    }
+    lower.ends_with("is responding")
+        || lower.ends_with("is thinking")
+        || lower.ends_with("is typing")
+        || lower.ends_with("is writing")
+        || lower.ends_with("is working")
+}
+
+fn status_only(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    // Only a short chip ("Claude is responding", optionally with "Just now").
+    // A normal sentence that happens to contain those words is left alone.
+    t.chars().count() <= 120 && t.lines().all(status_line)
+}
+
 fn emit_quick(app: &tauri::AppHandle, ev: QuickEvent) {
     use tauri::Emitter;
     let _ = app.emit_to("main", "quick", ev);
@@ -1791,7 +1857,14 @@ const plReplyCounts = () => plReplySel.map((s) => document.querySelectorAll(s).l
 const owShown = (b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 const owButton = (cls, re) => [...document.querySelectorAll(`button.${cls}, button[aria-label]`)].find((b) =>
   owShown(b) && (b.classList.contains(cls) || re.test((b.getAttribute('aria-label') || '').trim())));
-const owStopButton = () => owButton('stop', /^(stop\b|válasz leállítása|leállítás)/i);
+const owStopButton = () => {
+  const labeled = [...document.querySelectorAll('button, [role="button"]')].find((b) => {
+    if (!owShown(b)) return false;
+    const s = ((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('data-testid') || '') + ' ' + (b.className || '')).toLowerCase();
+    return /\bstop\b/.test(s) || s.includes('interrupt') || s.includes('leállítás');
+  });
+  return labeled || owButton('stop', /^(stop\b|interrupt\b|válasz leállítása|leállítás)/i);
+};
 const owSendButton = () => {
   const b = owButton('send-button', /^(send( message)?|üzenet küldése|küldés)$/i);
   return b && !b.classList.contains('stop') && b !== owStopButton() ? b : null;
@@ -1803,8 +1876,10 @@ const owTex = (el) => {
   return t == null ? null : t.trim();
 };
 // Claude marks its thinking summary (and other page chrome) as data-find-omitted.
-const owSkip = 'button, svg, style, script, .sr-only, [data-find-omitted]';
+const owSkip = 'button, svg, style, script, .sr-only, [data-find-omitted], time, [datetime]';
 const owBlockTags = /^(P|UL|OL|H[1-6]|PRE|TABLE|BLOCKQUOTE|HR|DIV|SECTION|ARTICLE)$/;
+// Chat UI footers that ride along with the reply node (Claude / ChatGPT / Gemini).
+const owChromeLine = /^(just now|edited|copied|regenerate|retry|good response|bad response|share|copy|claude (said|response)|chatgpt said|gemini said|\d+\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|d|day|days)\s*ago|responding|thinking|(?:\S+\s+){0,3}is (?:responding|thinking|typing|writing))[.…]*$/i;
 const owMd = (root) => {
   const inline = (n) => {
     if (n.nodeType === 3) return n.textContent;
@@ -1856,7 +1931,9 @@ const owMd = (root) => {
     }
   };
   block(root);
-  return out.filter(Boolean).join('\n\n');
+  return out.filter(Boolean).filter((line) => !owChromeLine.test(line.trim())).join('\n\n')
+    .replace(/\n*(Just now|Edited|\d+\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours)\s*ago)\s*$/i, '')
+    .trim();
 };
 "#;
 
@@ -1910,7 +1987,7 @@ fn quick_read_js() -> String {
   const before = (window.__plQuick && window.__plQuick.before) || [];
   const now = plReplyCounts();
   const k = now.findIndex((n, i) => n > (before[i] ?? 0));
-  const writing = owStopVisible() || !!document.querySelector('[data-is-streaming="true"]');
+  const writing = owStopVisible() || !!document.querySelector('[data-is-streaming="true"], [data-is-streaming="1"], .result-streaming, [data-testid="stop-button"]');
   const signin = owLoginWall();
   if (k < 0) return {{ found: false, writing, signin, url: location.href }};
   const all = document.querySelectorAll(plReplySel[k]);
@@ -1943,19 +2020,156 @@ fn quick_stop_js() -> String {
 async fn quick_view(app: &tauri::AppHandle, state: &State<'_, AppState>, host: &str) -> Result<(tauri::Webview, bool), String> {
     use tauri::{LogicalPosition, LogicalSize, Manager};
     let label = quick_label(host);
-    if let Some(view) = app.get_webview(&label) {
-        return Ok((view, false));
+    // Serialize create so Strict Mode / double Analyze cannot both race past get_webview
+    // and hit "label already exists". Never hold the mutex across an await.
+    let create_result = {
+        let _guard = QUICK_VIEW_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(view) = app.get_webview(&label) {
+            return Ok((view, false));
+        }
+        let window = app.get_window("main").ok_or("main window is missing")?;
+        let builder = chat_builder(state, host, &label, new_chat_url(host))?;
+        match window.add_child(
+            builder,
+            LogicalPosition::new(-6000.0, -6000.0),
+            LogicalSize::new(900.0, 1000.0),
+        ) {
+            Ok(view) => return Ok((view, true)),
+            Err(e) => {
+                if let Some(view) = app.get_webview(&label) {
+                    return Ok((view, false));
+                }
+                e.to_string()
+            }
+        }
+    };
+    // WebView2 sometimes registers the label before Manager exposes get_webview.
+    if create_result.to_ascii_lowercase().contains("already exists") {
+        for _ in 0..20 {
+            tokio_sleep(std::time::Duration::from_millis(50)).await;
+            if let Some(view) = app.get_webview(&label) {
+                return Ok((view, false));
+            }
+        }
     }
-    let window = app.get_window("main").ok_or("main window is missing")?;
-    let builder = chat_builder(state, host, &label, new_chat_url(host))?;
-    let view = window
-        .add_child(builder, LogicalPosition::new(-6000.0, -6000.0), LogicalSize::new(900.0, 1000.0))
-        .map_err(err_str)?;
-    Ok((view, true))
+    Err(create_result)
+}
+
+/// Write a PNG from base64 into the attachments folder. Used by Analyze.
+#[tauri::command]
+pub fn stage_analyze_png(png_b64: String) -> Result<String, String> {
+    let bytes = base64_decode(&png_b64)?;
+    let dir = notes_folder().join("briefs").join("attachments");
+    std::fs::create_dir_all(&dir).map_err(err_str)?;
+    let name = format!("analyze-{}.png", chrono::Utc::now().timestamp_millis());
+    let path = dir.join(&name);
+    std::fs::write(&path, &bytes).map_err(err_str)?;
+    Ok(plain_path(&path))
+}
+
+/// Capture a rectangle of the desktop (physical pixels: `screenX`/`screenY` style) as PNG base64.
+#[tauri::command]
+pub fn capture_screen_region(x: i32, y: i32, width: u32, height: u32) -> Result<String, String> {
+    if width == 0 || height == 0 || width > 8192 || height > 8192 {
+        return Err("Capture area is empty or too large.".into());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (x, y, width, height);
+        Err("Screen capture is only available on Windows.".into())
+    }
+    #[cfg(windows)]
+    {
+        capture_desktop_region(x, y, width, height)
+    }
+}
+
+#[cfg(windows)]
+fn capture_desktop_region(x: i32, y: i32, width: u32, height: u32) -> Result<String, String> {
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        HGDIOBJ, SRCCOPY,
+    };
+
+    unsafe {
+        let screen = GetDC(None);
+        if screen.is_invalid() {
+            return Err("Couldn't open the screen.".into());
+        }
+        let mem = CreateCompatibleDC(Some(screen));
+        if mem.is_invalid() {
+            ReleaseDC(None, screen);
+            return Err("Couldn't create a capture buffer.".into());
+        }
+        let bmp = CreateCompatibleBitmap(screen, width as i32, height as i32);
+        if bmp.is_invalid() {
+            let _ = DeleteDC(mem);
+            ReleaseDC(None, screen);
+            return Err("Couldn't create a capture bitmap.".into());
+        }
+        let old = SelectObject(mem, HGDIOBJ(bmp.0));
+        let ok = BitBlt(mem, 0, 0, width as i32, height as i32, Some(screen), x, y, SRCCOPY);
+        if ok.is_err() {
+            SelectObject(mem, old);
+            let _ = DeleteObject(HGDIOBJ(bmp.0));
+            let _ = DeleteDC(mem);
+            ReleaseDC(None, screen);
+            return Err("Couldn't copy the screen region.".into());
+        }
+
+        let mut info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width as i32,
+                biHeight: -(height as i32), // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [Default::default()],
+        };
+        let stride = (width as usize) * 4;
+        let mut pixels = vec![0u8; stride * height as usize];
+        let got = GetDIBits(
+            mem,
+            bmp,
+            0,
+            height,
+            Some(pixels.as_mut_ptr() as *mut _),
+            &mut info,
+            DIB_RGB_COLORS,
+        );
+        SelectObject(mem, old);
+        let _ = DeleteObject(HGDIOBJ(bmp.0));
+        let _ = DeleteDC(mem);
+        ReleaseDC(None, screen);
+        if got == 0 {
+            return Err("Couldn't read the capture pixels.".into());
+        }
+
+        // BGRA → RGBA for the image crate
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        let img = image::RgbaImage::from_raw(width, height, pixels)
+            .ok_or_else(|| "Couldn't build the capture image.".to_string())?;
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        Ok(base64_encode(&png))
+    }
 }
 
 /// Ask a chat site a question in the background and stream its reply as `quick` events.
 /// `fresh` starts a new conversation; otherwise the question follows up in the current one.
+/// `file_paths` are extra files (e.g. Analyze PNGs) attached alongside any notes.
 #[tauri::command]
 pub async fn quick_ask(
     app: tauri::AppHandle,
@@ -1966,6 +2180,7 @@ pub async fn quick_ask(
     fresh: bool,
     private: Option<bool>,
     note_paths: Option<Vec<String>>,
+    file_paths: Option<Vec<String>>,
 ) -> Result<(), String> {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -2010,25 +2225,43 @@ pub async fn quick_ask(
         fail(if signin { "signin" } else { "nobox" }, url);
         return Ok(());
     }
+    let mut attach_paths: Vec<String> = Vec::new();
+    let mut attach_marks: Vec<String> = Vec::new();
     if let Some(note_paths) = note_paths.filter(|p| !p.is_empty()) {
         let staged = tauri::async_runtime::spawn_blocking(move || stage_attachments(&note_paths)).await;
         if let Ok(Ok(staged)) = staged {
-            let paths: Vec<String> = staged.paths.iter().map(|p| plain_path(p)).collect();
-            if !paths.is_empty() {
-                let marks = serde_json::json!(staged
-                    .paths
-                    .iter()
-                    .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
-                    .collect::<Vec<_>>());
-                let before = found["before"].clone();
-                let chips = found.get("chips").cloned().unwrap_or(serde_json::json!(0));
-                if !attach_by_input(&view, &paths).await.unwrap_or(false) {
-                    let (x, y) = (found["x"].as_f64().unwrap_or(0.0), found["y"].as_f64().unwrap_or(0.0));
-                    let _ = attach_by_drop(&view, &paths, x, y).await;
+            for p in &staged.paths {
+                attach_paths.push(plain_path(p));
+                if let Some(stem) = p.file_stem() {
+                    attach_marks.push(stem.to_string_lossy().to_string());
                 }
-                let _ = page_eval(&view, verify_js(&marks, &before, &chips)).await;
             }
         }
+    }
+    if let Some(extra) = file_paths.filter(|p| !p.is_empty()) {
+        for raw in extra {
+            let p = PathBuf::from(raw.trim());
+            if !p.is_file() {
+                continue;
+            }
+            attach_paths.push(plain_path(&p));
+            if let Some(stem) = p.file_stem() {
+                attach_marks.push(stem.to_string_lossy().to_string());
+            }
+        }
+    }
+    if !attach_paths.is_empty() {
+        let marks = serde_json::json!(attach_marks);
+        let before = found["before"].clone();
+        let chips = found.get("chips").cloned().unwrap_or(serde_json::json!(0));
+        let _ = copy_files_to_clipboard(&attach_paths);
+        if !attach_by_input(&view, &attach_paths).await.unwrap_or(false) {
+            let (x, y) = (found["x"].as_f64().unwrap_or(0.0), found["y"].as_f64().unwrap_or(0.0));
+            let _ = attach_by_drop(&view, &attach_paths, x, y).await;
+        }
+        let _ = page_eval(&view, verify_js(&marks, &before, &chips)).await;
+        // Give the chat a moment to show the image chip before the message is typed.
+        tokio_sleep(Duration::from_millis(600)).await;
     }
     page_eval(&view, quick_mark_js()).await?;
     let typed = page_eval(&view, type_text_js(text.trim(), true)).await?;
@@ -2063,24 +2296,36 @@ pub async fn quick_ask(
         }
         url = read["url"].as_str().filter(|u| is_conversation_url(u, &host)).map(String::from).or(url);
         let found = read["found"] == serde_json::Value::Bool(true);
-        let writing = read["writing"] == serde_json::Value::Bool(true);
-        let text = read["text"].as_str().unwrap_or_default().to_string();
+        let raw = read["text"].as_str().unwrap_or_default().to_string();
+        // "Claude is responding…" is page chrome, not the answer. Treating it as
+        // the reply makes that line vanish again as soon as the real text starts,
+        // and a quiet stretch looks like the card gave up.
+        let placeholder = status_only(&raw);
+        let writing = read["writing"] == serde_json::Value::Bool(true) || placeholder;
+        let text = if placeholder { String::new() } else { raw };
         let signed_out = read["signin"] == serde_json::Value::Bool(true);
         if signed_out && text.is_empty() && started.elapsed() > Duration::from_secs(5) {
             fail("signin", url.clone().or_else(|| read["url"].as_str().map(str::to_string)));
             return Ok(());
         }
-        if found && text != last {
+        // A status line, a blank scrape, or a still-writing page is not a finished
+        // answer. Counting those toward "steady" is what cleared the "is responding"
+        // line and then sat there while the model was still going.
+        if !found || writing || text.is_empty() {
+            steady = 0;
+        } else if text != last {
             last = text.clone();
             steady = 0;
             emit_quick(&app, QuickEvent { id, text, done: false, error: None, url: url.clone() });
-        } else if found && !text.is_empty() {
+        } else {
             steady += 1;
         }
-        if found && !writing && steady >= 3 {
+        // About 2.5 s of unchanged text with no stop button: models often pause
+        // mid-answer (thinking, tool use), and ending early hides the waiting row.
+        if found && !writing && !last.is_empty() && steady >= 7 {
             break;
         }
-        if !found && started.elapsed() > Duration::from_secs(45) {
+        if !found && !writing && started.elapsed() > Duration::from_secs(90) {
             fail("noreply", url);
             return Ok(());
         }

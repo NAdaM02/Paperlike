@@ -13,20 +13,6 @@ export function releaseMoodleHold() {
   holdWebview = false;
 }
 
-/** Viewport point where a Moodle file drag was released, in CSS pixels. */
-let dropClient: { x: number; y: number } | null = null;
-
-export function setMoodleDropClient(pt: { x: number; y: number } | null) {
-  dropClient = pt;
-}
-
-/** Read and clear the drop point so the next insert lands under the cursor. */
-export function takeMoodleDropClient(): { x: number; y: number } | null {
-  const pt = dropClient;
-  dropClient = null;
-  return pt;
-}
-
 /** The open notebook registers this so a floating Moodle window can still insert a PDF. */
 let insertPdf: ((path: string) => void) | null = null;
 

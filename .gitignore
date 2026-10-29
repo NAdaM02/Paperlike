@@ -44,5 +44,4 @@ src-tauri/updater.key.pub.old*
 
 # Local publish tool (signs + uploads updater payloads)
 /push_update.ps1
-/update_customers.ps1
-
+/dev.md

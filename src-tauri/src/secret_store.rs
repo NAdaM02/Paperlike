@@ -77,6 +77,40 @@ pub fn clear_moodle_login(paths: &AppPaths) -> Result<(), String> {
     Ok(())
 }
 
+fn totp_path(paths: &AppPaths) -> PathBuf {
+    paths.root.join("moodle_totp.dpapi")
+}
+
+pub fn moodle_totp_exists(paths: &AppPaths) -> bool {
+    totp_path(paths).is_file()
+}
+
+/// Stores a normalized base32 TOTP key, encrypted like the sign-in.
+pub fn save_moodle_totp(paths: &AppPaths, secret: &str) -> Result<(), String> {
+    paths.ensure().map_err(|e| e.to_string())?;
+    let sealed = dpapi_protect(secret.as_bytes())?;
+    atomic_write(&totp_path(paths), &sealed)
+}
+
+pub fn load_moodle_totp(paths: &AppPaths) -> Result<Option<String>, String> {
+    let p = totp_path(paths);
+    if !p.is_file() {
+        return Ok(None);
+    }
+    let sealed = fs::read(&p).map_err(|e| e.to_string())?;
+    let plain = dpapi_unprotect(&sealed)?;
+    let key = String::from_utf8(plain).map_err(|e| e.to_string())?;
+    Ok(if key.is_empty() { None } else { Some(key) })
+}
+
+pub fn clear_moodle_totp(paths: &AppPaths) -> Result<(), String> {
+    let p = totp_path(paths);
+    if p.exists() {
+        fs::remove_file(&p).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("dpapi.tmp");
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;

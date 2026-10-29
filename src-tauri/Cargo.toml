@@ -1,13 +1,18 @@
 [package]
 name = "paperlike-app"
-version = "1.3.5"
+version = "1.3.6"
 description = "Paperlike — local-first note-taking"
 authors = ["adama"]
 edition = "2021"
+default-run = "paperlike-app"
 
 [lib]
 name = "paperlike_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "paperlike"
+path = "src/bin/paperlike.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -50,6 +55,7 @@ webview2-com = "0.39"
 printpdf = { version = "0.12", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 trash = "5"
+clap = { version = "4", features = ["derive"] }
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 

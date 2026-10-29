@@ -350,15 +350,6 @@ function bestFitting(label: string, names: string[]): string {
   return fits[0];
 }
 
-const EXERCISE_WORDS =
-  /(ubung|uebung|exercise|tutor|hausaufgabe|aufgabe|blatt|sheet|homework|problem|assignment|losung|loesung|solution|praktikum|lab\b)/;
-
-/** Sections and activities that belong on the Exercises tab. */
-export function looksLikeExercise(text: string, kind = ""): boolean {
-  if (kind === "assign") return true;
-  return EXERCISE_WORDS.test(foldLoose(text));
-}
-
 /** Course numbers are written as digits. A lone "I" in a title is the number 1. */
 function arabicNumbers(name: string): string {
   return name.replace(/\b(X|IX|VIII|VII|VI|IV|V|III|II|I)\b/g, (m) => ROMAN[m.toLowerCase()] ?? m);

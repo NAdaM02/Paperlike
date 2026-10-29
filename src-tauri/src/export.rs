@@ -64,23 +64,43 @@ pub fn export_notes_merged(
     }
 }
 
-fn sort_by_reading_order<T>(items: &mut [T], bbox: impl Fn(&T) -> (f64, f64, f64, f64)) {
-    items.sort_by(|a, b| {
-        let (ax, ay, _, ah) = bbox(a);
-        let (bx, by, _, bh) = bbox(b);
-        let a_mid = ay + ah / 2.0;
-        let b_mid = by + bh / 2.0;
-        let overlap = (ay + ah).min(by + bh) - ay.max(by);
-        let min_h = ah.min(bh);
-        if min_h > 0.0 && overlap / min_h >= 0.5 {
-            ax.partial_cmp(&bx).unwrap_or(std::cmp::Ordering::Equal)
+/// Top-to-bottom, then left-to-right within a row. Items join a row when they
+/// overlap it vertically by at least half their height. Rows are built first and
+/// each sort uses a total order: a pairwise "same row?" comparison isn't
+/// transitive and makes `sort_by` panic on some pages.
+fn sort_by_reading_order<T>(items: &mut Vec<T>, bbox: impl Fn(&T) -> (f64, f64, f64, f64)) {
+    let key = |v: f64| if v.is_finite() { v } else { 0.0 };
+    let mut tagged: Vec<(f64, f64, f64, T)> = items
+        .drain(..)
+        .map(|it| {
+            let (x, y, _, h) = bbox(&it);
+            (key(x), key(y), key(h).max(0.0), it)
+        })
+        .collect();
+    tagged.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)));
+
+    let mut rows: Vec<Vec<(f64, f64, f64, T)>> = Vec::new();
+    let (mut top, mut bottom) = (0.0f64, 0.0f64);
+    for t in tagged {
+        let (y, h) = (t.1, t.2);
+        let joins = rows.last().is_some_and(|_| {
+            let overlap = (y + h).min(bottom) - y.max(top);
+            let min_h = h.min(bottom - top);
+            min_h > 0.0 && overlap / min_h >= 0.5
+        });
+        if joins {
+            bottom = bottom.max(y + h);
+            rows.last_mut().unwrap().push(t);
         } else {
-            a_mid
-                .partial_cmp(&b_mid)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(ax.partial_cmp(&bx).unwrap_or(std::cmp::Ordering::Equal))
+            top = y;
+            bottom = y + h;
+            rows.push(vec![t]);
         }
-    });
+    }
+    for mut row in rows {
+        row.sort_by(|a, b| a.0.total_cmp(&b.0));
+        items.extend(row.into_iter().map(|t| t.3));
+    }
 }
 
 fn color_token(hex: &str, palette: &HashMap<String, &'static str>) -> String {

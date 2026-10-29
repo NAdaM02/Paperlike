@@ -224,7 +224,7 @@ type Drag =
   | {
       mode: "move";
       ids: string[];
-      orig: { x: number; y: number }[];
+      orig: { x: number; y: number; marker_x?: number; marker_y?: number }[];
       sx: number;
       sy: number;
       snapped: boolean;
@@ -407,22 +407,6 @@ function trimTrailingEmptyToHeight(win: HTMLElement, targetH: number): boolean {
     changed = true;
   }
   return changed;
-}
-
-export function contentBBox(
-  objects: CanvasObject[],
-  heights: Record<string, number>,
-): { x: number; y: number; w: number; h: number } | null {
-  if (!objects.length) return null;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const o of objects) {
-    const b = objectBBox(o, heights);
-    minX = Math.min(minX, b.x);
-    minY = Math.min(minY, b.y);
-    maxX = Math.max(maxX, b.x + b.w);
-    maxY = Math.max(maxY, b.y + b.h);
-  }
-  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
 /** Objects copied inside the app. Survives switching notes. */
@@ -687,7 +671,13 @@ export function CanvasEditor({
     const clones = clip.objects.map((o) => {
       const id = idOf.get(o.id)!;
       const moved = { ...structuredClone(o), id, x: o.x + 24, y: o.y + 24, z: ++z };
-      if (moved.type === "group") moved.children = moved.children.map((c) => idOf.get(c) ?? c);
+      if (moved.type === "group") {
+        moved.children = moved.children.map((c) => idOf.get(c) ?? c);
+        if (moved.marker_x != null || moved.marker_y != null) {
+          moved.marker_x = (moved.marker_x ?? moved.x) + 24;
+          moved.marker_y = (moved.marker_y ?? moved.y) + 24;
+        }
+      }
       return moved;
     });
     snapshot("paste");
@@ -1387,11 +1377,34 @@ export function CanvasEditor({
         const d = e.shiftKey ? 10 : 1;
         const dx = e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0;
         const dy = e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0;
-        const free = selected.filter((id) => e.shiftKey || !objects.find((x) => x.id === id)?.locked);
-        if (!free.length) return;
+        const free = new Set(
+          selected.filter((id) => e.shiftKey || !objects.find((x) => x.id === id)?.locked),
+        );
+        if (!free.size) return;
+        // A selected fold moves with its members, same as a pointer drag.
+        for (const id of [...free]) {
+          const o = objects.find((x) => x.id === id);
+          if (o?.type === "group") {
+            for (const c of o.children ?? []) {
+              if (e.shiftKey || !objects.find((x) => x.id === c)?.locked) free.add(c);
+            }
+          }
+        }
         snapshot("nudge", 700);
         updateObjects((objs) =>
-          objs.map((o) => (free.includes(o.id) ? { ...o, x: o.x + dx, y: o.y + dy } : o)),
+          objs.map((o) => {
+            if (!free.has(o.id)) return o;
+            if (o.type === "group" && (o.marker_x != null || o.marker_y != null)) {
+              return {
+                ...o,
+                x: o.x + dx,
+                y: o.y + dy,
+                marker_x: (o.marker_x ?? o.x) + dx,
+                marker_y: (o.marker_y ?? o.y) + dy,
+              };
+            }
+            return { ...o, x: o.x + dx, y: o.y + dy };
+          }),
         );
         return;
       }
@@ -1743,17 +1756,20 @@ export function CanvasEditor({
       b.x < x2 && b.x + b.w > x1 && b.y < y2 && b.y + b.h > y1;
     const hidden = collapsedIds(objects);
     const startedIn = groupAtPoint(objects, d.sx, d.sy, boxOf);
-    const wholeFold = new Set<string>();
+    // Empty fold paper (no member hit) selects the fold. A rect that catches
+    // members selects those members — same as a marquee that starts inside.
+    const emptyFold = new Set<string>();
     for (const o of objects) {
       if (o.type !== "group" || o.collapsed || o.id === startedIn) continue;
       const frame = groupFrame(o, objects, boxOf);
+      if (!hitsRect(frame)) continue;
       const childHit = (o.children ?? []).some((id) => {
         const child = objects.find((c) => c.id === id);
         if (!child || child.type === "group") return false;
         if (child.type === "drawing") return drawingTouchesRect(child, x1, y1, x2, y2);
         return hitsRect(objectBBox(child, heightsRef.current));
       });
-      if (hitsRect(frame) || childHit) wholeFold.add(o.id);
+      if (!childHit) emptyFold.add(o.id);
     }
     return objects
       .filter((o) => {
@@ -1761,10 +1777,10 @@ export function CanvasEditor({
         if (o.locked && !shiftRef.current) return false;
         if (o.type === "group") {
           if (o.collapsed) return hitsRect(collapsedBox(o));
-          return wholeFold.has(o.id);
+          return emptyFold.has(o.id);
         }
         const parent = groupOf(objects, o.id);
-        if (parent && wholeFold.has(parent)) return false;
+        if (parent && emptyFold.has(parent)) return false;
         if (o.type === "drawing") return drawingTouchesRect(o, x1, y1, x2, y2);
         return hitsRect(objectBBox(o, heightsRef.current));
       })
@@ -1943,7 +1959,17 @@ export function CanvasEditor({
           objs.map((o) => {
             const i = cur.ids.indexOf(o.id);
             if (i < 0) return o;
-            return { ...o, x: cur.orig[i].x + mdx, y: cur.orig[i].y + mdy };
+            const start = cur.orig[i];
+            if (o.type === "group" && (start.marker_x != null || start.marker_y != null)) {
+              return {
+                ...o,
+                x: start.x + mdx,
+                y: start.y + mdy,
+                marker_x: (start.marker_x ?? start.x) + mdx,
+                marker_y: (start.marker_y ?? start.y) + mdy,
+              };
+            }
+            return { ...o, x: start.x + mdx, y: start.y + mdy };
           }),
         );
       });
@@ -2497,6 +2523,15 @@ export function CanvasEditor({
       ids: live,
       orig: live.map((i) => {
         const o = objsNow.find((x) => x.id === i)!;
+        if (o.type === "group") {
+          return {
+            x: o.x,
+            y: o.y,
+            ...(o.marker_x != null || o.marker_y != null
+              ? { marker_x: o.marker_x ?? o.x, marker_y: o.marker_y ?? o.y }
+              : {}),
+          };
+        }
         return { x: o.x, y: o.y };
       }),
       sx: pt.x,
@@ -2524,6 +2559,9 @@ export function CanvasEditor({
 
   const toggleGroup = (id: string) => {
     snapshot("fold");
+    const group = objectsRef.current.find((o) => o.type === "group" && o.id === id);
+    const collapsing = !!group && group.type === "group" && !group.collapsed;
+    const childIds = collapsing && group.type === "group" ? new Set(group.children ?? []) : null;
     updateObjects((objs) =>
       objs.map((o) => {
         if (o.type !== "group" || o.id !== id) return o;
@@ -2532,6 +2570,13 @@ export function CanvasEditor({
         return { ...o, collapsed: true, ...markerOnChevron(frame) };
       }),
     );
+    // Hidden members must not keep a move bar on boxes that are no longer painted.
+    if (childIds?.size) {
+      setSelected((cur) => {
+        const next = cur.filter((sid) => !childIds.has(sid));
+        return next.includes(id) ? next : collapsing ? [...next, id] : next;
+      });
+    }
   };
 
   const setFoldFill = (id: string, fill: number) => {
@@ -3308,8 +3353,9 @@ export function CanvasEditor({
                     return (
                       <div
                         key={o.id}
+                        data-oid={o.id}
                         className={`img-obj ${sel ? "selected" : ""}`}
-                        style={{ left: o.x, top: o.y, width: o.width, height: o.height }}
+                        style={{ left: o.x, top: o.y, width: o.width, height: o.height, zIndex: 2 + o.z }}
                         onPointerDown={(e) => startMove(e, o.id)}
                       >
                         {src ? (
@@ -3351,14 +3397,24 @@ export function CanvasEditor({
                 }
               >
                 {g.collapsed ? (
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     className="fold-mark"
                     title="Collapsed note — click to expand, drag to move"
-                    onPointerDown={(e) => startMove(e, g.id, e.ctrlKey || e.metaKey ? undefined : g.id)}
+                    onPointerDown={(e) => {
+                      if (e.button !== 0) return;
+                      startMove(e, g.id, e.ctrlKey || e.metaKey ? undefined : g.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleGroup(g.id);
+                      }
+                    }}
                   >
                     <FoldMark />
-                  </button>
+                  </div>
                 ) : (
                   <>
                     <div className="fold-bar">

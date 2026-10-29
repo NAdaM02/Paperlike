@@ -155,10 +155,7 @@ export function StudySetup({
         {thumb ? (
           <img className="study-thumb" src={thumb} alt="" />
         ) : (
-          <div className="study-thumb placeholder">
-          <span>{messages.studyThumbPlaceholder}</span>
-          <small>{messages.studyThumbHint}</small>
-        </div>
+          <div className="study-thumb placeholder" aria-hidden />
         )}
         <p className="muted">{messages.studyIntro}</p>
         <div className="field">

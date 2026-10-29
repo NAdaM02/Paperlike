@@ -207,3 +207,57 @@
   outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
   outline-offset: -2px;
 }
+
+.moodle-mfa label { flex: 1 1 180px; }
+.moodle-otp[aria-invalid="true"] { border-color: var(--danger); }
+.moodle-otp {
+  width: 9ch;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--ink);
+  font: 600 15px/1.2 var(--font);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+.moodle-otp:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.moodle-totp { align-items: flex-start; }
+.moodle-totp-text {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.4;
+}
+.moodle-totp-note { color: var(--ink-3); font-size: 12px; }
+.moodle-totp-error { color: var(--danger); font-size: 12.5px; }
+.moodle-totp-paste {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.moodle-totp-key {
+  flex: 1 1 220px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.3 ui-monospace, Consolas, monospace;
+}
+.moodle-totp-key:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.moodle-totp-code {
+  align-self: center;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font: 600 18px/1 var(--font);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+.moodle-totp-code small { font-size: 11px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
+.moodle-totp > .btn { align-self: center; }

@@ -13,8 +13,6 @@ export const messages = {
   priceDefault: "",
   trialEnded: "Trial ended",
   expiredCorner: "Expired",
-  activated: "Activated.",
-  activatedCorner: "Activated",
   readOnly:
     "\nTo get a key, simply send me a quick message on WhatsApp\n\"hi! I'm looking for a paperlike key. I'd like to go with Revolut/ cash/ bank transfer/...\" ",
   expiredBanner:
@@ -30,7 +28,6 @@ export const messages = {
   settingsFiles: "Note files",
   settingsTabAbout: "About",
   settingsTabLicense: "License",
-  licenseDays: (n: number) => (n === 1 ? "1 day left on this key" : `${n} days left on this key`),
   licenseCorner: (secs: number) => {
     const left = Math.max(0, Math.floor(secs));
     const piece = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
@@ -68,9 +65,7 @@ export const messages = {
   settingsDanger: "Uninstall",
   updateInstalledTitle: "Paperlike just got better.",
   updateInstalledVersion: (v: string) => `Welcome to new version ${v}.`,
-  updateInstalledEmpty: "This version has no written notes.",
   updateHistoryTitle: "Update notes",
-  updateHistoryEmpty: "Notes from updates will show up here.",
   updateOnExit: "Install updates when I close Paperlike",
   updateOnExitHint: "On by default. Paperlike quietly downloads a new version in the background and installs it when you close the window.",
   updateCheck: "Check for updates",
@@ -129,7 +124,7 @@ export const messages = {
   feedbackYou: "You",
   feedbackReply: "Reply",
 
-  tourSkipLater: "No problem. You can replay the tour any time from Settings → General.",
+  tourSkipLater: "No problem. You can replay the tour any time from Settings, General.",
   tourOk: "OK",
   tourBack: "Back",
   tourNext: "Next",
@@ -164,8 +159,6 @@ export const messages = {
   studyFoldersHeading: "Folders",
   studyNone: "Nothing new was written.",
   studyOpenHome: "Open Home",
-  studyThumbPlaceholder: "thumbnail.png",
-  studyThumbHint: "src-tauri/resources/presets/tum-aerospace",
   settingsStudy: "Study",
   studyMoodleSwitch: "Moodle course browser",
   studyMoodleHint:
@@ -173,6 +166,33 @@ export const messages = {
   studyCreateButton: "Create the TUM Aerospace setup…",
   moodleSignIn: "Sign in to TUM Moodle in this pane.",
   moodleSigningIn: "Signing in…",
+  moodleMfaPrompt: "Enter the 6-digit code from your authenticator app",
+  moodleMfaRetry: "That code wasn't accepted. Try the next one",
+  moodleMfaConfirm: "Confirm",
+  moodleMfaChecking: "Checking…",
+  moodleTotpOffer: "Fill codes automatically…",
+  moodleTotpRedo: "Set up again…",
+  moodleTotpRejected: "Paperlike's code wasn't accepted. Enter one from your app",
+  moodleTotpTitle: "Automatic two-factor codes",
+  moodleTotpFind:
+    "In TUMonline below, sign in if asked and click Register TOTP. Paperlike picks up the new key from the page by itself.",
+  moodleTotpRisk:
+    "The key is stored encrypted for your Windows user, so anyone signed in as you on this PC could pass TUM's two-factor check.",
+  moodleTotpPaste: "Or paste the key shown under the QR code",
+  moodleTotpUseKey: "Use key",
+  moodleTotpCancel: "Cancel",
+  moodleTotpFoundTitle: "Key saved",
+  moodleTotpConfirm:
+    "Paperlike typed the current code into TUMonline. Give the token a name such as Paperlike if asked, then confirm it there.",
+  moodleTotpBackup: "You can also scan the QR code with your phone, so both keep working.",
+  moodleTotpRefill: "Type code again",
+  moodleTotpDone: "Done",
+  moodleTotpForget: "Remove automatic two-factor codes",
+  moodleTotpForgetHint:
+    "Deletes the encrypted TOTP key. Also delete the Paperlike token in TUMonline under Two-factor authentication.",
+  moodleTotpForgetDone: "Automatic two-factor codes removed.",
+  moodleTotpNone:
+    "Automatic two-factor codes: when TUM asks for a code in the Moodle pane, choose Fill codes automatically.",
   moodleSaveOffer:
     "Save Moodle sign-in on this PC? Stored only locally and encrypted for your Windows user.",
   moodleSaveYes: "Save sign-in",
@@ -195,7 +215,7 @@ export const messages = {
 
 };
 
-export type TourUntil = "opened-notebook" | "ribbon-file" | "ribbon-edit" | "ribbon-draw" | "pdf-on" | "back-home";
+export type TourUntil = "opened-notebook" | "note-open" | "ribbon-file" | "ribbon-edit" | "ribbon-draw" | "pdf-on" | "back-home";
 
 export type TourStep = {
   /** Short heading above the text. */
@@ -216,49 +236,57 @@ export type TourStep = {
   clearSpot?: boolean;
 };
 
-/** The moving tour. Step 0 of the card is `messages.tourIntro`. */
+/**
+ * The moving tour, in the order a first session goes: find your notebooks,
+ * open one, write on the page, the tool tabs left to right, then the helpers on
+ * the right of the bar. Step 0 of the card is `messages.tourIntro`.
+ */
 export const tourSteps: TourStep[] = [
   {
     title: "Home",
-    text: "This is Home. Every tile is a notebook — a plain folder on this PC with your notes inside. No account, no sync. The files are yours.",
+    text: "Every tile here is a notebook: a plain folder on this PC with your notes inside. There's no account and no sync, so the files stay yours.",
     at: "home-grid",
     fallbackAt: "home-blank",
   },
   {
-    title: "Adding notes",
-    text: "Add brings in a folder you already have, or searches this PC for notes. Drag one tile onto another to group them, like apps on a phone.",
+    title: "Bring in notes",
+    text: "Add brings in a folder you already have, or searches this PC for notes. To group tiles, drag one onto another, like apps on a phone.",
     at: "home-add",
   },
   {
     title: "Open a notebook",
-    text: "Click any tile to open it. Or hit New note if you'd rather start blank. I'll meet you inside.",
+    text: "Click a tile to open it, or New note to start on a blank page. The tour continues inside.",
     at: "home-grid",
     fallbackAt: "home-blank",
     until: "opened-notebook",
-    hint: "Click a notebook tile or New note to continue.",
+    hint: "Click a notebook tile or New note.",
     clearSpot: true,
   },
   {
     title: "Your notes",
-    text: "The notes in this notebook line up on the left. A new note starts unnamed; Add today puts the date in front when that's handy.",
+    text: "The notes in this notebook are listed on the left. A new note starts without a name, and Add today above the page puts today's date in front of its title.",
     at: "nb-sidebar",
+    until: "note-open",
+    hint: "Open a note, or click New note to start one.",
     clearSpot: true,
   },
   {
     title: "The page",
-    text: "The page works like paper. Click anywhere to drop a text box, drag it where you like, paste an image, or draw straight on it.",
+    text: "The page works like paper. Click anywhere to type, drag boxes where you want them, paste images, or draw right on it. Everything saves on its own.",
     at: "nb-canvas",
     clearSpot: true,
   },
   {
-    title: "Moodle",
-    text: "Course notebooks get a Moodle button up here — it opens the matching course beside your note.",
-    at: "nb-moodle",
-    fallbackAt: "nb-canvas",
+    title: "File",
+    text: "File saves right away, although saving also happens on its own, and exports one note or several to PDF or Markdown.",
+    at: "nb-file",
+    until: "ribbon-file",
+    hint: "Click the File tab.",
+    clearSpot: true,
   },
   {
     title: "Edit",
-    text: "Click Edit. That's where text styling, lists, tables, and pictures live.",
+    text: "Edit has text styles, lists, tables and pictures.",
     at: "nb-edit",
     until: "ribbon-edit",
     hint: "Click the Edit tab.",
@@ -266,33 +294,43 @@ export const tourSteps: TourStep[] = [
   },
   {
     title: "Draw",
-    text: "Now Draw — pens, markers, shapes, and arrows. A pen with pressure works out of the box.",
+    text: "Draw has pens, markers, shapes and arrows. A pen with pressure works right away. Ctrl-click tabs to keep several open at once.",
     at: "nb-draw",
     until: "ribbon-draw",
     hint: "Click the Draw tab.",
     clearSpot: true,
   },
   {
-    title: "File",
-    text: "Click File. Saving happens on its own a moment after you stop. From here you can also export one or many notes to PDF or Markdown.",
-    at: "nb-file",
-    until: "ribbon-file",
-    hint: "Click the File tab.",
-    clearSpot: true,
-  },
-  {
     title: "PDF Preview",
-    text: "Try PDF Preview. It shows the pages an export would make, and you can keep editing right on them. Shift-click selects images, Shift-drag reorders pages, and right-click → Lock pins something in place.",
+    text: "PDF Preview shows the pages an export would make, and you can keep editing on them. Shift-drag a page to reorder it.",
     at: "nb-pdf",
     until: "pdf-on",
     hint: "Turn on PDF Preview.",
     clearSpot: true,
   },
   {
+    title: "Quick question",
+    text: "Type a question here and press Enter for a short answer in a small card. Ctrl+K jumps here from anywhere, and the clock on the right lists this session's questions.",
+    at: "quick-ask",
+    clearSpot: true,
+  },
+  {
+    title: "Calculator and Analyze",
+    text: "The calculator works like a Casio fx-991EX. Analyze lets you drag over any part of the screen, such as a formula or a figure, and ask about it.",
+    at: "quick-tools",
+    clearSpot: true,
+  },
+  {
     title: "Ask and Brief",
-    text: "Need a hand? Type a quick question up here for a short answer, open Ask to chat beside the page, or use Brief to build a study sheet from several notes.",
+    text: "Ask opens a chat beside the page that can see the note you have open. Brief turns several notes into a study sheet or a quiz.",
     at: "nb-ask",
     clearSpot: true,
+  },
+  {
+    title: "Moodle",
+    text: "Course notebooks get a Moodle button here. It opens the matching course and week beside your note.",
+    at: "nb-moodle",
+    fallbackAt: "nb-ask",
   },
   {
     title: "Back to Home",
@@ -303,9 +341,9 @@ export const tourSteps: TourStep[] = [
     clearSpot: true,
   },
   {
-    title: "That's it",
-    text: "Your notes are just files in folders — copy a notebook folder and you've made a backup. Enjoy Paperlike!",
-    at: "center",
+    title: "You're set",
+    text: "To back up a notebook, copy its folder. You can replay this tour any time from Settings, General.",
+    at: "home-settings",
   },
 ];
 

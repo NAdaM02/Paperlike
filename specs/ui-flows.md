@@ -5,7 +5,7 @@ export dialogs in [`export.md`](export.md), persistence locations in
 [`app-state.md`](app-state.md).
 
 General style: modern flat UI, generous spacing, rounded corners, subtle shadows.
-Two themes — **bright** (dark text on light) and **dark** (light text on dark) —
+Three themes — **mix** (default: dark chrome, bright page), **bright** (dark text on light), and **dark** (light text on dark) —
 switchable from View; choice persists in settings. All dialogs are in-app modals
 (not native windows) except OS file pickers.
 
@@ -152,7 +152,8 @@ bar beneath. The action bar contents:
 - Lists the notebook's notes; entry = title (dim "Untitled" if empty-named) +
   small creation date. Current note highlighted.
 - **Sort control** (top of sidebar): Name ↑ / Name ↓ / Created ↑ / Created ↓.
-  Persisted per notebook in app state (not in `.notebook_data`).
+  Persisted per notebook in `.notebook_data` (`sort`), so the order follows the
+  folder.
 - **Separators** ([`file-formats.md`](file-formats.md) §2.3): thin lines between
   entries. Right-click **in the gap between two entries** → "Add separator";
   right-click a separator → "Remove separator". Separator sets are independent per

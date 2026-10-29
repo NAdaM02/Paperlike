@@ -8,7 +8,6 @@ import {
   moodleDragSnapshot,
   setMoodlePdfInserter,
   subscribeMoodleDrag,
-  takeMoodleDropClient,
   type MoodleDragGhost,
 } from "./moodleBridge";
 import katex from "katex";
@@ -353,6 +352,8 @@ type Props = {
   /** Customer trial is over: read and navigate, do not edit. */
   expired?: boolean;
   onQuickAsk: (seed: QuickSeed) => void;
+  onCalc?: () => void;
+  onAnalyze?: () => void;
   /** Hands the parent a way to save the open note right now. */
   onRegisterSave?: (save: (() => Promise<void>) | null) => void;
   /** A floating Moodle window is already open, so this view must not open a second one. */
@@ -394,6 +395,8 @@ export function NotebookView({
   onOpenSettings,
   expired = false,
   onQuickAsk,
+  onCalc,
+  onAnalyze,
   onRegisterSave,
   moodleHeld = false,
   moodleDock = null,
@@ -1983,12 +1986,8 @@ export function NotebookView({
     commitPdfs(latest, made, insertAt());
   };
 
-  /** Where a new Moodle file should land: under the cursor when it was dragged, else the view centre. */
-  const insertAt = () => {
-    const drop = takeMoodleDropClient();
-    if (drop && viewRef.current) return viewRef.current.point(drop.x, drop.y);
-    return viewRef.current?.center() ?? { x: 360, y: 240 };
-  };
+  /** Where a Moodle file opened with a click lands. Dragged files go through the drag session instead. */
+  const insertAt = () => viewRef.current?.center() ?? { x: 360, y: 240 };
 
   const placePreparedPdf = (b64: string, media: string, aspects: number[], origin: { x: number; y: number }) => {
     const latest = noteRef.current;
@@ -2729,11 +2728,12 @@ export function NotebookView({
           </button>
         </div>
         <div className="spacer" />
-        <QuickAskField onAsk={onQuickAsk} disabled={expired} />
+        <QuickAskField onAsk={onQuickAsk} onCalc={onCalc} onAnalyze={onAnalyze} disabled={expired} />
         <button
           className="btn outline"
           title={expired ? messages.premiumOff : "Study sheets and quizzes from several notes"}
           disabled={expired}
+          data-tour="nb-ask"
           onClick={onBrief}
         >
           <IcBrief size={15} /> Brief

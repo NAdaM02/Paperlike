@@ -69,6 +69,67 @@ mod win {
     static TUM_CLICKED: AtomicBool = AtomicBool::new(false);
     /// Latest file drag. A newer drag cancels the one still waiting for mouse-up.
     static FILE_DRAG: AtomicU64 = AtomicU64::new(0);
+    /// One automatic TOTP attempt per sign-in; a rejected code falls back to typing it.
+    static TOTP_TRIED: AtomicBool = AtomicBool::new(false);
+    /// True while the user registers Paperlike's TOTP key in TUMonline.
+    static TOTP_SETUP: AtomicBool = AtomicBool::new(false);
+    /// TUMonline page listing the account's two-factor tokens ("Register TOTP").
+    const TOTP_SETUP_URL: &str = "https://campus.tum.de/tumonline/co_loc_wbpi.list";
+    /// QR decoder plus the key finder; injected on TUMonline only during setup.
+    const TOTP_SETUP_JS: &str = concat!(
+        "(function(){var define,exports,module;\n",
+        include_str!("vendor/jsqr.min.js"),
+        "\n;window.__paperlikeJsQR=window.jsQR;}).call(window);\n",
+        include_str!("vendor/totp_setup.js")
+    );
+
+    pub fn totp_setup(app: &AppHandle, on: bool) -> Result<(), String> {
+        TOTP_SETUP.store(on, Ordering::Release);
+        TOTP_TRIED.store(false, Ordering::Release);
+        if on {
+            nav(app, TOTP_SETUP_URL.into())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Stores the key, tells the pane, and types the first code into TUMonline's
+    /// confirmation field (the user still presses TUMonline's own button).
+    pub fn totp_found(app: &AppHandle, secret: &str) -> Result<(), String> {
+        let paths = crate::state::AppPaths::resolve();
+        crate::secret_store::save_moodle_totp(&paths, secret)?;
+        TOTP_TRIED.store(false, Ordering::Release);
+        emit_msg(app, json!({"type": "totp-found"}));
+        totp_fill_confirm(app)
+    }
+
+    pub fn totp_fill_confirm(app: &AppHandle) -> Result<(), String> {
+        let paths = crate::state::AppPaths::resolve();
+        let Some(secret) = crate::secret_store::load_moodle_totp(&paths)? else {
+            return Err("No two-factor key is saved.".into());
+        };
+        let (code, _) = crate::totp::code_now(&secret)?;
+        eval_js(
+            app,
+            format!("window.__paperlikeTotpConfirm && window.__paperlikeTotpConfirm(\"{code}\");"),
+        )
+    }
+
+    /// Fills and submits the IdP code page, avoiding a code that expires mid-flight.
+    fn auto_totp(app: &AppHandle, secret: String) {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let Ok((_, left)) = crate::totp::code_now(&secret) else { return };
+            if left < 4 {
+                std::thread::sleep(std::time::Duration::from_secs(left + 1));
+            }
+            let Ok((code, _)) = crate::totp::code_now(&secret) else { return };
+            let _ = eval_js(
+                &app,
+                format!("window.__paperlikeFillOtp && window.__paperlikeFillOtp(\"{code}\");"),
+            );
+        });
+    }
 
     struct PdfBuild {
         name: String,
@@ -457,6 +518,30 @@ mod win {
         let ack = v.get("ack").and_then(|a| a.as_u64());
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "login-required" => emit_msg(app, json!({"type": "login-required"})),
+            "login-mfa" => {
+                let active = v.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+                let paths = crate::state::AppPaths::resolve();
+                let saved = if active && !TOTP_SETUP.load(Ordering::Acquire) {
+                    crate::secret_store::load_moodle_totp(&paths).ok().flatten()
+                } else {
+                    None
+                };
+                match saved {
+                    Some(secret) if !TOTP_TRIED.swap(true, Ordering::AcqRel) => {
+                        auto_totp(app, secret);
+                        emit_msg(app, json!({"type": "login-auto"}));
+                    }
+                    Some(_) => emit_msg(app, json!({"type": "login-mfa", "active": true, "autoFailed": true})),
+                    None => emit_msg(app, json!({"type": "login-mfa", "active": active})),
+                }
+            }
+            "totp-secret" if TOTP_SETUP.load(Ordering::Acquire) => {
+                let raw = clip(v.get("secret").and_then(|s| s.as_str()).unwrap_or(""), 1000);
+                let found = crate::totp::parse_secret(&raw).and_then(|secret| totp_found(app, &secret));
+                if let Err(message) = found {
+                    emit_msg(app, json!({"type": "totp-error", "message": message}));
+                }
+            }
             "login-credentials" => {
                 let user = clip(v.get("user").and_then(|s| s.as_str()).unwrap_or(""), 200);
                 let pass = v.get("pass").and_then(|s| s.as_str()).unwrap_or("").to_string();
@@ -577,6 +662,11 @@ mod win {
             return;
         }
         let _ = view.eval(LOGIN_HOOK_JS);
+        if TOTP_SETUP.load(Ordering::Acquire)
+            && parsed.host_str().map(|h| h.eq_ignore_ascii_case("campus.tum.de")) == Some(true)
+        {
+            let _ = view.eval(TOTP_SETUP_JS);
+        }
         if is_idp(&parsed) {
             try_autofill(app, view);
             return;
@@ -584,6 +674,7 @@ mod win {
         if is_moodle_logged_in(&parsed) {
             AUTOFILL_DONE.store(false, Ordering::Release);
             TUM_CLICKED.store(false, Ordering::Release);
+            TOTP_TRIED.store(false, Ordering::Release);
             maybe_offer_save(app);
             return;
         }
@@ -788,6 +879,62 @@ mod win {
       setTimeout(function () { applyFill(user, pass, true); }, 500);
     } catch (e) {}
   };
+  // Two-factor (TOTP) step: find the code field, report it, and fill it on request.
+  // The code itself is never stored; it is typed in Paperlike and passed straight through.
+  function shown(el) {
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+  function findOtp() {
+    if (!hostOk()) return null;
+    if (document.querySelector('input[type="password"]')) return null;
+    var direct = document.querySelector('input[autocomplete="one-time-code"]');
+    if (direct && shown(direct)) return direct;
+    var all = document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"])');
+    var cands = [];
+    for (var i = 0; i < all.length; i++) if (shown(all[i]) && !all[i].disabled) cands.push(all[i]);
+    for (var j = 0; j < cands.length; j++) {
+      var key = ((cands[j].name || "") + " " + (cands[j].id || "") + " " + (cands[j].getAttribute("placeholder") || "")).toLowerCase();
+      if (/otp|totp|token|code/.test(key)) return cands[j];
+    }
+    var text = ((document.body && document.body.innerText) || "").toLowerCase();
+    if (cands.length === 1 && /totp|two-factor|2fa|zwei-faktor|authenticator|6[- ]digit|6-stellig/.test(text)) return cands[0];
+    return null;
+  }
+  function otpSubmitter(form) {
+    var nodes = form.querySelectorAll('button, input[type="submit"]');
+    var fallback = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      var t = ((n.innerText || n.value || n.getAttribute("aria-label") || "") + " " + (n.name || "")).toLowerCase();
+      if (/back|zur\u00fcck|cancel|abbrech|passkey/.test(t)) continue;
+      if (/proceed|confirm|best\u00e4tig|verify|login|log in|anmeld|continue|weiter|submit|\bok\b/.test(t)) return n;
+      var type = (n.getAttribute("type") || "submit").toLowerCase();
+      if (!fallback && type === "submit") fallback = n;
+    }
+    return fallback;
+  }
+  window.__paperlikeFillOtp = function (code) {
+    try {
+      var el = findOtp();
+      if (!el) return;
+      setNative(el, code);
+      var form = el.form || document.querySelector("form");
+      if (!form) return;
+      var btn = otpSubmitter(form);
+      if (btn) btn.click();
+      else if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else form.submit();
+    } catch (e) {}
+  };
+  function reportOtp() {
+    try {
+      if (!hostOk() || typeof window.paperlikePost !== "function") return;
+      window.paperlikePost({ type: "login-mfa", active: !!findOtp() });
+    } catch (e) {}
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(reportOtp, 300); });
+  else setTimeout(reportOtp, 300);
 })();
 "#;
 
@@ -1310,11 +1457,12 @@ mod win {
         if n == 0 { None } else { Some(n) }
     }
 
-    /// Existing non-empty PDF with this stem (or `stem (n)`) whose bytes match `hash`.
-    /// Prefers the unnumbered name, then the lowest number. `skip_name` is a lowercased file name.
+    /// Existing non-empty PDF in `dir` whose bytes match `hash`, under any name (Moodle
+    /// serves the same file under different names). Prefers `stem.pdf`, then `stem (n).pdf`
+    /// by lowest n, then other names. `skip_name` is a lowercased file name.
     fn find_matching_pdf(dir: &Path, stem: &str, hash: &str, size: u64, skip_name: &str) -> Option<PathBuf> {
         let entries = std::fs::read_dir(dir).ok()?;
-        let mut best: Option<(u32, PathBuf)> = None;
+        let mut best: Option<((u32, String), PathBuf)> = None;
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
@@ -1325,7 +1473,11 @@ mod win {
             if !skip_name.is_empty() && file_name.to_lowercase() == skip_name {
                 continue;
             }
-            let Some(rank) = pdf_rank(&file_name, stem) else { continue };
+            if !file_name.to_ascii_lowercase().ends_with(".pdf") {
+                continue;
+            }
+            // Same stem first; other names rank after every numbered copy.
+            let rank = (pdf_rank(&file_name, stem).unwrap_or(u32::MAX), file_name.to_lowercase());
             let path = entry.path();
             let meta = match std::fs::metadata(&path) {
                 Ok(meta) => meta,
@@ -1375,8 +1527,13 @@ mod win {
         }
     }
 
+    /// Serializes "is it already here? then write" so two saves of the same file at the
+    /// same moment cannot both decide it is new.
+    static MATERIAL_SAVE: Mutex<()> = Mutex::new(());
+
     /// Write `bytes` into `dir`, or return an existing PDF whose bytes already match.
     fn store_downloaded_file(dir: &Path, raw_name: &str, ext: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+        let _guard = MATERIAL_SAVE.lock().unwrap_or_else(|p| p.into_inner());
         let ext = ext.trim_start_matches('.');
         if ext.eq_ignore_ascii_case("pdf") {
             let stem = file_stem(raw_name);
@@ -1405,6 +1562,7 @@ mod win {
             Ok(meta) if meta.is_file() && meta.len() > 0 => meta,
             _ => return dest.to_path_buf(),
         };
+        let _guard = MATERIAL_SAVE.lock().unwrap_or_else(|p| p.into_inner());
         let Some(hash) = sha256_file(dest) else {
             return dest.to_path_buf();
         };
@@ -1768,6 +1926,32 @@ impl Drop for DragChip {
         }
 
         #[test]
+        fn same_bytes_under_another_name_reuse_the_existing_file() {
+            let dir = scratch("renamed");
+            let pdf: &[u8] = b"%PDF-1.4\nslides";
+            let first = store_downloaded_file(&dir, "Lecture_Slides_EE_01.pdf", "pdf", pdf).unwrap();
+            let again = store_downloaded_file(&dir, "DC Circuits Lecture 1.pdf", "pdf", pdf).unwrap();
+            assert_eq!(again, first);
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn simultaneous_saves_keep_one_copy() {
+            let dir = scratch("race");
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    let dir = dir.clone();
+                    std::thread::spawn(move || store_downloaded_file(&dir, "Lecture 1a.pdf", "pdf", b"%PDF-1.4\nrace").unwrap())
+                })
+                .collect();
+            let paths: Vec<PathBuf> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+            assert!(paths.iter().all(|p| p == &paths[0]));
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
         fn empty_pdf_is_not_the_real_file() {
             let dir = scratch("empty");
             std::fs::write(dir.join("week.pdf"), b"").unwrap();
@@ -1826,6 +2010,9 @@ mod win {
     pub fn open_external(_: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
     pub fn take_pending_login() -> Option<crate::secret_store::MoodleLogin> { None }
     pub fn clear_pending_login() {}
+    pub fn totp_setup(_: &AppHandle, _: bool) -> Result<(), String> { Err(UNSUPPORTED.into()) }
+    pub fn totp_found(_: &AppHandle, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
+    pub fn totp_fill_confirm(_: &AppHandle) -> Result<(), String> { Err(UNSUPPORTED.into()) }
 }
 
 #[tauri::command]
@@ -1875,6 +2062,58 @@ pub fn moodle_reload(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn moodle_eval(app: AppHandle, script: String) -> Result<(), String> {
     win::eval_js(&app, script)
+}
+
+#[tauri::command]
+pub fn moodle_totp_saved(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(crate::secret_store::moodle_totp_exists(&state.paths))
+}
+
+/// Starts (opens TUMonline's token page) or ends automatic-code setup.
+#[tauri::command]
+pub fn moodle_totp_setup(app: AppHandle, on: bool) -> Result<(), String> {
+    win::totp_setup(&app, on)
+}
+
+/// Saves a key the user pasted (bare base32 or an otpauth:// link).
+#[tauri::command]
+pub fn moodle_save_totp(app: AppHandle, secret: String) -> Result<(), String> {
+    let secret = crate::totp::parse_secret(&secret)?;
+    win::totp_found(&app, &secret)
+}
+
+/// Types the current code into TUMonline's confirmation field again.
+#[tauri::command]
+pub fn moodle_totp_fill(app: AppHandle) -> Result<(), String> {
+    win::totp_fill_confirm(&app)
+}
+
+/// Current code and seconds left, for the setup banner.
+#[tauri::command]
+pub fn moodle_totp_code(state: State<'_, AppState>) -> Result<Value, String> {
+    let Some(secret) = crate::secret_store::load_moodle_totp(&state.paths)? else {
+        return Err("No two-factor key is saved.".into());
+    };
+    let (code, left) = crate::totp::code_now(&secret)?;
+    Ok(json!({"code": code, "left": left}))
+}
+
+#[tauri::command]
+pub fn moodle_clear_totp(state: State<'_, AppState>) -> Result<(), String> {
+    crate::secret_store::clear_moodle_totp(&state.paths)
+}
+
+/// Types a two-factor code into the TUM sign-in page and submits it. Never stored.
+#[tauri::command]
+pub fn moodle_submit_otp(app: AppHandle, code: String) -> Result<(), String> {
+    let code = code.trim();
+    if !(6..=8).contains(&code.len()) || !code.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("Enter the 6-digit code from your authenticator app.".into());
+    }
+    win::eval_js(
+        &app,
+        format!("window.__paperlikeFillOtp && window.__paperlikeFillOtp(\"{code}\");"),
+    )
 }
 
 #[tauri::command]

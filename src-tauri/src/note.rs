@@ -13,7 +13,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::atomic;
 
-pub const APP_VERSION: &str = "1.3.5";
+pub const APP_VERSION: &str = "1.3.6";
 pub const NOTE_FORMAT: &str = "paperlike-note";
 /// Newest `version` this build understands; newer notes open read-only.
 pub const NOTE_VERSION: u32 = 1;

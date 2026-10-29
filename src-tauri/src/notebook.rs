@@ -28,6 +28,10 @@ pub struct NotebookData {
     pub cover: Option<Cover>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub separators: Option<Separators>,
+    /// Note-list sort mode: `name` | `name_desc` | `created` | `created_desc`.
+    /// Lives with the notebook so it travels with the folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
     /// Moodle course id for the course browser. Absent on notebooks that have not been linked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moodle_course_id: Option<i64>,
@@ -135,6 +139,7 @@ pub fn ensure_notebook(path: &Path) -> Result<()> {
             description: None,
             cover: None,
             separators: Some(Separators::default()),
+            sort: None,
             moodle_course_id: None,
         };
         save_notebook_data(path, &data)?;

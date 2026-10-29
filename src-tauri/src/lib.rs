@@ -11,10 +11,12 @@ mod secret_store;
 mod shell_open;
 mod state;
 mod study;
+mod totp;
 mod feedback;
 mod gif;
 mod google_account;
 mod moodle;
+pub mod cli;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -180,6 +182,8 @@ pub fn run() {
             commands::quick_ask,
             commands::quick_stop,
             commands::quick_release,
+            commands::stage_analyze_png,
+            commands::capture_screen_region,
             commands::license_price,
             commands::license_status,
             commands::license_refresh,
@@ -200,6 +204,13 @@ pub fn run() {
             moodle::moodle_back,
             moodle::moodle_reload,
             moodle::moodle_eval,
+            moodle::moodle_submit_otp,
+            moodle::moodle_totp_saved,
+            moodle::moodle_totp_setup,
+            moodle::moodle_save_totp,
+            moodle::moodle_totp_fill,
+            moodle::moodle_totp_code,
+            moodle::moodle_clear_totp,
             moodle::moodle_open_external,
             moodle::moodle_set_target,
             moodle::moodle_suggest,

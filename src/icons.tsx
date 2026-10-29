@@ -40,6 +40,11 @@ export const IcStop = (p: P) => <I {...p} d="M7 7h10v10H7z" />;
 export const IcIncognito = (p: P) => (
   <I {...p} d="M3 11h18M6 11l1.5-6h9L18 11M7 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm10 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-7-3h4" />
 );
+export const IcHistory = (p: P) => <I {...p} d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3.5 2" />;
+export const IcCalc = (p: P) => (
+  <I {...p} d="M6 3.5h12v17H6zM9 8h6M9 12h1.5M12.5 12H14M9 16h1.5M12.5 16H14" />
+);
+export const IcScan = (p: P) => <I {...p} d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M8 12h8" />;
 export const IcSpark = (p: P) => (
   <I {...p} d="M12 3.5c.6 4.2 2.3 5.9 6.5 6.5-4.2.6-5.9 2.3-6.5 6.5-.6-4.2-2.3-5.9-6.5-6.5 4.2-.6 5.9-2.3 6.5-6.5ZM18.5 15.5c.3 1.9 1 2.6 2.9 2.9-1.9.3-2.6 1-2.9 2.9-.3-1.9-1-2.6-2.9-2.9 1.9-.3 2.6-1 2.9-2.9Z" />
 );

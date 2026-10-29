@@ -30,6 +30,8 @@ type MoodleMsg = {
   courses?: MoodleCourse[];
   tab?: string;
   message?: string;
+  active?: boolean;
+  autoFailed?: boolean;
   name?: string;
   x?: number;
   y?: number;
@@ -183,6 +185,61 @@ export function MoodlePane({
   insertRef.current = onInsertPdf;
   const [paneWidth, setPaneWidth] = useState<number | null>(null);
   const [saveOffer, setSaveOffer] = useState(false);
+  // TUM two-factor step: null = not on it; error = a submitted code came back rejected.
+  const [mfa, setMfa] = useState<{ error: boolean; autoFailed: boolean; round: number } | null>(null);
+  // Automatic codes: whether a key is saved, and the TUMonline setup step if running.
+  const [totpSaved, setTotpSaved] = useState(false);
+  const [setup, setSetup] = useState<{ phase: "find" | "confirm"; error?: string } | null>(null);
+  const [pasteKey, setPasteKey] = useState("");
+  const [liveCode, setLiveCode] = useState<{ code: string; left: number } | null>(null);
+  useEffect(() => {
+    void invoke<boolean>("moodle_totp_saved").then(setTotpSaved).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (setup?.phase !== "confirm") {
+      setLiveCode(null);
+      return;
+    }
+    let on = true;
+    const tick = () =>
+      void invoke<{ code: string; left: number }>("moodle_totp_code")
+        .then((c) => on && setLiveCode(c))
+        .catch(() => {});
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => {
+      on = false;
+      window.clearInterval(id);
+    };
+  }, [setup?.phase]);
+  const startSetup = () => {
+    setMfa(null);
+    setStatus("");
+    setPasteKey("");
+    setSetup({ phase: "find" });
+    void invoke("moodle_totp_setup", { on: true }).catch((e) => setSetup({ phase: "find", error: String(e) }));
+  };
+  const endSetup = (keep: boolean) => {
+    void invoke("moodle_totp_setup", { on: false }).catch(() => {});
+    if (!keep) {
+      void invoke("moodle_clear_totp").catch(() => {});
+      setTotpSaved(false);
+    }
+    setSetup(null);
+    void invoke("moodle_nav", { url: startUrl.current }).catch(() => {});
+  };
+  const [otp, setOtp] = useState("");
+  const [otpBusy, setOtpBusy] = useState(false);
+  const otpSent = useRef(false);
+  const submitOtp = (code: string) => {
+    if (code.length !== 6 || otpBusy) return;
+    setOtpBusy(true);
+    otpSent.current = true;
+    invoke("moodle_submit_otp", { code }).catch((e) => {
+      setOtpBusy(false);
+      setStatus(String(e));
+    });
+  };
   const [custom, setCustom] = useState(customRef.current);
   const [customTab, setCustomTab] = useState(tabRef.current);
   const [ownNames, setOwnNames] = useState<string[]>([]);
@@ -435,11 +492,37 @@ export function MoodlePane({
     const offMsg = listen<MoodleMsg>("moodle-msg", ({ payload }) => {
       const type = payload?.type;
       if (type === "page") {
-        if (payload.phase === "finished" && payload.url) onPageRef.current(payload.url);
+        if (payload.phase === "finished" && payload.url) {
+          if (/^https?:\/\/([^/]*\.)?moodle\.tum\.de\//i.test(payload.url)) {
+            otpSent.current = false;
+            setMfa(null);
+          }
+          onPageRef.current(payload.url);
+        }
         return;
       }
       if (type === "login-required") {
         setStatus(messages.moodleSignIn);
+        return;
+      }
+      if (type === "login-mfa") {
+        if (payload.active) {
+          setStatus("");
+          setMfa((m) => ({ error: otpSent.current, autoFailed: !!payload.autoFailed, round: (m?.round ?? 0) + 1 }));
+          setOtp("");
+          setOtpBusy(false);
+        } else {
+          setMfa(null);
+        }
+        return;
+      }
+      if (type === "totp-found") {
+        setTotpSaved(true);
+        setSetup({ phase: "confirm" });
+        return;
+      }
+      if (type === "totp-error") {
+        setSetup((cur) => (cur ? { ...cur, error: payload.message ?? "" } : cur));
         return;
       }
       if (type === "login-auto") {
@@ -804,6 +887,108 @@ export function MoodlePane({
         </button>
       </div>
       {status && <div className="moodle-status">{status}</div>}
+      {mfa && (
+        <form
+          className="moodle-banner moodle-mfa"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitOtp(otp);
+          }}
+        >
+          <label htmlFor="moodle-otp">
+            {mfa.error ? messages.moodleMfaRetry : mfa.autoFailed ? messages.moodleTotpRejected : messages.moodleMfaPrompt}
+          </label>
+          <input
+            key={mfa.round}
+            id="moodle-otp"
+            className="moodle-otp"
+            autoFocus
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="000000"
+            maxLength={6}
+            value={otp}
+            disabled={otpBusy}
+            aria-invalid={mfa.error || undefined}
+            onChange={(e) => {
+              const code = e.target.value.replace(/\D/g, "").slice(0, 6);
+              setOtp(code);
+              if (code.length === 6) submitOtp(code);
+            }}
+          />
+          <button type="submit" className="btn primary" disabled={otp.length !== 6 || otpBusy}>
+            {otpBusy ? messages.moodleMfaChecking : messages.moodleMfaConfirm}
+          </button>
+          {(!totpSaved || mfa.autoFailed) && !setup && (
+            <button type="button" className="btn outline" onClick={startSetup}>
+              {totpSaved ? messages.moodleTotpRedo : messages.moodleTotpOffer}
+            </button>
+          )}
+        </form>
+      )}
+      {setup && (
+        <div className="moodle-banner moodle-totp" role="status">
+          {setup.phase === "find" ? (
+            <>
+              <div className="moodle-totp-text">
+                <strong>{messages.moodleTotpTitle}</strong>
+                <span>{messages.moodleTotpFind}</span>
+                <span className="moodle-totp-note">{messages.moodleTotpRisk}</span>
+                {setup.error && <span className="moodle-totp-error">{setup.error}</span>}
+              </div>
+              <form
+                className="moodle-totp-paste"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!pasteKey.trim()) return;
+                  void invoke("moodle_save_totp", { secret: pasteKey }).catch((err) =>
+                    setSetup({ phase: "find", error: String(err) }),
+                  );
+                }}
+              >
+                <input
+                  className="moodle-totp-key"
+                  placeholder={messages.moodleTotpPaste}
+                  aria-label={messages.moodleTotpPaste}
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={pasteKey}
+                  onChange={(e) => setPasteKey(e.target.value)}
+                />
+                <button type="submit" className="btn" disabled={!pasteKey.trim()}>
+                  {messages.moodleTotpUseKey}
+                </button>
+                <button type="button" className="btn" onClick={() => endSetup(totpSaved)}>
+                  {messages.moodleTotpCancel}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <div className="moodle-totp-text">
+                <strong>{messages.moodleTotpFoundTitle}</strong>
+                <span>{messages.moodleTotpConfirm}</span>
+                <span className="moodle-totp-note">{messages.moodleTotpBackup}</span>
+              </div>
+              {liveCode && (
+                <span className="moodle-totp-code" aria-label={`Current code ${liveCode.code}`}>
+                  {liveCode.code.slice(0, 3)} {liveCode.code.slice(3)}
+                  <small>{liveCode.left}s</small>
+                </span>
+              )}
+              <button type="button" className="btn" onClick={() => void invoke("moodle_totp_fill").catch(() => {})}>
+                {messages.moodleTotpRefill}
+              </button>
+              <button type="button" className="btn primary" onClick={() => endSetup(true)}>
+                {messages.moodleTotpDone}
+              </button>
+              <button type="button" className="btn" onClick={() => endSetup(false)}>
+                {messages.moodleTotpCancel}
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {saveOffer && (
         <div className="moodle-banner moodle-save-offer">
           <span>{messages.moodleSaveOffer}</span>

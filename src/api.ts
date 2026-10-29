@@ -426,10 +426,29 @@ export const api = {
   gifSearch: (query: string) => invoke<GifHit[]>("gif_search", { query }),
   gifFetch: (url: string) => invoke<{ b64: string }>("gif_fetch", { url }),
   assistantOpen: (host: string, url: string) => invoke("assistant_open", { host, url }),
-  quickAsk: (id: number, host: string, text: string, fresh: boolean, isPrivate: boolean, notePaths?: string[]) =>
-    invoke("quick_ask", { id, host, text, fresh, private: isPrivate, notePaths: notePaths ?? [] }),
+  quickAsk: (
+    id: number,
+    host: string,
+    text: string,
+    fresh: boolean,
+    isPrivate: boolean,
+    notePaths?: string[],
+    filePaths?: string[],
+  ) =>
+    invoke("quick_ask", {
+      id,
+      host,
+      text,
+      fresh,
+      private: isPrivate,
+      notePaths: notePaths ?? [],
+      filePaths: filePaths ?? [],
+    }),
   quickStop: () => invoke("quick_stop"),
   quickRelease: () => invoke("quick_release"),
+  stageAnalyzePng: (pngB64: string) => invoke<string>("stage_analyze_png", { pngB64 }),
+  captureScreenRegion: (x: number, y: number, width: number, height: number) =>
+    invoke<string>("capture_screen_region", { x, y, width, height }),
   studyPresetInfo: (presetId: string) => invoke<StudyPresetInfo>("study_preset_info", { presetId }),
   createStudyPreset: (presetId: string, root: string, createFolders: boolean) =>
     invoke<StudyCreateSummary>("create_study_preset", { presetId, root, createFolders }),

@@ -185,7 +185,8 @@ absolute coordinates and are drawn above everything that is not in a fold.
 `fill` (0–1, omitted by default) is how solid the paper wash behind the members
 is. The editor uses about 0.88 when it is omitted. Content created inside the frame joins `children` and stays a member (the frame
 grows to wrap it). Collapsing hides the members and leaves a small note icon at
-`x`,`y`. Deleting the fold deletes its members.
+`marker_x`,`marker_y` (fallback: `x`,`y` when those fields are absent — older
+notes). Deleting the fold deletes its members.
 
 ```jsonc
 {
@@ -193,6 +194,8 @@ grows to wrap it). Collapsing hides the members and leaves a small note icon at
   "width": 340,
   "min_height": 96,          // optional floor; omitted when unset
   "collapsed": true,         // omitted when false
+  "marker_x": 34,            // optional; collapsed icon top-left (chevron center)
+  "marker_y": 18,
   "fill": 0.88,              // optional paper wash, 0–1; omitted uses the default
   "children": ["t_…", "d_…"] // omitted when empty
 }
@@ -261,12 +264,13 @@ Files in a notebook folder that are neither `*.note` nor `.notebook_data` are
     "png_base64": "…",        // cover image, re-encoded to PNG, max 512×512 (fit, keep ratio)
     "hash": "a3f9c2d4e5b60718" // SHA-256 (first 16 hex) of the PNG bytes; used as .ico cache key
   },
-  "separators": {                                 // optional; see §2.3
+  "separators": {                                 // optional; see §2.4
     "name":         [ { "after": "10-17" } ],
     "name_desc":    [],
     "created":      [ { "after": "10-21" } ],
     "created_desc": []
-  }
+  },
+  "sort": "name"                                  // optional; note-list order — see §2.3
 }
 ```
 
@@ -295,7 +299,15 @@ When the cover changes:
 
 `.notebook_data` itself SHOULD be written with the *hidden* file attribute.
 
-### 2.3 Separators
+### 2.3 Note-list sort
+
+Optional `sort` on `.notebook_data`: one of `name`, `name_desc`, `created`,
+`created_desc` (default `name` when absent). The sidebar sort control writes
+here so the order travels with the notebook folder. Older app state that only
+stored sort under `ui-state.json` is read as a one-time fallback until the next
+sort change rewrites `.notebook_data`.
+
+### 2.4 Separators
 
 Small horizontal separator lines between notes in the note-list sidebar
 (Firefox-bookmark style). Rules:

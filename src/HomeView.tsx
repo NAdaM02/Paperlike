@@ -101,6 +101,8 @@ type Props = {
   onBrief: () => void;
   onAsk: () => void;
   onQuickAsk: (seed: QuickSeed) => void;
+  onCalc?: () => void;
+  onAnalyze?: () => void;
   onOpenSettings: () => void;
   settings: Settings;
   onSettingsChange: (s: Settings) => void;
@@ -111,6 +113,8 @@ type Props = {
   onOpenLicense?: () => void;
   /** Open this notebook's Moodle course in a floating window. */
   onOpenCourseMoodle?: (path: string, name: string) => void;
+  /** Bumped by the app when Home changed outside this view (study setup, new notes). */
+  reloadKey?: number;
 };
 
 type DetectRow = DetectedItem & { checked: boolean };
@@ -126,6 +130,8 @@ export function HomeView({
   onBrief,
   onAsk,
   onQuickAsk,
+  onCalc,
+  onAnalyze,
   onOpenSettings,
   settings,
   onSettingsChange,
@@ -133,6 +139,7 @@ export function HomeView({
   trialDays = null,
   onOpenLicense,
   onOpenCourseMoodle,
+  reloadKey = 0,
 }: Props) {
   const [tiles, setTiles] = useState<HomeTile[]>([]);
   const [detect, setDetect] = useState<DetectState>(null);
@@ -214,7 +221,7 @@ export function HomeView({
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, reloadKey]);
 
   useEffect(() => {
     if (!groupOpen) return;
@@ -836,11 +843,12 @@ export function HomeView({
           <button className="btn icon" title="Search everywhere (Ctrl+Shift+F)" aria-label="Search everywhere" onClick={onOpenSearch}>
             <IcSearch size={16} />
           </button>
-          <QuickAskField onAsk={onQuickAsk} disabled={expired} />
+          <QuickAskField onAsk={onQuickAsk} onCalc={onCalc} onAnalyze={onAnalyze} disabled={expired} />
           <button
             className="btn outline"
             title={expired ? messages.premiumOff : "Study sheets and quizzes from several notes"}
             disabled={expired}
+            data-tour="home-ask"
             onClick={onBrief}
           >
             <IcBrief size={15} /> Brief

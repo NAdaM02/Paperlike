@@ -5,6 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { api, HomeTile, RecoveryItem, SearchHit, Settings } from "./api";
 import { ASK_DEFAULT_W, AskHost, AskNote, AskPane, clampAskWidth } from "./AskPane";
+import { AnalyzeOverlay, AnalyzeResult } from "./Analyze";
+import { Calculator } from "./Calculator";
 import { focusQuickField, QuickAskCard, QuickSeed, useNoteSelection } from "./QuickAsk";
 import { BriefView } from "./BriefView";
 import { GlobalSearchModal, HomeView } from "./HomeView";
@@ -189,6 +191,8 @@ export default function App() {
   );
   const saveOpenNote = useRef<(() => Promise<void>) | null>(null);
   const [quick, setQuick] = useState<QuickSeed | null>(null);
+  const [calcOpen, setCalcOpen] = useState(false);
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const [recovery, setRecovery] = useState<RecoveryItem[]>([]);
   useNoteSelection();
   const toastId = useRef(0);
@@ -232,6 +236,38 @@ export default function App() {
     setToasts((t) => [...t, { id, msg }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200);
   }, []);
+
+  const openQuick = (seed: QuickSeed) => {
+    if (premiumOff()) {
+      toast(messages.premiumOff);
+      openLicense();
+      return;
+    }
+    setQuick(seed);
+  };
+
+  const openCalc = () => setCalcOpen((open) => !open);
+
+  const openAnalyze = () => {
+    if (premiumOff()) {
+      toast(messages.premiumOff);
+      openLicense();
+      return;
+    }
+    setAnalyzeOpen(true);
+  };
+
+  const onAnalyzeCapture = (result: AnalyzeResult) => {
+    setAnalyzeOpen(false);
+    openQuick({
+      id: Date.now(),
+      question: result.action,
+      selection: "",
+      imagePath: result.filePath,
+      imagePreview: result.previewUrl,
+      analyze: result.action,
+    });
+  };
 
   type UpdateAnnouncement = { version: string; notes: string; date: string };
   const promptingRef = useRef(false);
@@ -645,7 +681,11 @@ export default function App() {
     };
   }, [goBack, goForward]);
 
-  const refreshTiles = () => api.getHomeTiles().then(setTiles).catch(console.error);
+  const [homeReload, setHomeReload] = useState(0);
+  const refreshTiles = () => {
+    setHomeReload((n) => n + 1);
+    return api.getHomeTiles().then(setTiles).catch(console.error);
+  };
 
   if (!settings) {
     return <div className="empty-state">Loading Paperlike…</div>;
@@ -706,6 +746,7 @@ export default function App() {
       )}
       {route.view === "home" && (
         <HomeView
+          reloadKey={homeReload}
           onToast={toast}
           onOpenSearch={() => setSearchOpen(true)}
           onBlankNote={() => {
@@ -737,14 +778,9 @@ export default function App() {
             setBrief({ notePaths: [] });
           }}
           onAsk={toggleAsk}
-          onQuickAsk={(seed) => {
-            if (premiumOff()) {
-              toast(messages.premiumOff);
-              openLicense();
-              return;
-            }
-            setQuick(seed);
-          }}
+          onQuickAsk={openQuick}
+          onCalc={openCalc}
+          onAnalyze={openAnalyze}
           onOpenNotebook={(path) => {
             refreshTiles();
             navigate({ view: "notebook", path });
@@ -807,14 +843,9 @@ export default function App() {
             });
           }}
           onAsk={toggleAsk}
-          onQuickAsk={(seed) => {
-            if (premiumOff()) {
-              toast(messages.premiumOff);
-              openLicense();
-              return;
-            }
-            setQuick(seed);
-          }}
+          onQuickAsk={openQuick}
+          onCalc={openCalc}
+          onAnalyze={openAnalyze}
           onRegisterSave={registerSave}
           onOpenSettings={() => {
             setSettingsTab("general");
@@ -865,6 +896,10 @@ export default function App() {
           }}
           onClose={() => setQuick(null)}
         />
+      )}
+      {calcOpen && <Calculator onClose={() => setCalcOpen(false)} />}
+      {analyzeOpen && (
+        <AnalyzeOverlay onCancel={() => setAnalyzeOpen(false)} onCapture={onAnalyzeCapture} />
       )}
       </div>
       {ask && (

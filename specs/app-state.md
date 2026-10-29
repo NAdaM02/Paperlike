@@ -31,7 +31,7 @@ state files).
 ```jsonc
 {
   "version": 1,
-  "theme": "bright" | "dark",
+  "theme": "mix" | "bright" | "dark",   // default for new installs: mix
   "autosave": true,                    // File → Auto-save toggle (app-global)
   "export_defaults": { "page_numbers": true, "title_headers": true, "export_date": false, "geometry_block": false },
   "last_export_dir": "C:\\…",

@@ -101,6 +101,7 @@ export function SettingsDialog({
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [updateHistory, setUpdateHistory] = useState<{ version: string; notes: string; date: string }[]>([]);
   const [moodleSaved, setMoodleSaved] = useState(false);
+  const [totpSaved, setTotpSaved] = useState(false);
   useEffect(() => {
     void getVersion()
       .then(setAppVersion)
@@ -117,6 +118,9 @@ export function SettingsDialog({
     void invoke<boolean>("moodle_login_saved")
       .then(setMoodleSaved)
       .catch(() => setMoodleSaved(false));
+    void invoke<boolean>("moodle_totp_saved")
+      .then(setTotpSaved)
+      .catch(() => setTotpSaved(false));
   }, [tab]);
   const save = async (next: Settings) => {
     onChange(next);
@@ -298,6 +302,27 @@ export function SettingsDialog({
                   </>
                 ) : (
                   <p className="settings-hint">{messages.moodleNoSavedLogin}</p>
+                )}
+                {totpSaved ? (
+                  <>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => {
+                        void invoke("moodle_clear_totp")
+                          .then(() => {
+                            setTotpSaved(false);
+                            onToast(messages.moodleTotpForgetDone);
+                          })
+                          .catch((err) => onToast(String(err)));
+                      }}
+                    >
+                      {messages.moodleTotpForget}
+                    </button>
+                    <p className="settings-hint">{messages.moodleTotpForgetHint}</p>
+                  </>
+                ) : (
+                  <p className="settings-hint">{messages.moodleTotpNone}</p>
                 )}
               </section>
             )}
@@ -832,6 +857,16 @@ function useTourUntilReady(until: TourUntil | undefined, view: string, step: num
       setReady(view === "home");
       return;
     }
+    if (until === "note-open") {
+      // A fresh notebook has no notes, and the later page steps need one.
+      const check = () => {
+        const pane = document.querySelector('[data-tour="nb-canvas"]');
+        setReady(!!pane && !pane.querySelector(".empty-state"));
+      };
+      check();
+      const poll = window.setInterval(check, 250);
+      return () => window.clearInterval(poll);
+    }
 
     const sel = tourTargetSel(until);
     if (!sel) {
@@ -970,26 +1005,45 @@ export function WelcomeTour({
       setCard(null);
       return;
     }
-    const r = el.getBoundingClientRect();
+    // Several elements can share one tour id (Brief + Ask); spotlight them together.
+    const key = el.getAttribute("data-tour");
+    const parts = key ? [...document.querySelectorAll(`[data-tour="${key}"]`)] : [el];
+    const rects = parts.map((p) => p.getBoundingClientRect()).filter((b) => b.width > 0 && b.height > 0);
+    const r = rects.length > 1
+      ? (() => {
+          const left = Math.min(...rects.map((b) => b.left));
+          const top = Math.min(...rects.map((b) => b.top));
+          const right = Math.max(...rects.map((b) => b.right));
+          const bottom = Math.max(...rects.map((b) => b.bottom));
+          return { left, top, right, bottom, width: right - left, height: bottom - top };
+        })()
+      : el.getBoundingClientRect();
     const pad = 8;
     setSpot({ top: r.top - pad, left: r.left - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
     const cardW = Math.min(380, window.innerWidth - 32);
+    const gap = 16;
+    const margin = 12;
+    // Beside the target when it fits; otherwise below or above it, so a wide
+    // target (the Home grid, a ribbon row) is never covered by its own card.
+    const place = (h: number) => {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const clampTop = (t: number) => Math.min(Math.max(margin, t), Math.max(margin, vh - h - margin));
+      const clampLeft = (l: number) => Math.min(Math.max(margin, l), Math.max(margin, vw - cardW - margin));
+      if (r.right + gap + cardW <= vw - margin) return { top: clampTop(r.top), left: r.right + gap };
+      if (r.left - gap - cardW >= margin) return { top: clampTop(r.top), left: r.left - gap - cardW };
+      if (r.bottom + gap + h <= vh - margin) return { top: r.bottom + gap, left: clampLeft(r.left) };
+      if (r.top - gap - h >= margin) return { top: r.top - gap - h, left: clampLeft(r.left) };
+      return { top: vh - h - margin, left: clampLeft(r.left) };
+    };
     const measured = cardRef.current?.getBoundingClientRect().height;
-    const cardH = measured && measured > 40 ? measured : 220;
-    let left = r.right + 16;
-    let top = r.top;
-    if (left + cardW > window.innerWidth - 12) left = Math.max(12, r.left - cardW - 16);
-    if (top + cardH > window.innerHeight - 12) top = Math.max(12, window.innerHeight - cardH - 12);
-    if (top < 12) top = 12;
-    setCard({ top, left });
+    setCard(place(measured && measured > 40 ? measured : 220));
     // Remeasure after paint — first pass often uses a stale height for long steps.
     const id = window.requestAnimationFrame(() => {
       const h = cardRef.current?.getBoundingClientRect().height;
       if (!h || h < 40) return;
-      let t = r.top;
-      if (t + h > window.innerHeight - 12) t = Math.max(12, window.innerHeight - h - 12);
-      if (t < 12) t = 12;
-      setCard((prev) => (prev && (prev.top !== t || prev.left !== left) ? { top: t, left } : prev));
+      const next = place(h);
+      setCard((prev) => (prev && (prev.top !== next.top || prev.left !== next.left) ? next : prev));
     });
     return () => window.cancelAnimationFrame(id);
   }, [beat, tick, view, step]);

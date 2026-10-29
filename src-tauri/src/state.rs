@@ -123,7 +123,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: 2,
-            theme: "bright".into(),
+            theme: "mix".into(),
             autosave: true,
             export_defaults: ExportDefaults::default(),
             last_export_dir: None,
