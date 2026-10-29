@@ -22,7 +22,7 @@ import {
   PdfObject,
   TextObject,
 } from "./api";
-import { blockedByFold, collapsedIds, groupAtPoint, groupFrame, groupOf, GROUP_MIN_H, placeNew, pruneGroups, withChild } from "./group";
+import { blockedIn, collapsedIds, foldAt, foldIndex, groupAtPoint, groupFrame, GROUP_MIN_H, placeNew, pruneGroups, withChild } from "./group";
 import { PdfView } from "./PdfView";
 import { mergePdfParts } from "./pdfDoc";
 import { pdfSize, pdfSlots } from "./pdfLayout";
@@ -185,6 +185,8 @@ type Props = {
   initialCam?: { x: number; y: number; z: number } | null;
   /** Receives the live camera and viewport size (free canvas only), without re-rendering the parent. */
   liveCamRef?: React.MutableRefObject<{ x: number; y: number; z: number; w: number; h: number } | null>;
+  /** Called after liveCamRef is updated. */
+  onLiveCam?: () => void;
   findQuery: string;
   /** map object id -> measured pixel height (kept fresh for hit tests / pdf) */
   heightsRef: React.MutableRefObject<Record<string, number>>;
@@ -337,9 +339,17 @@ function arrowTipExtents(it: Extract<DrawingItem, { kind: "arrow" }>): Pt[] {
   return pts;
 }
 
+/** Ink extent per stroke item. Items are replaced, not edited, so the points array identifies the shape. */
+const strokeExtent = new WeakMap<object, { pts: unknown; parts: unknown; n: number; minX: number; minY: number; maxX: number; maxY: number }>();
+
 export function drawingBBox(o: DrawingObject): { x: number; y: number; w: number; h: number } {
   const it = o.item;
   if (it.kind === "stroke") {
+    const hit = strokeExtent.get(it);
+    if (hit && hit.pts === it.points && hit.parts === it.parts && hit.n === it.points.length) {
+      if (!isFinite(hit.minX)) return { x: o.x, y: o.y, w: 1, h: 1 };
+      return { x: o.x + hit.minX, y: o.y + hit.minY, w: hit.maxX - hit.minX || 1, h: hit.maxY - hit.minY || 1 };
+    }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const run of strokeRuns(it.points, it.parts)) {
       for (const p of run) {
@@ -349,6 +359,7 @@ export function drawingBBox(o: DrawingObject): { x: number; y: number; w: number
         maxY = Math.max(maxY, p[1]);
       }
     }
+    strokeExtent.set(it, { pts: it.points, parts: it.parts, n: it.points.length, minX, minY, maxX, maxY });
     if (!isFinite(minX)) return { x: o.x, y: o.y, w: 1, h: 1 };
     return { x: o.x + minX, y: o.y + minY, w: maxX - minX || 1, h: maxY - minY || 1 };
   }
@@ -435,6 +446,7 @@ export function CanvasEditor({
   lockedView,
   initialCam,
   liveCamRef,
+  onLiveCam,
   findQuery,
   heightsRef,
   defaultFont = "Segoe UI",
@@ -497,7 +509,10 @@ export function CanvasEditor({
     if (!liveCamRef || lockedView) return;
     const el = wrapRef.current;
     liveCamRef.current = { ...cam, w: el?.clientWidth ?? 0, h: el?.clientHeight ?? 0 };
+    onLiveCamRef.current?.();
   }, [cam, liveCamRef, lockedView]);
+  const onLiveCamRef = useRef(onLiveCam);
+  onLiveCamRef.current = onLiveCam;
   const lockedRef = useRef(lockedView);
   lockedRef.current = lockedView;
   useEffect(() => {
@@ -604,6 +619,27 @@ export function CanvasEditor({
 
   const objects = note.doc.canvas.objects;
   const sorted = useMemo(() => [...objects].sort(paintOrder), [objects]);
+  // Per-document lookups for rendering, so a camera or hover re-render does
+  // not rescan every fold's children for every object.
+  const scene = useMemo(() => {
+    const byId = new Map<string, CanvasObject>();
+    for (const o of objects) byId.set(o.id, o);
+    const member = new Set<string>();
+    const kidsOf = new Map<string, Exclude<CanvasObject, GroupObject>[]>();
+    for (const o of objects) {
+      if (o.type !== "group") continue;
+      const kids: Exclude<CanvasObject, GroupObject>[] = [];
+      for (const id of o.children ?? []) {
+        member.add(id);
+        const c = byId.get(id);
+        if (c && c.type !== "group") kids.push(c);
+      }
+      kids.sort(paintOrder);
+      kidsOf.set(o.id, kids);
+    }
+    return { byId, member, kidsOf };
+  }, [objects]);
+  const selSet = useMemo(() => new Set(selected), [selected]);
   const maxZ = useCallback(() => objects.reduce((m, o) => Math.max(m, o.z), 0), [objects]);
 
   const updateObjects = useCallback(
@@ -1727,12 +1763,13 @@ export function CanvasEditor({
 
   const objectAtPoint = (x: number, y: number): string | null => {
     const hidden = collapsedIds(objectsRef.current);
+    const folds = foldIndex(objectsRef.current, boxOf);
     let best: CanvasObject | null = null;
     for (const o of objectsRef.current) {
-      if (hidden.has(o.id) || blockedByFold(objectsRef.current, o, boxOf)) continue;
+      if (hidden.has(o.id) || blockedIn(folds, o, boxOf)) continue;
       let hit = false;
       if (o.type === "group") {
-        const b = o.collapsed ? collapsedBox(o) : groupFrame(o, objectsRef.current, boxOf);
+        const b = o.collapsed ? collapsedBox(o) : folds.frames.get(o.id) ?? groupFrame(o, objectsRef.current, boxOf);
         hit = x >= b.x && y >= b.y && x <= b.x + b.w && y <= b.y + b.h;
       } else if (o.type === "drawing") {
         // Hit the ink, not the padded selection frame. Overlapping frames made
@@ -1755,16 +1792,16 @@ export function CanvasEditor({
     const hitsRect = (b: { x: number; y: number; w: number; h: number }) =>
       b.x < x2 && b.x + b.w > x1 && b.y < y2 && b.y + b.h > y1;
     const hidden = collapsedIds(objects);
-    const startedIn = groupAtPoint(objects, d.sx, d.sy, boxOf);
+    const folds = foldIndex(objects, boxOf);
+    const startedIn = foldAt(folds, d.sx, d.sy);
     // Empty fold paper (no member hit) selects the fold. A rect that catches
     // members selects those members — same as a marquee that starts inside.
     const emptyFold = new Set<string>();
-    for (const o of objects) {
-      if (o.type !== "group" || o.collapsed || o.id === startedIn) continue;
-      const frame = groupFrame(o, objects, boxOf);
+    for (const { g: o, frame } of folds.open) {
+      if (o.id === startedIn) continue;
       if (!hitsRect(frame)) continue;
       const childHit = (o.children ?? []).some((id) => {
-        const child = objects.find((c) => c.id === id);
+        const child = folds.byId.get(id);
         if (!child || child.type === "group") return false;
         if (child.type === "drawing") return drawingTouchesRect(child, x1, y1, x2, y2);
         return hitsRect(objectBBox(child, heightsRef.current));
@@ -1773,13 +1810,13 @@ export function CanvasEditor({
     }
     return objects
       .filter((o) => {
-        if (hidden.has(o.id) || blockedByFold(objects, o, boxOf)) return false;
+        if (hidden.has(o.id) || blockedIn(folds, o, boxOf)) return false;
         if (o.locked && !shiftRef.current) return false;
         if (o.type === "group") {
           if (o.collapsed) return hitsRect(collapsedBox(o));
           return emptyFold.has(o.id);
         }
-        const parent = groupOf(objects, o.id);
+        const parent = folds.owner.get(o.id);
         if (parent && emptyFold.has(parent)) return false;
         if (o.type === "drawing") return drawingTouchesRect(o, x1, y1, x2, y2);
         return hitsRect(objectBBox(o, heightsRef.current));
@@ -1828,6 +1865,17 @@ export function CanvasEditor({
     path.style.fillOpacity = "1";
   };
 
+  /** Raw pointer samples can arrive far faster than the screen refreshes. Ink is
+   *  rebuilt from the whole stroke, so paint at most once per frame. */
+  const liveInkRaf = useRef(0);
+  const queueLiveInk = (d: Extract<Drag, { mode: "draw" }>) => {
+    if (liveInkRaf.current) return;
+    liveInkRaf.current = requestAnimationFrame(() => {
+      liveInkRaf.current = 0;
+      if (dragRef.current === d) paintLiveInk(d);
+    });
+  };
+
   /** Add samples to the stroke in progress. Used by pointermove and by pointerrawupdate. */
   const followDraw = (e: PointerEvent) => {
     const d = dragRef.current;
@@ -1849,7 +1897,7 @@ export function CanvasEditor({
         if (tip && d.pts.length > 4 && Math.hypot(tip[0], tip[1]) > 12 && Math.hypot(x, y) < 2) continue;
         if (pushPenSample(d.pts, d.pressure, x, y, d.pressure ? readPressure(ev) : null)) grew = true;
       }
-      if (grew) paintLiveInk(d);
+      if (grew) queueLiveInk(d);
       return;
     }
     const pt = toCanvas(e.clientX, e.clientY);
@@ -1862,14 +1910,14 @@ export function CanvasEditor({
       d.pts = [[0, 0], p];
       if (d.times) d.times = [d.times[0] ?? performance.now(), performance.now()];
       if (d.pressure) d.pressure = [d.pressure[0] ?? 0.5, readPressure(e)];
-      paintLiveInk(d);
+      queueLiveInk(d);
       return;
     }
     const prev = d.pts[d.pts.length - 1];
     if (Math.hypot(p[0] - prev[0], p[1] - prev[1]) * camRef.current.z < 0.45) return;
     d.pts.push(p);
     if (d.times) d.times.push(performance.now());
-    paintLiveInk(d);
+    queueLiveInk(d);
   };
   followDrawRef.current = followDraw;
 
@@ -1955,9 +2003,10 @@ export function CanvasEditor({
         if (!cur || cur.mode !== "move" || cur.pendingDx == null || cur.pendingDy == null) return;
         const mdx = cur.pendingDx;
         const mdy = cur.pendingDy;
+        const at = new Map(cur.ids.map((id, i) => [id, i] as const));
         updateObjects((objs) =>
           objs.map((o) => {
-            const i = cur.ids.indexOf(o.id);
+            const i = at.get(o.id) ?? -1;
             if (i < 0) return o;
             const start = cur.orig[i];
             if (o.type === "group" && (start.marker_x != null || start.marker_y != null)) {
@@ -2204,6 +2253,10 @@ export function CanvasEditor({
       marqueeRaf.current = 0;
     }
     if (marqueeElRef.current) marqueeElRef.current.style.display = "none";
+    if (liveInkRaf.current) {
+      cancelAnimationFrame(liveInkRaf.current);
+      liveInkRaf.current = 0;
+    }
     if (liveInkRef.current) liveInkRef.current.style.display = "none";
     if (panning) setPanning(false);
     if (!d) return;
@@ -2288,9 +2341,10 @@ export function CanvasEditor({
             ? collapsedBox(o)
             : { x: 0, y: 0, w: 0, h: 0 }
           : objectBBox(o, heightsRef.current);
+      const folds = foldIndex(objects, boxOf);
       const hits = lassoHits(objects, loop, boxForLasso).filter((id) => {
-        const o = objects.find((x) => x.id === id);
-        if (!o || hidden.has(id) || blockedByFold(objects, o, boxOf)) return false;
+        const o = folds.byId.get(id);
+        if (!o || hidden.has(id) || blockedIn(folds, o, boxOf)) return false;
         if (o.type === "group") return o.collapsed;
         return true;
       });
@@ -3216,8 +3270,8 @@ export function CanvasEditor({
           </div>
         )}
         {sorted.map((o) => {
-          if (o.type === "group" || groupOf(objects, o.id)) return null;
-          const sel = selected.includes(o.id);
+          if (o.type === "group" || scene.member.has(o.id)) return null;
+          const sel = selSet.has(o.id);
           // Shape tools show handles only on the shape just drawn. A leftover
           // selection must not keep the previous shape in edit mode.
           const showAdjust = tool === "select" ? sel && soloSelected : adjustId === o.id;
@@ -3294,11 +3348,8 @@ export function CanvasEditor({
         })}
 
         {sorted.filter((o): o is GroupObject => o.type === "group").map((g) => {
-          const frame = groupFrame(g, objects, boxOf);
-          const kids = (g.children ?? [])
-            .map((id) => objects.find((o) => o.id === id))
-            .filter((o): o is Exclude<CanvasObject, GroupObject> => !!o && o.type !== "group")
-            .sort(paintOrder);
+          const frame = groupFrame(g, objects, boxOf, scene.byId);
+          const kids = g.collapsed ? [] : scene.kidsOf.get(g.id) ?? [];
           return (
             <div key={g.id} className="fold-layer" style={{ zIndex: 2 + g.z }}>
               {!g.collapsed && (
@@ -3316,7 +3367,7 @@ export function CanvasEditor({
               )}
               {!g.collapsed &&
                 kids.map((o) => {
-                  const sel = selected.includes(o.id);
+                  const sel = selSet.has(o.id);
                   const showAdjust = tool === "select" ? sel && soloSelected : adjustId === o.id;
                   if (o.type === "text") {
                     const hasMatch = !!q && blocksPlainText(o.blocks).toLowerCase().includes(q);
@@ -3486,12 +3537,12 @@ export function CanvasEditor({
           (() => {
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (const id of selected) {
-              const o = objects.find((x) => x.id === id);
+              const o = scene.byId.get(id);
               if (!o) continue;
               const b = o.type === "group"
                 ? o.collapsed
                   ? collapsedBox(o)
-                  : groupFrame(o, objects, boxOf)
+                  : groupFrame(o, objects, boxOf, scene.byId)
                 : boxOf(o);
               minX = Math.min(minX, b.x);
               minY = Math.min(minY, b.y);
@@ -3511,7 +3562,7 @@ export function CanvasEditor({
           })()}
         {(() => {
             const drawings = (tool === "select" || tool === "lasso" ? selected : adjustId ? [adjustId] : [])
-              .map((id) => objects.find((o) => o.id === id))
+              .map((id) => scene.byId.get(id))
               .filter((o): o is DrawingObject => !!o && o.type === "drawing");
             if (!drawings.length) return null;
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;

@@ -572,37 +572,40 @@ export function NotebookView({
   };
 
   const noteOpen = !!note;
-  // liveCamRef is written after each camera commit. Poll it while a note is open
-  // so auto-hide follows pan and zoom without re-rendering the editor.
+  const titleHideOn = noteOpen && settings.title_auto_hide !== false;
+  const titleAutoHideRef = useRef(titleHideOn);
+  titleAutoHideRef.current = titleHideOn;
+  // Re-evaluated when the editor commits a camera change and when focus moves,
+  // instead of polling every frame.
+  const checkTitleAway = useCallback(() => {
+    if (!titleAutoHideRef.current) return;
+    const cam = camRef.current;
+    // A canvas point (x, y) is drawn at (cam.x + x*cam.z, cam.y + y*cam.z).
+    // The viewport's top edge is therefore canvas y = -cam.y / cam.z.
+    const top = cam && cam.z > 0 ? -cam.y / cam.z : 0;
+    const prev = titleAwayRef.current;
+    const editingTitle = !!document.activeElement?.closest(".note-title-row");
+    const away = !editingTitle && (prev ? top > TITLE_AUTOSHOW_Y : top > TITLE_AUTOHIDE_Y);
+    if (away !== prev) {
+      titleAwayRef.current = away;
+      setTitleScrolledAway(away);
+    }
+  }, []);
   useEffect(() => {
-    if (!noteOpen || settings.title_auto_hide === false) {
+    if (!titleHideOn) {
       titleAwayRef.current = false;
       setTitleScrolledAway(false);
       return;
     }
-    let frame = 0;
-    let dead = false;
-    const tick = () => {
-      if (dead) return;
-      const cam = camRef.current;
-      // A canvas point (x, y) is drawn at (cam.x + x*cam.z, cam.y + y*cam.z).
-      // The viewport's top edge is therefore canvas y = -cam.y / cam.z.
-      const top = cam && cam.z > 0 ? -cam.y / cam.z : 0;
-      const prev = titleAwayRef.current;
-      const editingTitle = !!document.activeElement?.closest(".note-title-row");
-      const away = !editingTitle && (prev ? top > TITLE_AUTOSHOW_Y : top > TITLE_AUTOHIDE_Y);
-      if (away !== prev) {
-        titleAwayRef.current = away;
-        setTitleScrolledAway(away);
-      }
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
+    checkTitleAway();
+    const onFocus = () => checkTitleAway();
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("focusout", onFocus);
     return () => {
-      dead = true;
-      cancelAnimationFrame(frame);
+      document.removeEventListener("focusin", onFocus);
+      document.removeEventListener("focusout", onFocus);
     };
-  }, [noteOpen, settings.title_auto_hide]);
+  }, [titleHideOn, checkTitleAway]);
 
   useEffect(() => {
     if (!titleScrolledAway) setTitleHoldOpen(false);
@@ -620,7 +623,10 @@ export function NotebookView({
       lastSnap.current.t = now;
       return;
     }
-    past.current.push(structuredClone(n.doc));
+    // Edits replace objects instead of changing them, so the old document
+    // stays intact and history can hold it by reference. A deep copy of a large
+    // note took tens of milliseconds and megabytes on every stroke.
+    past.current.push(n.doc);
     if (past.current.length > 200) past.current.shift();
     future.current = [];
     lastSnap.current = { t: now, key };
@@ -640,7 +646,7 @@ export function NotebookView({
     const prev = past.current.pop();
     const n = noteRef.current;
     if (!prev || !n) return;
-    future.current.push(structuredClone(n.doc));
+    future.current.push(n.doc);
     lastSnap.current = { t: 0, key: "" };
     applyDoc(prev);
   }, []);
@@ -649,7 +655,7 @@ export function NotebookView({
     const next = future.current.pop();
     const n = noteRef.current;
     if (!next || !n) return;
-    past.current.push(structuredClone(n.doc));
+    past.current.push(n.doc);
     lastSnap.current = { t: 0, key: "" };
     applyDoc(next);
   }, []);
@@ -723,7 +729,7 @@ export function NotebookView({
     if (!n || n.read_only) return true;
     setSaveInFlight(true);
     try {
-      const saved = await api.saveNote({
+      const saved = await api.saveNoteInfo({
         ...n,
         doc: {
           ...n.doc,
@@ -737,7 +743,7 @@ export function NotebookView({
       if (!cur || cur.path !== n.path) return true;
       // Keep any edits that landed while the write was in flight.
       const stillDirty = cur.doc !== n.doc || cur.media_b64 !== n.media_b64;
-      setNote({ ...saved, doc: cur.doc, media_b64: cur.media_b64, display_title: cur.display_title });
+      setNote({ ...cur, ...saved });
       dirtyRef.current = stillDirty;
       setDirty(stillDirty);
       if (!stillDirty) {
@@ -4026,6 +4032,7 @@ export function NotebookView({
                   }}
                   viewRef={viewRef}
                   liveCamRef={camRef}
+                  onLiveCam={checkTitleAway}
                   initialCam={restoreCamRef.current}
                   paper={paper}
                   onRequestTool={setTool}

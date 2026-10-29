@@ -355,6 +355,9 @@ export const api = {
   deleteNote: (path: string) => invoke("delete_note", { path }),
   loadNote: (path: string) => invoke<NotePayload>("load_note", { path }),
   saveNote: (payload: NotePayload) => invoke<NotePayload>("save_note", { payload }),
+  /** Saves and returns only the file facts, not the whole note again. */
+  saveNoteInfo: (payload: NotePayload) =>
+    invoke<Pick<NotePayload, "path" | "title" | "empty_named" | "created" | "modified">>("save_note_info", { payload }),
   addTodayTitle: (path: string, format?: string) =>
     invoke<string>("add_today_title", { path, format: format ?? null }),
   setNotebookMeta: (path: string, name?: string, description?: string) =>

@@ -8,13 +8,18 @@ type Box = { x: number; y: number; w: number; h: number };
 type BoxOf = (o: CanvasObject) => Box;
 
 /** Display frame: the stored rectangle, grown to wrap every child (plus padding). */
-export function groupFrame(g: GroupObject, objects: CanvasObject[], box: BoxOf): Box {
+export function groupFrame(
+  g: GroupObject,
+  objects: CanvasObject[],
+  box: BoxOf,
+  byId?: Map<string, CanvasObject>,
+): Box {
   let x1 = g.x;
   let y1 = g.y;
   let x2 = g.x + Math.max(GROUP_MIN_W, g.width);
   let y2 = g.y + Math.max(GROUP_MIN_H, g.min_height ?? 0);
   for (const id of g.children ?? []) {
-    const o = objects.find((c) => c.id === id);
+    const o = byId ? byId.get(id) : objects.find((c) => c.id === id);
     if (!o || o.type === "group") continue;
     const b = box(o);
     x1 = Math.min(x1, b.x - GROUP_PAD);
@@ -25,17 +30,59 @@ export function groupFrame(g: GroupObject, objects: CanvasObject[], box: BoxOf):
   return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
 }
 
-/** Topmost expanded fold containing the point, if any. */
-export function groupAtPoint(objects: CanvasObject[], x: number, y: number, box: BoxOf): string | null {
-  let best: GroupObject | null = null;
+/**
+ * Fold frames and membership, computed once. Hit tests that look at every
+ * object must use this: recomputing each frame per object grows with
+ * objects x folds x members and froze marquee drags on ink-heavy notes.
+ */
+export type FoldIndex = {
+  byId: Map<string, CanvasObject>;
+  /** Expanded folds with their display frames. */
+  open: { g: GroupObject; frame: Box }[];
+  frames: Map<string, Box>;
+  /** Member id to the first fold that lists it (same answer as groupOf). */
+  owner: Map<string, string>;
+};
+
+export function foldIndex(objects: CanvasObject[], box: BoxOf): FoldIndex {
+  const byId = new Map<string, CanvasObject>();
+  for (const o of objects) byId.set(o.id, o);
+  const open: { g: GroupObject; frame: Box }[] = [];
+  const frames = new Map<string, Box>();
+  const owner = new Map<string, string>();
   for (const o of objects) {
-    if (o.type !== "group" || o.collapsed) continue;
-    const f = groupFrame(o, objects, box);
+    if (o.type !== "group") continue;
+    for (const id of o.children ?? []) if (!owner.has(id)) owner.set(id, o.id);
+    if (o.collapsed) continue;
+    const frame = groupFrame(o, objects, box, byId);
+    open.push({ g: o, frame });
+    frames.set(o.id, frame);
+  }
+  return { byId, open, frames, owner };
+}
+
+/** groupAtPoint over a prepared index. */
+export function foldAt(ix: FoldIndex, x: number, y: number): string | null {
+  let best: GroupObject | null = null;
+  for (const { g, frame: f } of ix.open) {
     if (x >= f.x && y >= f.y && x <= f.x + f.w && y <= f.y + f.h) {
-      if (!best || o.z >= best.z) best = o;
+      if (!best || g.z >= best.z) best = g;
     }
   }
   return best?.id ?? null;
+}
+
+/** blockedByFold over a prepared index. */
+export function blockedIn(ix: FoldIndex, o: CanvasObject, box: BoxOf): boolean {
+  if (o.type === "group") return false;
+  const b = box(o);
+  const top = foldAt(ix, b.x + b.w / 2, b.y + b.h / 2);
+  return !!top && (ix.owner.get(o.id) ?? null) !== top;
+}
+
+/** Topmost expanded fold containing the point, if any. */
+export function groupAtPoint(objects: CanvasObject[], x: number, y: number, box: BoxOf): string | null {
+  return foldAt(foldIndex(objects, box), x, y);
 }
 
 /**
@@ -44,9 +91,7 @@ export function groupAtPoint(objects: CanvasObject[], x: number, y: number, box:
  */
 export function blockedByFold(objects: CanvasObject[], o: CanvasObject, box: BoxOf): boolean {
   if (o.type === "group") return false;
-  const b = box(o);
-  const top = groupAtPoint(objects, b.x + b.w / 2, b.y + b.h / 2, box);
-  return !!top && groupOf(objects, o.id) !== top;
+  return blockedIn(foldIndex(objects, box), o, box);
 }
 
 export function groupOf(objects: CanvasObject[], id: string): string | null {

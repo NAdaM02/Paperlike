@@ -139,6 +139,7 @@ pub fn run() {
             commands::delete_note,
             commands::load_note,
             commands::save_note,
+            commands::save_note_info,
             commands::add_today_title,
             commands::set_notebook_meta,
             commands::set_notebook_cover,

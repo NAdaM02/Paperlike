@@ -486,6 +486,29 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
     STANDARD.decode(s).map_err(err_str)
 }
 
+/// What the editor needs back after an autosave. Returning the whole note
+/// would send the full document across the bridge again only to be dropped.
+#[derive(Debug, Clone, Serialize)]
+pub struct SavedNoteInfo {
+    pub path: String,
+    pub title: String,
+    pub empty_named: bool,
+    pub created: String,
+    pub modified: String,
+}
+
+#[tauri::command]
+pub fn save_note_info(payload: NotePayload) -> Result<SavedNoteInfo, String> {
+    let saved = save_note(payload)?;
+    Ok(SavedNoteInfo {
+        path: saved.path,
+        title: saved.title,
+        empty_named: saved.empty_named,
+        created: saved.created,
+        modified: saved.modified,
+    })
+}
+
 #[tauri::command]
 pub fn save_note(payload: NotePayload) -> Result<NotePayload, String> {
     gate_edit()?;
