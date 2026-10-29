@@ -5,9 +5,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { api, HomeTile, RecoveryItem, SearchHit, Settings } from "./api";
 import { ASK_DEFAULT_W, AskHost, AskNote, AskPane, clampAskWidth } from "./AskPane";
-import { AnalyzeOverlay, AnalyzeResult } from "./Analyze";
+import { AnalyzeMark, AnalyzeOverlay, AnalyzeRect, AnalyzeResult } from "./Analyze";
+import { NoteArea, noteAreaAt } from "./canvasAnchor";
 import { Calculator } from "./Calculator";
 import { focusQuickField, QuickAskCard, QuickSeed, useNoteSelection } from "./QuickAsk";
+import { defaultHost, setDefaultHost } from "./chat";
 import { BriefView } from "./BriefView";
 import { GlobalSearchModal, HomeView } from "./HomeView";
 import { MoodleFloat } from "./MoodlePane";
@@ -45,13 +47,11 @@ function routesEqual(a: Route, b: Route): boolean {
 }
 
 function lastHost(): AskHost {
-  const saved = localStorage.getItem("pl.ask.host");
-  if (saved === "gemini" || saved === "chatgpt") return saved;
-  return "claude";
+  return defaultHost();
 }
 
 function rememberHost(host: AskHost) {
-  localStorage.setItem("pl.ask.host", host);
+  setDefaultHost(host);
 }
 
 function cleanArg(raw: string): string {
@@ -193,6 +193,8 @@ export default function App() {
   const [quick, setQuick] = useState<QuickSeed | null>(null);
   const [calcOpen, setCalcOpen] = useState(false);
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  /** Outline of the area an Analyze answer is about; `askId` once that chat moved to the Ask pane. */
+  const [analyzeMark, setAnalyzeMark] = useState<{ rect: AnalyzeRect; area: NoteArea | null; askId?: number } | null>(null);
   const [recovery, setRecovery] = useState<RecoveryItem[]>([]);
   useNoteSelection();
   const toastId = useRef(0);
@@ -244,6 +246,7 @@ export default function App() {
       return;
     }
     setQuick(seed);
+    setAnalyzeMark(seed.anchor ? { rect: seed.anchor, area: seed.area ?? null } : null);
   };
 
   const openCalc = () => setCalcOpen((open) => !open);
@@ -254,6 +257,7 @@ export default function App() {
       openLicense();
       return;
     }
+    setAnalyzeMark(null);
     setAnalyzeOpen(true);
   };
 
@@ -266,8 +270,18 @@ export default function App() {
       imagePath: result.filePath,
       imagePreview: result.previewUrl,
       analyze: result.action,
+      anchor: result.rect,
+      area: noteAreaAt(result.rect),
     });
   };
+
+  // The outline stays while its answer is open: the quick card, or the Ask pane it continued in.
+  useEffect(() => {
+    if (!analyzeMark) return;
+    const inCard = !!quick?.anchor && analyzeMark.askId === undefined;
+    const inPane = analyzeMark.askId !== undefined && ask?.id === analyzeMark.askId;
+    if (!inCard && !inPane) setAnalyzeMark(null);
+  }, [analyzeMark, quick, ask]);
 
   type UpdateAnnouncement = { version: string; notes: string; date: string };
   const promptingRef = useRef(false);
@@ -890,14 +904,19 @@ export default function App() {
           beforeAsk={() => saveOpenNote.current?.() ?? Promise.resolve()}
           onHost={rememberHost}
           onOpenPanel={(host, question, url) => {
+            const id = Date.now();
             setQuick(null);
             rememberHost(host);
-            setAsk({ id: Date.now(), host, briefPaths: null, question: url ? "" : question, send: false, url });
+            setAsk({ id, host, briefPaths: null, question: url ? "" : question, send: false, url });
+            setAnalyzeMark((m) => (m ? { ...m, askId: id } : m));
           }}
           onClose={() => setQuick(null)}
         />
       )}
       {calcOpen && <Calculator onClose={() => setCalcOpen(false)} />}
+      {analyzeMark && (
+        <AnalyzeMark rect={analyzeMark.rect} area={analyzeMark.area} />
+      )}
       {analyzeOpen && (
         <AnalyzeOverlay onCancel={() => setAnalyzeOpen(false)} onCapture={onAnalyzeCapture} />
       )}

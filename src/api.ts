@@ -458,7 +458,7 @@ export const api = {
 };
 
 /** Reply of a background chat question, streamed; `error` ends it (`signin`, `nobox`, `noreply`, …). */
-export type QuickEvent = { id: number; text: string; done: boolean; error: string | null; url: string | null };
+export type QuickEvent = { id: number; text: string; done: boolean; error: string | null; url: string | null; thinking?: string | null };
 
 export type AttachResult = { files: string[]; found_box: boolean; attached: boolean };
 

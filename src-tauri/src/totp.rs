@@ -47,6 +47,15 @@ pub fn code_now(secret: &str) -> Result<(String, u64), String> {
     Ok((code_at(secret, now)?, 30 - now % 30))
 }
 
+/// The current 30-second step and the seconds left in it.
+pub fn step_now() -> Result<(u64, u64), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    Ok((now / 30, 30 - now % 30))
+}
+
 pub fn code_at(secret: &str, unix: u64) -> Result<String, String> {
     let key = base32_decode(secret).ok_or("Invalid TOTP key.")?;
     let mac = hmac_sha1(&key, &(unix / 30).to_be_bytes());

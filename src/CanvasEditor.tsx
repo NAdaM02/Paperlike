@@ -1,3 +1,4 @@
+import { canvasMoved, registerCanvas } from "./canvasAnchor";
 import {
   memo,
   startTransition,
@@ -520,6 +521,14 @@ export function CanvasEditor({
   }, [lockedView]);
   const camRef = useRef(cam);
   camRef.current = cam;
+  // Lets overlays (the Analyze outline) follow a spot in this note while the view moves.
+  useEffect(() => canvasMoved(), [cam]);
+  const notePathForAnchor = note.path;
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    return registerCanvas({ key: notePathForAnchor, wrap, cam: () => camRef.current });
+  }, [notePathForAnchor]);
   const [selected, setSelected] = useState<string[]>([]);
   /** Pages picked inside each selected PDF. Ctrl-click adds pages from other PDFs. */
   const [pdfPick, setPdfPick] = useState<Record<string, number[]>>({});

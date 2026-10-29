@@ -1572,6 +1572,11 @@ const owCount = (marks) => { const blob = owBlob(); return marks.map((m) => owHi
 const owChip = (el) => {
   const tag = (el.tagName || "").toLowerCase();
   const cls = typeof el.className === "string" ? el.className.toLowerCase() : "";
+  if (tag === "img") {
+    // Image uploads show a local preview first (blob: or data: URL) on every chat site.
+    const src = el.getAttribute("src") || "";
+    return src.startsWith("blob:") || src.startsWith("data:image");
+  }
   return tag.includes("file-preview") || tag.includes("uploader-file") || /file-preview|file-chip|attachment-chip|uploaded-file|upload-preview/.test(cls);
 };
 const owChips = () => { let n = 0; owWalk(document.body, (_n, el) => { if (el && owChip(el)) n++; }); return n; };
@@ -1661,9 +1666,99 @@ const FILE_INPUT_JS: &str = r#"(() => {
   return inputs.find((i) => i.multiple) || inputs[0] || null;
 })()"#;
 
+/// The file input for pictures: one that takes images, else the general one.
+const IMAGE_INPUT_JS: &str = r#"(() => {
+  const inputs = [...document.querySelectorAll('input[type="file"]')].filter((i) => !i.disabled);
+  const takes = (i) => !i.accept || /image|png|\*/i.test(i.accept);
+  return inputs.find((i) => i.accept && /image|png/i.test(i.accept) && i.multiple)
+    || inputs.find((i) => i.accept && /image|png/i.test(i.accept))
+    || inputs.find((i) => takes(i) && i.multiple)
+    || inputs.find(takes)
+    || null;
+})()"#;
+
+/// True when every file is a picture (Analyze captures).
+fn all_images(files: &[String]) -> bool {
+    !files.is_empty()
+        && files.iter().all(|f| {
+            let l = f.to_ascii_lowercase();
+            [".png", ".jpg", ".jpeg", ".webp", ".gif"].iter().any(|e| l.ends_with(e))
+        })
+}
+
+/// True only once the chat itself shows the files: a name, a chip, or a picture preview.
+/// (A file input holding them is not enough; the site may not have taken them.)
+fn shown_js(marks: &serde_json::Value, before: &serde_json::Value, chips: &serde_json::Value) -> String {
+    format!(
+        r#"(async () => {{ {COMPOSER_JS}
+  const before = {before};
+  const chips0 = {chips};
+  for (let i = 0; i < 16; i++) {{
+    if (owCount({marks}).some((n, j) => n > (before[j] ?? 0))) return true;
+    if (owChips() > chips0) return true;
+    await owSleep(300);
+  }}
+  return false;
+}})()"#
+    )
+}
+
+/// The send button can be pressed: the chat has finished taking the attachments.
+fn send_ready_js() -> String {
+    format!("(() => {{ {REPLY_JS} const b = owSendButton(); return !!b && !b.disabled && b.getAttribute('aria-disabled') !== 'true'; }})()")
+}
+
+/// The files as the page's own `File` objects, then pasted (`paste`) or dropped (`drop`) on the
+/// message box from inside the page. Chat sites read both from the event's data, which works
+/// even where their file input only appears after a menu is opened.
+fn synth_attach_js(files: &serde_json::Value, mode: &str) -> String {
+    format!(
+        r#"(() => {{ {COMPOSER_JS}
+  const box = owBox();
+  if (!box) return "nobox";
+  const dt = new DataTransfer();
+  for (const f of {files}) {{
+    const bin = atob(f.b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    dt.items.add(new File([bytes], f.name, {{ type: f.mime, lastModified: Date.now() }}));
+  }}
+  box.focus();
+  if ({mode:?} === "paste") {{
+    box.dispatchEvent(new ClipboardEvent("paste", {{ clipboardData: dt, bubbles: true, cancelable: true }}));
+    return "pasted";
+  }}
+  const r = box.getBoundingClientRect();
+  const at = {{ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true, dataTransfer: dt }};
+  for (const type of ["dragenter", "dragover", "drop"]) box.dispatchEvent(new DragEvent(type, at));
+  return "dropped";
+}})()"#
+    )
+}
+
+/// What file inputs the page has (for the log when an attachment does not show).
+const FILE_INPUTS_DIAG_JS: &str = r#"(() => [...document.querySelectorAll('input[type="file"]')].map((i) => `${i.accept || "*"}${i.multiple ? " multi" : ""}${i.disabled ? " disabled" : ""}`).join(" | ") || "none")()"#;
+
+/// Pastes the clipboard (which holds the files) into the focused message box.
+async fn attach_by_paste(view: &tauri::Webview) -> Result<(), String> {
+    for kind in ["keyDown", "keyUp"] {
+        cdp(
+            view,
+            "Input.dispatchKeyEvent",
+            serde_json::json!({ "type": kind, "modifiers": 2, "key": "v", "code": "KeyV", "windowsVirtualKeyCode": 86, "commands": if kind == "keyDown" { serde_json::json!(["paste"]) } else { serde_json::json!([]) } }),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Hands the files to the page's own file input, as if picked in its file dialog.
 async fn attach_by_input(view: &tauri::Webview, files: &[String]) -> Result<bool, String> {
-    let res = cdp(view, "Runtime.evaluate", serde_json::json!({ "expression": FILE_INPUT_JS })).await?;
+    attach_by_input_with(view, files, FILE_INPUT_JS).await
+}
+
+async fn attach_by_input_with(view: &tauri::Webview, files: &[String], pick: &str) -> Result<bool, String> {
+    let res = cdp(view, "Runtime.evaluate", serde_json::json!({ "expression": pick })).await?;
     let Some(object_id) = res["result"]["objectId"].as_str() else { return Ok(false) };
     cdp(view, "DOM.setFileInputFiles", serde_json::json!({ "files": files, "objectId": object_id })).await?;
     Ok(true)
@@ -1816,6 +1911,8 @@ struct QuickEvent {
     error: Option<String>,
     /// Address of the conversation, so the Ask pane can continue it.
     url: Option<String>,
+    /// The model's visible reasoning so far, when the site shows it.
+    thinking: Option<String>,
 }
 
 /// Chat-site status with no answer in it ("Claude is responding…", "Just now").
@@ -1875,8 +1972,47 @@ const plReplySel = [
   '[data-message-author-role="assistant"]', 'article[data-turn="assistant"]', '.agent-turn',
   '.font-claude-response', '.font-claude-message', '[data-testid="assistant-message"]',
   'model-response message-content', 'message-content', '.model-response-text', 'model-response',
+  // ChatGPT (2026): each message block starts with a screen-reader heading carrying its role.
+  ':is(h1,h2,h3,h4,h5,h6)[data-conversation-role]:not([data-conversation-role="user"])',
 ];
 const plReplyCounts = () => plReplySel.map((s) => document.querySelectorAll(s).length);
+// A matched role heading stands for the block it heads; the heading itself is sr-only.
+const plReplyEl = (el) => (el && /^H[1-6]$/.test(el.tagName) && el.hasAttribute('data-conversation-role') ? el.parentElement : el);
+// Newest conversation turn, and an error banner in it (e.g. ChatGPT's "cloudflare_challenge" + Retry).
+const plLastTurn = () => { const t = document.querySelectorAll('[data-turn-key], [data-talvt-turn-state], article[data-turn]'); return t.length ? t[t.length - 1] : null; };
+const plTurnBusy = () => { const t = plLastTurn(); const st = t && (t.getAttribute('data-talvt-turn-state') || (t.querySelector('[data-talvt-turn-state]') || {getAttribute: () => null}).getAttribute('data-talvt-turn-state')); return !!st && !/^(complete|done|error|failed)$/i.test(st); };
+// The model's visible reasoning for the newest question: Gemini's thoughts panel, Claude's and
+// ChatGPT's thinking blocks. Only blocks after the last user message count.
+const plThinkSel = [
+  'model-thoughts', '[data-test-id*="thought" i]', '[data-testid*="thinking" i]', '[data-testid*="reasoning" i]',
+  '[class*="thinking-block" i]', '[class*="thoughts" i]', '[class*="reasoning" i]', '[aria-label*="thinking" i]',
+];
+const plUserSel = '[data-message-author-role="user"], [data-testid="user-message"], user-query, [data-conversation-role="user"]';
+const plThinking = () => {
+  const users = document.querySelectorAll(plUserSel);
+  const lastUser = users.length ? users[users.length - 1] : null;
+  const after = (el) => !lastUser || !!(lastUser.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+  let best = null;
+  for (const s of plThinkSel) {
+    let found;
+    try { found = [...document.querySelectorAll(s)]; } catch (e) { continue; }
+    const el = found.filter((x) => after(x) && !x.closest('nav, aside, header, form, [contenteditable="true"]')).pop();
+    if (el && (el.innerText || '').trim()) { best = el; break; }
+  }
+  if (!best) return null;
+  const lines = (best.innerText || '').split('\n').map((l) => l.trim())
+    .filter((l) => l && !/^(show|hide) (thinking|reasoning|more|less)$/i.test(l) && !/^(thinking|reasoning|thoughts?)[.…]*$/i.test(l) && !/^thought for\b/i.test(l));
+  const t = lines.join('\n');
+  return t ? t.slice(-1500) : null;
+};
+const plPageError = () => {
+  const t = plLastTurn();
+  const scope = t || document.querySelector('main') || document.body;
+  const a = [...scope.querySelectorAll('[role="alert"]')].filter((x) => owShown(x)).pop();
+  if (!a) return null;
+  const txt = (a.innerText || '').split('\n').map((l) => l.trim()).filter((l) => l && !/^(retry|try again|újra|újrapróbálkozás)$/i.test(l)).join(' ');
+  return txt ? txt.slice(0, 200) : null;
+};
 const owShown = (b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 const owButton = (cls, re) => [...document.querySelectorAll(`button.${cls}, button[aria-label]`)].find((b) =>
   owShown(b) && (b.classList.contains(cls) || re.test((b.getAttribute('aria-label') || '').trim())));
@@ -1971,13 +2107,22 @@ fn quick_diag_js() -> String {
     box: box ? (box.innerText || box.value || '').slice(0, 160) : null,
     replies: Object.fromEntries(plReplySel.map((s, i) => [s, plReplyCounts()[i]])),
     stop: owStopVisible(),
+    turnBusy: plTurnBusy(),
+    thinking: (plThinking() || '').slice(0, 120),
+    turn: (() => {{
+      const t = plLastTurn() || [...document.querySelectorAll('model-response, .font-claude-response, [data-message-author-role="assistant"]')].pop();
+      if (!t) return null;
+      const shape = (el, d) => [...el.children].slice(0, 12).map((c) => '  '.repeat(d) + c.tagName.toLowerCase() + (c.className && typeof c.className === 'string' ? '.' + c.className.trim().split(/\s+/).slice(0, 4).join('.') : '') + [...c.attributes].filter((a) => /^(data-|aria-)/.test(a.name)).map((a) => `[${{a.name}}=${{a.value.slice(0, 30)}}]`).join('') + ' :: ' + (c.innerText || '').slice(0, 40).replace(/\n/g, ' ') + (d < 4 ? '\n' + shape(c, d + 1) : '')).join('\n');
+      return t.tagName.toLowerCase() + '\n' + shape(t, 1);
+    }})(),
+    pageError: plPageError(),
     send: !!owSendButton(),
     reply: (() => {{
       const k = plReplySel.findIndex((s) => document.querySelector(s));
       if (k < 0) return null;
       const all = document.querySelectorAll(plReplySel[k]);
       const shape = (el, d) => [...el.children].map((c) => '  '.repeat(d) + c.tagName.toLowerCase() + (c.className && typeof c.className === 'string' ? '.' + c.className.trim().split(/\s+/).slice(0, 4).join('.') : '') + [...c.attributes].filter((a) => /^(data-|aria-)/.test(a.name)).map((a) => `[${{a.name}}=${{a.value.slice(0, 30)}}]`).join('') + ' :: ' + (c.innerText || '').slice(0, 50).replace(/\n/g, ' ') + (d < 3 ? '\n' + shape(c, d + 1) : '')).join('\n');
-      return {{ selector: plReplySel[k], shape: shape(all[all.length - 1], 0) }};
+      return {{ selector: plReplySel[k], shape: shape(plReplyEl(all[all.length - 1]), 0) }};
     }})(),
     buttons: [...document.querySelectorAll('button[aria-label]')].map((b) => b.getAttribute('aria-label') + (b.disabled ? ' (disabled)' : '')).filter((l) => !/^more options for /i.test(l)).slice(0, 40),
     tail: document.body ? document.body.innerText.slice(-400) : '',
@@ -1987,10 +2132,15 @@ fn quick_diag_js() -> String {
 }
 
 /// Debug-only trace of the background page. Release builds do not write chat text.
-async fn quick_log(path: &Path, view: &tauri::Webview, step: &str) {
-    if !cfg!(debug_assertions) {
-        return;
+/// One timestamped line in the quick log, without touching the page.
+fn quick_note(path: &Path, step: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "[{}] {step}", chrono::Local::now().format("%H:%M:%S%.3f"));
     }
+}
+
+async fn quick_log(path: &Path, view: &tauri::Webview, step: &str) {
     use std::io::Write;
     let diag = page_eval(view, quick_diag_js()).await.unwrap_or_else(|e| serde_json::json!({ "error": e }));
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
@@ -2010,12 +2160,13 @@ fn quick_read_js() -> String {
   const before = (window.__plQuick && window.__plQuick.before) || [];
   const now = plReplyCounts();
   const k = now.findIndex((n, i) => n > (before[i] ?? 0));
-  const writing = owStopVisible() || !!document.querySelector('[data-is-streaming="true"], [data-is-streaming="1"], .result-streaming, [data-testid="stop-button"]');
+  const writing = owStopVisible() || plTurnBusy() || !!document.querySelector('[data-is-streaming="true"], [data-is-streaming="1"], .result-streaming, [data-testid="stop-button"]');
   const signin = owLoginWall();
-  if (k < 0) return {{ found: false, writing, signin, url: location.href }};
+  const thinking = plThinking();
+  if (k < 0) return {{ found: false, writing, signin, error: plPageError(), url: location.href, thinking }};
   const all = document.querySelectorAll(plReplySel[k]);
-  const el = all[all.length - 1];
-  return {{ found: true, writing, signin, text: owMd(el), url: location.href }};
+  const el = plReplyEl(all[all.length - 1]);
+  return {{ found: true, writing, signin, text: el ? owMd(el) : '', url: location.href, thinking }};
 }})()"#
     )
 }
@@ -2210,11 +2361,13 @@ pub async fn quick_ask(
     let run = QUICK_RUN.fetch_add(1, Ordering::SeqCst) + 1;
     let live = || QUICK_RUN.load(Ordering::SeqCst) == run;
     let fail = |error: &str, url: Option<String>| {
-        emit_quick(&app, QuickEvent { id, text: String::new(), done: true, error: Some(error.into()), url });
+        emit_quick(&app, QuickEvent { id, text: String::new(), done: true, error: Some(error.into()), url, thinking: None });
     };
     let log = state.paths.root.join("quick-log.txt");
     let _ = std::fs::write(&log, format!("{host} fresh={fresh}\n\n"));
+    quick_note(&log, "opening the chat view");
     let (view, created) = quick_view(&app, &state, &host).await?;
+    quick_note(&log, &format!("chat view ready (new={created})"));
     if fresh && !created {
         view.navigate(new_chat_url(&host).parse().map_err(|e: url::ParseError| e.to_string())?)
             .map_err(err_str)?;
@@ -2222,14 +2375,31 @@ pub async fn quick_ask(
     if fresh || created {
         tokio_sleep(Duration::from_millis(1200)).await;
     }
-    let mut found = page_eval(&view, find_box_js(&serde_json::json!([]))).await?;
+    // A freshly opened view can still be loading or redirecting, and WebView2 then
+    // rejects the script call ("The parameter is incorrect"). Looking for the box
+    // changes nothing on the page, so it is safe to try again.
+    let mut found = serde_json::Value::Null;
+    for attempt in 1..=6 {
+        match page_eval(&view, find_box_js(&serde_json::json!([]))).await {
+            Ok(v) => {
+                found = v;
+                break;
+            }
+            Err(e) if attempt < 6 => {
+                quick_note(&log, &format!("page not ready ({e}), retrying"));
+                tokio_sleep(Duration::from_millis(900)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
     quick_log(&log, &view, &format!("message box: {found}")).await;
     if found["signin"] == serde_json::Value::Bool(true) {
         let url = found["url"].as_str().map(str::to_string);
         fail("signin", url);
         return Ok(());
     }
-    if fresh && private.unwrap_or(false) && found["found"] == serde_json::Value::Bool(true) {
+    let private = private.unwrap_or(false);
+    if fresh && private && found["found"] == serde_json::Value::Bool(true) {
         let toggled = page_eval(&view, quick_private_js()).await.unwrap_or_default();
         if toggled == serde_json::Value::Bool(true) {
             tokio_sleep(Duration::from_millis(900)).await;
@@ -2278,18 +2448,74 @@ pub async fn quick_ask(
         let before = found["before"].clone();
         let chips = found.get("chips").cloned().unwrap_or(serde_json::json!(0));
         let _ = copy_files_to_clipboard(&attach_paths);
-        if !attach_by_input(&view, &attach_paths).await.unwrap_or(false) {
-            let (x, y) = (found["x"].as_f64().unwrap_or(0.0), found["y"].as_f64().unwrap_or(0.0));
-            let _ = attach_by_drop(&view, &attach_paths, x, y).await;
+        let pick = if all_images(&attach_paths) { IMAGE_INPUT_JS } else { FILE_INPUT_JS };
+        let shown = |v: Result<serde_json::Value, String>| v.map(|v| v == serde_json::Value::Bool(true)).unwrap_or(false);
+        // Each way is tried only when the chat shows nothing yet, so a file is never attached twice.
+        let mut via = "input";
+        let mut ok = false;
+        if attach_by_input_with(&view, &attach_paths, pick).await.unwrap_or(false) {
+            ok = shown(page_eval(&view, shown_js(&marks, &before, &chips)).await);
         }
-        let _ = page_eval(&view, verify_js(&marks, &before, &chips)).await;
-        // Give the chat a moment to show the image chip before the message is typed.
-        tokio_sleep(Duration::from_millis(600)).await;
+        let inputs = page_eval(&view, FILE_INPUTS_DIAG_JS.to_string()).await.unwrap_or_default();
+        quick_log(&log, &view, &format!("file inputs: {inputs}; input shown={ok}")).await;
+        if !ok {
+            let payload: Vec<serde_json::Value> = attach_paths
+                .iter()
+                .filter_map(|p| {
+                    let bytes = std::fs::read(p).ok()?;
+                    let name = Path::new(p).file_name()?.to_string_lossy().to_string();
+                    let l = name.to_ascii_lowercase();
+                    let mime = if l.ends_with(".png") { "image/png" } else if l.ends_with(".jpg") || l.ends_with(".jpeg") { "image/jpeg" } else if l.ends_with(".webp") { "image/webp" } else if l.ends_with(".pdf") { "application/pdf" } else { "application/octet-stream" };
+                    Some(serde_json::json!({ "name": name, "mime": mime, "b64": base64_encode(&bytes) }))
+                })
+                .collect();
+            let payload = serde_json::json!(payload);
+            for mode in ["paste", "drop"] {
+                via = if mode == "paste" { "page paste" } else { "page drop" };
+                let _ = page_eval(&view, synth_attach_js(&payload, mode)).await;
+                ok = shown(page_eval(&view, shown_js(&marks, &before, &chips)).await);
+                if ok {
+                    break;
+                }
+            }
+        }
+        if !ok {
+            via = "drop";
+            let (x, y) = (found["x"].as_f64().unwrap_or(0.0), found["y"].as_f64().unwrap_or(0.0));
+            if attach_by_drop(&view, &attach_paths, x, y).await.is_ok() {
+                ok = shown(page_eval(&view, shown_js(&marks, &before, &chips)).await);
+            }
+        }
+        if !ok {
+            via = "paste";
+            let _ = page_eval(&view, format!("(() => {{ {COMPOSER_JS} const b = owBox(); if (b) b.focus(); return !!b; }})()")).await;
+            if attach_by_paste(&view).await.is_ok() {
+                ok = shown(page_eval(&view, shown_js(&marks, &before, &chips)).await);
+            }
+        }
+        quick_log(&log, &view, &format!("attach {} file(s): shown={ok} via={via}", attach_paths.len())).await;
+        // The question is about the picture; without it the answer is only "please upload it".
+        if !ok && inputs.as_str().is_some_and(|s| !s.is_empty() && s != "none" && s.split(" | ").all(|i| i.ends_with("disabled"))) {
+            fail("noupload", found["url"].as_str().map(str::to_string));
+            return Ok(());
+        }
+        tokio_sleep(Duration::from_millis(400)).await;
     }
     page_eval(&view, quick_mark_js()).await?;
     let typed = page_eval(&view, type_text_js(text.trim(), true)).await?;
     quick_log(&log, &view, &format!("typed: {typed}")).await;
     tokio_sleep(Duration::from_millis(250)).await;
+    // An attachment still uploading keeps the send button off; sending early drops the picture.
+    if !attach_paths.is_empty() {
+        let wait = Instant::now();
+        while wait.elapsed() < Duration::from_secs(30) {
+            if page_eval(&view, send_ready_js()).await.map(|v| v == serde_json::Value::Bool(true)).unwrap_or(false) {
+                break;
+            }
+            tokio_sleep(Duration::from_millis(400)).await;
+        }
+        quick_log(&log, &view, &format!("upload wait: {} ms", wait.elapsed().as_millis())).await;
+    }
     // A click that sends the message also leaves the page, so the script result can
     // fail even though the question went out. Poll for the reply either way.
     let clicked = page_eval(&view, quick_send_js()).await.unwrap_or_else(|e| serde_json::json!(e));
@@ -2310,6 +2536,7 @@ pub async fn quick_ask(
     let mut steady = 0u32;
     let mut url = None;
     let mut polls = 0u32;
+    let mut think: Option<String> = None;
     while live() {
         tokio_sleep(Duration::from_millis(350)).await;
         polls += 1;
@@ -2326,6 +2553,12 @@ pub async fn quick_ask(
         let placeholder = status_only(&raw);
         let writing = read["writing"] == serde_json::Value::Bool(true) || placeholder;
         let text = if placeholder { String::new() } else { raw };
+        // Reasoning the site shows while it works: passed on as it changes, before and during the answer.
+        let now_think = read["thinking"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+        if now_think.is_some() && now_think != think {
+            think = now_think;
+            emit_quick(&app, QuickEvent { id, text: last.clone(), done: false, error: None, url: url.clone(), thinking: think.clone() });
+        }
         let signed_out = read["signin"] == serde_json::Value::Bool(true);
         if signed_out && text.is_empty() && started.elapsed() > Duration::from_secs(5) {
             fail("signin", url.clone().or_else(|| read["url"].as_str().map(str::to_string)));
@@ -2339,7 +2572,7 @@ pub async fn quick_ask(
         } else if text != last {
             last = text.clone();
             steady = 0;
-            emit_quick(&app, QuickEvent { id, text, done: false, error: None, url: url.clone() });
+            emit_quick(&app, QuickEvent { id, text, done: false, error: None, url: url.clone(), thinking: think.clone() });
         } else {
             steady += 1;
         }
@@ -2347,6 +2580,15 @@ pub async fn quick_ask(
         // mid-answer (thinking, tool use), and ending early hides the waiting row.
         if found && !writing && !last.is_empty() && steady >= 7 {
             break;
+        }
+        // The site answered with an error banner instead of a reply: say so now
+        // rather than sitting on "responding" until the timeout.
+        if let Some(err) = read["error"].as_str().filter(|e| !e.trim().is_empty()) {
+            if !found && !writing && started.elapsed() > Duration::from_secs(3) {
+                quick_log(&log, &view, &format!("page error: {err}")).await;
+                fail(&format!("pageerror:{}", err.trim()), url);
+                return Ok(());
+            }
         }
         if !found && !writing && started.elapsed() > Duration::from_secs(90) {
             fail("noreply", url);
@@ -2357,7 +2599,7 @@ pub async fn quick_ask(
         }
     }
     quick_log(&log, &view, &format!("done after {polls} polls")).await;
-    emit_quick(&app, QuickEvent { id, text: last, done: true, error: None, url });
+    emit_quick(&app, QuickEvent { id, text: last, done: true, error: None, url, thinking: think });
     Ok(())
 }
 

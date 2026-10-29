@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { analyzePrompt, AnalyzeAction } from "./Analyze";
+import { AnalyzeAction, AnalyzeIcon, analyzeLabel, analyzePrompt, AnalyzeRect, areaOnScreen, captureArea, promptAction, visiblePart } from "./Analyze";
+import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { noteText, summaryHtml } from "./brief";
-import { askInBackground, CHAT_NAME, ChatError, ChatHost, privateChats, setPrivateChats } from "./chat";
-import { IcCalc, IcCheck, IcClose, IcCopy, IcDoc, IcHistory, IcIncognito, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
+import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
+import { HostLogo, IcCalc, IcCheck, IcChevron, IcClose, IcCopy, IcDoc, IcHistory, IcIncognito, IcReload, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
 const BRIEFLY =
@@ -28,7 +29,7 @@ export function useNoteSelection() {
   }, []);
 }
 
-export type QuickTurn = { role: "user" | "model"; text: string };
+export type QuickTurn = { role: "user" | "model"; text: string; /** The model's visible reasoning, when the site showed it. */ thinking?: string };
 
 export type QuickSeed = {
   id: number;
@@ -38,6 +39,10 @@ export type QuickSeed = {
   imagePath?: string;
   imagePreview?: string;
   analyze?: AnalyzeAction;
+  /** Screen area the capture came from: the card opens beside it, and Rescan captures it again. */
+  anchor?: AnalyzeRect;
+  /** The same area in note coordinates, when it was over a canvas: Rescan follows it there. */
+  area?: NoteArea | null;
   /** Reopen a past session chat. */
   prior?: { host: ChatHost; turns: QuickTurn[]; url?: string | null };
 };
@@ -99,20 +104,90 @@ export function QuickAskField({
   const [q, setQ] = useState("");
   const [histOpen, setHistOpen] = useState(false);
   const [hist, setHist] = useState(sessionHistory);
+  const [host, setHost] = useState<ChatHost>(defaultHost);
+  const [modelsOpen, setModelsOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const modelBtnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return subscribeQuickHistory(() => setHist([...sessionHistory]));
   }, []);
 
+  // The card and the Ask pane change the model too; show what the next question uses.
+  useEffect(() => subscribeDefaultHost(() => setHost(defaultHost())), []);
+
   useEffect(() => {
-    if (!histOpen) return;
+    if (!histOpen && !modelsOpen) return;
     const onDoc = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setHistOpen(false);
+      if (wrapRef.current?.contains(e.target as Node)) return;
+      setHistOpen(false);
+      setModelsOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [histOpen]);
+  }, [histOpen, modelsOpen]);
+
+  // Keyboard users land on the current model when the menu opens.
+  useEffect(() => {
+    if (!modelsOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
+  }, [modelsOpen]);
+
+  // Scrolling over the model button steps through the models (no request is sent from here).
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  useEffect(() => {
+    const btn = modelBtnRef.current;
+    if (!btn) return;
+    const order = ["claude", "chatgpt", "gemini"] as const;
+    let acc = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (disabledRef.current) return;
+      const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      acc += e.deltaMode === 1 ? d * 33 : d;
+      if (Math.abs(acc) < 40) return;
+      const dir = acc > 0 ? 1 : -1;
+      acc = 0;
+      const now = Math.max(0, order.indexOf(defaultHost()));
+      const next = order[(now + dir + order.length) % order.length];
+      setDefaultHost(next);
+      setHost(next);
+    };
+    btn.addEventListener("wheel", onWheel, { passive: false });
+    return () => btn.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const menuLeft = () => {
+    const btn = modelBtnRef.current?.getBoundingClientRect();
+    const wrap = wrapRef.current?.getBoundingClientRect();
+    return btn && wrap ? Math.max(0, btn.left - wrap.left - 6) : 0;
+  };
+
+  const pickModel = (h: ChatHost) => {
+    setDefaultHost(h);
+    setHost(h);
+    setModelsOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = (at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus();
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      setModelsOpen(false);
+      modelBtnRef.current?.focus();
+    }
+  };
 
   return (
     <div className="qa-wrap" ref={wrapRef}>
@@ -143,7 +218,7 @@ export function QuickAskField({
         )}
       </div>
       <form data-tour="quick-ask"
-        className="qa-field"
+        className={`qa-field ${modelsOpen ? "open" : ""}`}
         title={disabled ? "Ask stays off after the trial. You can still view and export notes." : "Quick answer in a card (Ctrl+K). Text selected in the note goes along."}
         onSubmit={(e) => {
           e.preventDefault();
@@ -153,8 +228,32 @@ export function QuickAskField({
           setHistOpen(false);
         }}
       >
-        <IcSpark size={14} />
+        <button
+          ref={modelBtnRef}
+          type="button"
+          className={`qa-model ${modelsOpen ? "on" : ""}`}
+          title={`Asking ${CHAT_NAME[host]}. Click or scroll to change the model.`}
+          aria-label={`Model: ${CHAT_NAME[host]}`}
+          aria-haspopup="listbox"
+          aria-expanded={modelsOpen}
+          disabled={disabled}
+          onClick={() => {
+            setHistOpen(false);
+            setModelsOpen((v) => !v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown" && !modelsOpen) {
+              e.preventDefault();
+              setHistOpen(false);
+              setModelsOpen(true);
+            }
+          }}
+        >
+          <HostLogo host={host} size={15} />
+          <IcChevron size={10} />
+        </button>
         <input
+          ref={inputRef}
           value={q}
           disabled={disabled}
           placeholder="Quick question…"
@@ -170,6 +269,32 @@ export function QuickAskField({
         />
         <kbd>Ctrl K</kbd>
       </form>
+      {modelsOpen && (
+        <div
+          className="qa-models"
+          role="listbox"
+          aria-label="Model"
+          ref={menuRef}
+          onKeyDown={onMenuKey}
+          // Lined up under the picker, which sits after the tool buttons.
+          style={{ left: menuLeft() }}
+        >
+          {CHAT_HOSTS.map((h) => (
+            <button
+              key={h}
+              type="button"
+              role="option"
+              aria-selected={h === host}
+              className={`qa-models-item ${h === host ? "on" : ""}`}
+              onClick={() => pickModel(h)}
+            >
+              <HostLogo host={h} size={16} />
+              <span>{CHAT_NAME[h]}</span>
+              {h === host && <IcCheck size={13} />}
+            </button>
+          ))}
+        </div>
+      )}
       <button
         type="button"
         className={`btn icon qa-tool ${histOpen ? "on" : ""}`}
@@ -177,7 +302,10 @@ export function QuickAskField({
         aria-label="Quick question history"
         aria-expanded={histOpen}
         disabled={disabled}
-        onClick={() => setHistOpen((v) => !v)}
+        onClick={() => {
+          setModelsOpen(false);
+          setHistOpen((v) => !v);
+        }}
       >
         <IcHistory size={15} />
       </button>
@@ -185,11 +313,7 @@ export function QuickAskField({
         <div className="qa-hist" role="listbox" aria-label="Session history">
           {!hist.length && <div className="qa-hist-empty">No quick questions yet this session.</div>}
           {hist.map((h) => {
-            const label = h.analyze
-              ? h.analyze === "factcheck"
-                ? "Fact-check"
-                : h.analyze[0]!.toUpperCase() + h.analyze.slice(1)
-              : h.question;
+            const label = h.analyze ? analyzeLabel(h.analyze) : h.question;
             return (
               <button
                 key={h.id}
@@ -231,6 +355,68 @@ export function focusQuickField() {
 
 type Turn = QuickTurn;
 
+type CardSize = { w: number; h: number };
+type Edge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+const RESIZE_EDGES: Edge[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+const MIN_W = 300;
+const MIN_H = 180;
+
+const GAP = 14;
+const EDGE = 8;
+
+/**
+ * Where a card of width `w` goes beside the area: right of it, else left of it. When neither side
+ * fits the card, it narrows to the roomier side (down to MIN_W) instead of covering the area.
+ */
+function besideArea(a: AnalyzeRect, w: number, askW: number): { side: "right" | "left"; x: number; w: number } {
+  const right = window.innerWidth - askW - EDGE;
+  const roomR = right - (a.x + a.w + GAP);
+  const roomL = a.x - GAP - EDGE;
+  if (w <= roomR) return { side: "right", x: a.x + a.w + GAP, w };
+  if (w <= roomL) return { side: "left", x: a.x - GAP - w, w };
+  const side = roomR >= roomL ? "right" : "left";
+  const room = Math.floor(Math.max(roomR, roomL));
+  if (room >= MIN_W) return { side, x: side === "right" ? a.x + a.w + GAP : a.x - GAP - room, w: room };
+  return { side, x: side === "right" ? Math.max(EDGE, right - w) : EDGE, w };
+}
+
+/** The size the card was last resized to; every new card opens at it. */
+function savedCardSize(): CardSize | null {
+  try {
+    const v = JSON.parse(localStorage.getItem("pl.quick.size") ?? "null") as CardSize | null;
+    return v && v.w >= MIN_W && v.h >= MIN_H ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const TEXT_K_KEY = "paperlike.quickTextSize";
+const TEXT_K_MIN = 0.75;
+const TEXT_K_MAX = 2;
+function readTextK(): number {
+  try {
+    const v = Number(localStorage.getItem(TEXT_K_KEY));
+    if (v >= TEXT_K_MIN && v <= TEXT_K_MAX) return v;
+  } catch {
+    /* ignore */
+  }
+  return 1;
+}
+
+/** The model's reasoning, folded above its answer like the chat sites do; click to read it. */
+function ThoughtProcess({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`qa-thought ${open ? "open" : ""}`}>
+      <button type="button" className="qa-thought-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        Thought process
+        <IcChevron size={10} />
+      </button>
+      {open && <p className="qa-thought-text">{text}</p>}
+    </div>
+  );
+}
+
 /**
  * Floating card with the answer and a follow-up line. The question goes to a supported chat site
  * through the web login, in a view kept out of sight; the reply is read back as it is written.
@@ -258,14 +444,27 @@ export function QuickAskCard({
   const [host, setHost] = useState<ChatHost>(seed.prior?.host ?? initialHost);
   const [turns, setTurns] = useState<Turn[]>(seed.prior?.turns ?? []);
   const [live, setLive] = useState("");
+  /** The model's reasoning for the question being answered, as the site shows it. */
+  const [thinking, setThinking] = useState("");
+  /** Sent Analyze prompts the user expanded (by turn index); collapsed they read as the action name. */
+  const [openPrompts, setOpenPrompts] = useState<ReadonlySet<number>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; signin: boolean } | null>(null);
   const [follow, setFollow] = useState("");
   const [useNote, setUseNote] = useState(() => localStorage.getItem("pl.quick.note") === "on");
   const [priv, setPriv] = useState(privateChats);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [size, setSize] = useState<CardSize | null>(savedCardSize);
+  /** A narrower width for this card only, when the saved size doesn't fit beside the area. */
+  const [fitW, setFitW] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [url, setUrl] = useState<string | null>(seed.prior?.url ?? null);
+  /** The latest capture of the area; Rescan replaces it. */
+  const [shot, setShot] = useState(seed.imagePreview);
+  const [rescanning, setRescanning] = useState(false);
+  const [rescanErr, setRescanErr] = useState("");
+  const shotRef = useRef(shot);
+  shotRef.current = shot;
   const abortRef = useRef<AbortController | null>(null);
   /** Bumped by every question; only the newest one may end the wait or show its error. */
   const reqRef = useRef(0);
@@ -273,6 +472,44 @@ export function QuickAskCard({
   const startedRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  /** Text size in the card, its own setting: zooming the note leaves it alone. */
+  const [textK, setTextK] = useState(readTextK);
+  const [zoomTip, setZoomTip] = useState(false);
+  const zoomTipTimer = useRef(0);
+  // Ctrl + wheel, or wheel with the middle button held, sizes the card's text (not the app or the note).
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && (e.buttons & 4) === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const step = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.04 : 0.0012));
+      setTextK((k) => {
+        const next = Math.round(Math.min(TEXT_K_MAX, Math.max(TEXT_K_MIN, k * step)) * 100) / 100;
+        try {
+          localStorage.setItem(TEXT_K_KEY, String(next));
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+      setZoomTip(true);
+      window.clearTimeout(zoomTipTimer.current);
+      zoomTipTimer.current = window.setTimeout(() => setZoomTip(false), 900);
+    };
+    // Holding the middle button over the text is for sizing, not the browser's autoscroll.
+    const onDown = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault();
+    };
+    card.addEventListener("wheel", onWheel, { passive: false });
+    card.addEventListener("mousedown", onDown);
+    return () => {
+      card.removeEventListener("wheel", onWheel);
+      card.removeEventListener("mousedown", onDown);
+      window.clearTimeout(zoomTipTimer.current);
+    };
+  }, []);
   const noteSent = useRef(false);
   /** Host of the conversation the next question continues; null starts a new one. */
   const convo = useRef<ChatHost | null>(seed.prior ? seed.prior.host : null);
@@ -298,18 +535,95 @@ export function QuickAskCard({
           turns: cur,
           url: urlRef.current,
           at: Date.now(),
-          imagePreview: seed.imagePreview,
+          imagePreview: shotRef.current,
           analyze: seed.analyze,
         });
       }
     },
-    [seed.id, seed.question, seed.selection, seed.imagePreview, seed.analyze],
+    [seed.id, seed.question, seed.selection, seed.analyze],
   );
 
+  /**
+   * The card's place and size in note units, measured from the area: it sits on the note like
+   * something drawn there, so panning, zooming and window resizes keep it where it was put.
+   * `h` is null while the card grows with its answer.
+   */
+  /** The image this card asks about: the first capture, then the latest rescan. */
+  const imageRef = useRef<string | undefined>(seed.imagePath);
+  const relRef = useRef<{ side: "right" | "left"; gap: number; oy: number; w: number; h: number | null } | null>(null);
+  /** Note zoom when the card was first placed: its text is 100% there and scales with the note from it. */
+  const zBaseRef = useRef<number | null>(null);
+
+  /** Remember where the card is (screen px) relative to the area, as shown at `r` and zoom `z`. */
+  const pin = (c: { x: number; y: number; w: number; h: number }, r: AnalyzeRect, z: number, fixedH: boolean) => {
+    if (!(z > 0)) return;
+    if (zBaseRef.current == null) zBaseRef.current = z;
+    const side = c.x + c.w / 2 >= r.x + r.w / 2 ? "right" : "left";
+    relRef.current = {
+      side,
+      gap: (side === "right" ? c.x - (r.x + r.w) : r.x - (c.x + c.w)) / z,
+      oy: (c.y - r.y) / z,
+      w: c.w / z,
+      h: fixedH ? c.h / z : null,
+    };
+  };
+
+  /** Re-pin after the card was dragged or resized, from where the area is now. */
+  const repin = (c: { x: number; y: number; w: number; h: number }, fixedH: boolean) => {
+    const area = seed.area;
+    const at = area && screenOf(area);
+    if (!area || !at || !area.w) return;
+    pin(c, at.rect, at.rect.w / area.w, fixedH);
+  };
+
+  // The card travels and scales with the outlined area when the note pans or zooms.
+  useEffect(() => {
+    const area = seed.area;
+    if (!area || !area.w) return;
+    return subscribeCanvas(() => {
+      const card = cardRef.current;
+      const rel = relRef.current;
+      const at = screenOf(area);
+      if (!card || !rel || !at || card.classList.contains("resizing")) return;
+      const r = at.rect;
+      const z = r.w / area.w;
+      const w = Math.max(MIN_W, rel.w * z);
+      const x = rel.side === "right" ? r.x + r.w + rel.gap * z : r.x - rel.gap * z - w;
+      card.style.left = `${x}px`;
+      card.style.top = `${r.y + rel.oy * z}px`;
+      card.style.right = "auto";
+      card.style.width = `${w}px`;
+      if (rel.h != null) card.style.height = `${Math.max(MIN_H, rel.h * z)}px`;
+      // The text grows and shrinks with the note too, so the answer wraps the same at any zoom.
+      const base = zBaseRef.current;
+      if (base) card.style.setProperty("--qa-z", String(Math.min(4, Math.max(0.3, z / base))));
+    });
+  }, [seed.area]);
+
+  // An Analyze card opens just right of the captured area (left of it when there's no room),
+  // so the answer sits next to what it is about.
+  useLayoutEffect(() => {
+    const a = seed.anchor;
+    const card = cardRef.current;
+    if (!a || !card) return;
+    const r = card.getBoundingClientRect();
+    const askW = parseFloat(getComputedStyle(card).getPropertyValue("--ask-w")) || 0;
+    const spot = besideArea(a, r.width, askW);
+    if (spot.w < Math.floor(r.width)) setFitW(spot.w);
+    const x = spot.x;
+    const y = Math.max(EDGE, Math.min(a.y, window.innerHeight - Math.min(r.height, 320) - EDGE));
+    setPos({ x, y });
+    if (seed.area?.w) pin({ x, y, w: spot.w, h: r.height }, a, a.w / seed.area.w, !!size);
+    // once, when the card opens
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Follow the newest text only while the reader is at the bottom; scrolling up to reread stops it. */
+  const stickRef = useRef(true);
   useEffect(() => {
     const el = bodyRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turns, live, error]);
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+  }, [turns, live, thinking, error]);
 
   const ask = async (question: string, selection = "", via: ChatHost = host, files?: string[]) => {
     if (!question.trim() || busyRef.current) return;
@@ -319,6 +633,8 @@ export function QuickAskCard({
     setError(null);
     setBusy(true);
     setLive("");
+    setThinking("");
+    stickRef.current = true;
     const fresh = convo.current !== via;
     if (fresh) noteSent.current = false;
     const parts: string[] = [];
@@ -347,6 +663,9 @@ export function QuickAskCard({
         fresh,
         signal: ctrl.signal,
         filePaths: files,
+        onThinking: (t) => {
+          if (current()) setThinking(t);
+        },
         onText: (t) => {
           if (!current()) return;
           // A blank poll, or a scrape that is only "Claude is responding…", must
@@ -365,7 +684,7 @@ export function QuickAskCard({
       convo.current = via;
       setUrl(reply.url);
       const text = (reply.text || soFar).trim();
-      if (text) setTurns((cur) => [...cur, { role: "model", text }]);
+      if (text) setTurns((cur) => [...cur, { role: "model", text, ...(reply.thinking ? { thinking: reply.thinking } : null) }]);
     } catch (e) {
       if (!current()) return;
       if (e instanceof ChatError && e.url) setUrl(e.url);
@@ -374,6 +693,7 @@ export function QuickAskCard({
     } finally {
       if (current()) {
         setLive("");
+        setThinking("");
         setBusy(false);
         busyRef.current = false;
         abortRef.current = null;
@@ -392,15 +712,89 @@ export function QuickAskCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Capture the same area again (after an edit) and ask about the new image in this chat. */
+  const rescan = async () => {
+    if (!seed.anchor || !seed.analyze || busyRef.current || rescanning) return;
+    setRescanErr("");
+    const at = areaOnScreen(seed.anchor, seed.area);
+    const a = at && visiblePart(at.rect, at.clip);
+    if (!a) {
+      setRescanErr("The marked area isn't on screen. Scroll back to it, then rescan.");
+      return;
+    }
+    setRescanning(true);
+    try {
+      // The outline sits just outside the area, so only a card dragged over it needs hiding.
+      const c = cardRef.current?.getBoundingClientRect();
+      const over = !!c && c.left < a.x + a.w && c.right > a.x && c.top < a.y + a.h && c.bottom > a.y;
+      const next = await captureArea(a, over ? [cardRef.current] : []);
+      setShot(next.previewUrl);
+      imageRef.current = next.filePath;
+      const q = `I changed the area; this is a new capture of it. ${analyzePrompt(seed.analyze)}`;
+      void ask(q, "", host, [next.filePath]);
+    } catch (e) {
+      setRescanErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRescanning(false);
+    }
+  };
+
   const switchHost = (next: ChatHost) => {
-    if (next === host || busy) return;
+    if (next === host || busyRef.current) return;
     setHost(next);
     onHost(next);
     setUrl(null);
-    const last = [...turns].reverse().find((t) => t.role === "user")?.text ?? seed.question;
     convo.current = null;
-    void ask(last, turns.length ? "" : seed.selection, next, seed.imagePath && !turns.length ? [seed.imagePath] : undefined);
+    // The other model starts a fresh chat, so it gets what this card is about: the latest capture
+    // of the area with its prompt, or the last question with its context.
+    const image = imageRef.current;
+    const last = [...turns].reverse().find((t) => t.role === "user")?.text ?? seed.question;
+    const q = seed.analyze && image ? analyzePrompt(seed.analyze) : last;
+    void ask(q, seed.selection, next, image ? [image] : undefined);
   };
+
+  /** Scrolling over the model tabs walks through them; the request goes out once the wheel settles. */
+  const hostsRef = useRef<HTMLDivElement>(null);
+  const [wheelHost, setWheelHost] = useState<ChatHost | null>(null);
+  const wheelRef = useRef({ acc: 0, timer: 0, at: null as ChatHost | null });
+  const switchRef = useRef(switchHost);
+  switchRef.current = switchHost;
+  const hostRef2 = useRef(host);
+  hostRef2.current = host;
+  useEffect(() => {
+    const el = hostsRef.current;
+    if (!el) return;
+    const order = ["claude", "chatgpt", "gemini"] as const;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || (e.buttons & 4) !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (busyRef.current) return;
+      const w = wheelRef.current;
+      const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      w.acc += e.deltaMode === 1 ? d * 33 : d;
+      if (Math.abs(w.acc) < 40) return;
+      const dir = w.acc > 0 ? 1 : -1;
+      w.acc = 0;
+      const from = order.indexOf(w.at ?? hostRef2.current);
+      const to = order[(Math.max(0, from) + dir + order.length) % order.length];
+      w.at = to;
+      setWheelHost(to);
+      window.clearTimeout(w.timer);
+      w.timer = window.setTimeout(() => {
+        const pick = w.at;
+        w.at = null;
+        w.acc = 0;
+        setWheelHost(null);
+        if (pick) switchRef.current(pick);
+      }, 450);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      window.clearTimeout(wheelRef.current.timer);
+    };
+  }, []);
 
   const startDrag = (e: React.PointerEvent<HTMLElement>) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
@@ -418,6 +812,7 @@ export function QuickAskCard({
       const x = Math.max(4, Math.min(ev.clientX - dx, window.innerWidth - askW - r.width - 4));
       const y = Math.max(4, Math.min(ev.clientY - dy, window.innerHeight - 60));
       setPos({ x, y });
+      repin({ x, y, w: r.width, h: r.height }, relRef.current?.h != null);
     };
     const up = () => {
       head.removeEventListener("pointermove", move);
@@ -427,6 +822,74 @@ export function QuickAskCard({
     head.addEventListener("pointermove", move);
     head.addEventListener("pointerup", up);
     head.addEventListener("pointercancel", up);
+  };
+
+  /** Drag any edge or corner. The card stays inside the window and left of the Ask pane. */
+  const startResize = (edge: Edge) => (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const card = cardRef.current;
+    if (!card) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = card.getBoundingClientRect();
+    const askW = parseFloat(getComputedStyle(card).getPropertyValue("--ask-w")) || 0;
+    const maxR = window.innerWidth - askW - 4;
+    const maxB = window.innerHeight - 4;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let next = { x: r.left, y: r.top, w: r.width, h: r.height };
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    card.classList.add("resizing");
+    // Written straight to the element while dragging: re-rendering the answer at 240 Hz stutters.
+    const apply = () => {
+      card.style.left = `${next.x}px`;
+      card.style.top = `${next.y}px`;
+      card.style.right = "auto";
+      card.style.width = `${next.w}px`;
+      card.style.height = `${next.h}px`;
+    };
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - sx;
+      const dy = ev.clientY - sy;
+      let { left, top, right, bottom } = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      if (edge.includes("e")) right = Math.min(maxR, Math.max(left + MIN_W, r.right + dx));
+      if (edge.includes("w")) left = Math.max(4, Math.min(right - MIN_W, r.left + dx));
+      if (edge.includes("s")) bottom = Math.min(maxB, Math.max(top + MIN_H, r.bottom + dy));
+      if (edge.startsWith("n")) top = Math.max(4, Math.min(bottom - MIN_H, r.top + dy));
+      next = { x: left, y: top, w: right - left, h: bottom - top };
+      apply();
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      card.classList.remove("resizing");
+      const sz = { w: Math.round(next.w), h: Math.round(next.h) };
+      setPos({ x: next.x, y: next.y });
+      setSize(sz);
+      setFitW(null);
+      // Keep following the area from where, and at the size, the card now is.
+      repin(next, true);
+      localStorage.setItem("pl.quick.size", JSON.stringify(sz));
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  };
+
+  /** Double-click an edge: back to the default size. */
+  const resetSize = () => {
+    const card = cardRef.current;
+    if (card) {
+      card.style.width = "";
+      card.style.height = "";
+      const c = card.getBoundingClientRect();
+      repin({ x: c.left, y: c.top, w: c.width, h: c.height }, false);
+    }
+    setSize(null);
+    setFitW(null);
+    localStorage.removeItem("pl.quick.size");
   };
 
   const lastAnswer = [...turns].reverse().find((t) => t.role === "model")?.text ?? "";
@@ -440,7 +903,12 @@ export function QuickAskCard({
     <div
       ref={cardRef}
       className="qa-card"
-      style={pos ? { left: pos.x, top: pos.y, right: "auto" } : undefined}
+      style={{
+        ...(pos ? { left: pos.x, top: pos.y, right: "auto" } : null),
+        ...(size ? { width: size.w, height: size.h } : null),
+        ...(fitW ? { width: fitW } : null),
+        ["--qa-k" as string]: textK,
+      }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.stopPropagation();
@@ -448,20 +916,31 @@ export function QuickAskCard({
         }
       }}
     >
+      {RESIZE_EDGES.map((edge) => (
+        <div
+          key={edge}
+          className={`qa-rz qa-rz-${edge}`}
+          aria-hidden
+          title={edge.length === 2 ? "Drag to resize. Double-click for the default size." : undefined}
+          onPointerDown={startResize(edge)}
+          onDoubleClick={resetSize}
+        />
+      ))}
       <header className="qa-head" onPointerDown={startDrag}>
         <IcSpark size={14} />
-        <div className="qa-hosts" role="tablist">
+        <div className="qa-hosts" role="tablist" ref={hostsRef} title="Scroll to switch models">
           {(["claude", "chatgpt", "gemini"] as const).map((h) => (
             <button
               key={h}
               type="button"
               role="tab"
               aria-selected={host === h}
-              className={host === h ? "on" : ""}
+              className={(wheelHost ?? host) === h ? "on" : ""}
               disabled={busy && host !== h}
               title={host === h ? undefined : `Ask ${CHAT_NAME[h]} instead`}
               onClick={() => switchHost(h)}
             >
+              <HostLogo host={h} size={12} />
               {CHAT_NAME[h]}
             </button>
           ))}
@@ -500,33 +979,117 @@ export function QuickAskCard({
         </button>
       </header>
 
-      <div className="qa-body" ref={bodyRef}>
-        {seed.imagePreview && (
+      <div
+        className="qa-body"
+        ref={bodyRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+        }}
+      >
+        {zoomTip && (
+          <span className="qa-zoom-tip" aria-live="polite">
+            {Math.round(textK * 100)}%
+          </span>
+        )}
+        {shot && (
           <div className="qa-shot">
-            <img src={seed.imagePreview} alt="Captured area" />
+            <img src={shot} alt="Captured area" />
             {seed.analyze && (
               <span className="qa-shot-tag">
-                {seed.analyze === "factcheck" ? "Fact-check" : seed.analyze[0]!.toUpperCase() + seed.analyze.slice(1)}
+                <AnalyzeIcon action={seed.analyze} size={12} />
+                {analyzeLabel(seed.analyze)}
               </span>
+            )}
+            {seed.analyze && seed.anchor && (
+              <button
+                type="button"
+                className="btn qa-shot-rescan"
+                disabled={busy || rescanning}
+                title={busy ? "Wait for the answer to finish" : "Capture the marked area again and ask about the new version"}
+                onClick={() => void rescan()}
+              >
+                <IcReload size={13} />
+                {rescanning ? "Capturing…" : "Rescan"}
+              </button>
             )}
           </div>
         )}
+        {rescanErr && <div className="qa-error"><p>{rescanErr}</p></div>}
         {seed.selection && !seed.imagePreview && (
           <div className="qa-sel" title={seed.selection}>
             “{seed.selection.length > 120 ? `${seed.selection.slice(0, 120)}…` : seed.selection}”
           </div>
         )}
-        {turns.map((t, i) =>
-          t.role === "user" ? (
-            <div key={i} className="qa-q">
-              {t.text}
+        {turns.map((t, i) => {
+          if (t.role === "user") {
+            const act = promptAction(t.text);
+            if (!act) {
+              return (
+                <div key={i} className="qa-q">
+                  {t.text}
+                </div>
+              );
+            }
+            const open = openPrompts.has(i);
+            return (
+              <button
+                key={i}
+                type="button"
+                className={`qa-q qa-q-act ${open ? "open" : ""}`}
+                aria-expanded={open}
+                title={open ? "Hide the prompt" : "Show the full prompt"}
+                onClick={() =>
+                  setOpenPrompts((cur) => {
+                    const next = new Set(cur);
+                    if (next.has(i)) next.delete(i);
+                    else next.add(i);
+                    return next;
+                  })
+                }
+              >
+                <span className="qa-q-act-head">
+                  <AnalyzeIcon action={act.action} size={12} />
+                  <b>{act.rescan ? `${analyzeLabel(act.action)} again` : analyzeLabel(act.action)}</b>
+                  <IcChevron size={10} />
+                </span>
+                {open && <span className="qa-q-act-text">{t.text}</span>}
+              </button>
+            );
+          }
+          return (
+            <div key={i} className="qa-turn-a">
+              {t.thinking && <ThoughtProcess text={t.thinking} />}
+              <div className="qa-a md-read" dangerouslySetInnerHTML={{ __html: summaryHtml(t.text) }} />
             </div>
-          ) : (
-            <div key={i} className="qa-a md-read" dangerouslySetInnerHTML={{ __html: summaryHtml(t.text) }} />
-          ),
-        )}
-        {busy && live.trim() && (
-          <div className="qa-a md-read live" dangerouslySetInnerHTML={{ __html: summaryHtml(live) }} />
+          );
+        })}
+        {busy && (
+          <div className="qa-turn-a" role="status" aria-live="polite">
+            {live.trim() ? (
+              <>
+                {thinking && <ThoughtProcess text={thinking} />}
+                <div className="qa-a md-read live" dangerouslySetInnerHTML={{ __html: summaryHtml(live) }} />
+                <span className="qa-typing" aria-label={`${name} is writing`}>
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </>
+            ) : (
+              <div className="qa-pending">
+                <span className="qa-pending-head">
+                  <IcSpark size={14} />
+                  <span className="qa-shimmer">{thinking ? `${name} is thinking` : `${name} is responding`}</span>
+                </span>
+                {thinking && (
+                  <div className="qa-pending-thoughts">
+                    <p>{thinking}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
         {error && (
           <div className="qa-error">
@@ -537,18 +1100,6 @@ export function QuickAskCard({
           </div>
         )}
       </div>
-
-      {busy && (
-        <div className="qa-thinking" role="status" aria-live="polite">
-          <IcSpark size={14} />
-          <span className="qa-thinking-label">{name} is responding…</span>
-          <span className="qa-thinking-dots" aria-hidden>
-            <span />
-            <span />
-            <span />
-          </span>
-        </div>
-      )}
 
       <form
         className="qa-foot"

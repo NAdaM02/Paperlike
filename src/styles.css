@@ -2982,13 +2982,16 @@ svg.hl .hl-ink {
 .qa-shot img {
   display: block;
   width: 100%;
-  max-height: 160px;
+  max-height: calc(160px * var(--qa-z, 1));
   object-fit: contain;
 }
 .qa-shot-tag {
   position: absolute;
   left: 8px;
   bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 7px;
   border-radius: 999px;
   font-size: 11px;
@@ -2996,21 +2999,38 @@ svg.hl .hl-ink {
   border: 1px solid var(--border);
   color: var(--ink-2);
 }
+.qa-shot-rescan {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  font-size: 11.5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+}
 .qa-field {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 6px 0 9px;
+  gap: 5px;
+  height: 28px;
+  padding: 0 5px 0 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface);
   color: var(--ink-3);
   transition: border-color 0.12s;
 }
-.qa-field:focus-within { border-color: var(--accent); color: var(--accent); }
+.qa-field:focus-within,
+.qa-field.open { border-color: var(--accent); color: var(--accent); }
+/* Compact while idle; it widens as soon as you click in or press Ctrl+K. */
+.qa-field input::placeholder { font-size: 12.5px; }
 .qa-field input {
-  width: 150px;
+  width: 98px;
   border: 0;
   background: transparent;
   outline: none;
@@ -3019,16 +3039,71 @@ svg.hl .hl-ink {
   color: var(--ink);
   transition: width 0.15s;
 }
-.qa-field:focus-within input { width: 260px; }
+.qa-field:focus-within input,
+.qa-field.open input { width: 260px; }
 .qa-field kbd {
-  font: 10.5px var(--font);
+  font: 10px var(--font);
   color: var(--ink-3);
-  padding: 1px 5px;
+  padding: 0 4px;
   border: 1px solid var(--border);
   border-radius: 4px;
   white-space: nowrap;
 }
-.qa-field:focus-within kbd { display: none; }
+.qa-field:focus-within kbd,
+.qa-field.open kbd { display: none; }
+/* Model picker at the start of the field: the current model's logo and a small arrow. */
+.qa-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  margin-left: -5px;
+  padding: 0 3px 0 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.qa-model .logo-chatgpt { color: var(--ink); }
+.qa-model:hover:not(:disabled),
+.qa-model.on { background: var(--accent-soft); color: var(--ink-2); }
+.qa-model:disabled { opacity: 0.5; cursor: default; }
+.qa-model:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.qa-models {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 80;
+  min-width: 170px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--ink) 14%, transparent);
+  animation: qa-in 0.12s ease-out;
+}
+.qa-models-item {
+  display: grid;
+  grid-template-columns: 18px 1fr 14px;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.qa-models-item .logo-chatgpt { color: var(--ink); }
+.qa-models-item:hover,
+.qa-models-item:focus-visible { background: var(--accent-soft); outline: none; }
+.qa-models-item.on { font-weight: 600; }
+.qa-models-item.on svg:last-child { color: var(--accent); }
 
 .qa-card {
   position: fixed;
@@ -3039,9 +3114,8 @@ svg.hl .hl-ink {
   height: auto;
   min-width: 300px;
   min-height: 160px;
-  max-width: min(760px, calc(100vw - var(--ask-w, 0px) - 24px));
-  max-height: calc(100vh - 110px);
-  resize: both;
+  max-width: calc(100vw - var(--ask-w, 0px) - 8px);
+  max-height: calc(100vh - 8px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -3067,8 +3141,41 @@ svg.hl .hl-ink {
   border-bottom: 1px solid var(--border);
 }
 .qa-head:active { cursor: grabbing; }
+/* Resize grips along every edge and corner, inside the card's rounded border. */
+.qa-rz { position: absolute; z-index: 3; touch-action: none; }
+.qa-rz-n, .qa-rz-s { left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.qa-rz-n { top: 0; }
+.qa-rz-s { bottom: 0; }
+.qa-rz-e, .qa-rz-w { top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.qa-rz-e { right: 0; }
+.qa-rz-w { left: 0; }
+.qa-rz-ne, .qa-rz-nw, .qa-rz-se, .qa-rz-sw { width: 14px; height: 14px; z-index: 4; }
+.qa-rz-ne { top: 0; right: 0; cursor: nesw-resize; }
+.qa-rz-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.qa-rz-nw { top: 0; left: 0; cursor: nwse-resize; }
+.qa-rz-se { bottom: 0; right: 0; cursor: nwse-resize; }
+/* A small grip mark in the bottom-right corner, where people look for one. */
+.qa-rz-se::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid color-mix(in srgb, var(--ink-3) 70%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--ink-3) 70%, transparent);
+  border-bottom-right-radius: 3px;
+  opacity: 0.55;
+  transition: opacity 0.12s;
+}
+.qa-card:hover .qa-rz-se::after { opacity: 1; }
+.qa-card.resizing, .qa-card.resizing * { user-select: none; }
+.qa-card.resizing .qa-body { pointer-events: none; }
 .qa-hosts { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 999px; }
 .qa-hosts button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 0;
   background: transparent;
   color: var(--ink-3);
@@ -3085,10 +3192,12 @@ svg.hl .hl-ink {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 8px 14px 10px;
+  /* Text scale: the user's own size times how far the note is zoomed since the card opened. */
+  --qa-s: calc(var(--qa-k, 1) * var(--qa-z, 1));
+  padding: calc(8px * var(--qa-s)) calc(14px * var(--qa-s)) calc(10px * var(--qa-s));
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(6px * var(--qa-s));
   user-select: text;
 }
 .qa-sel {
@@ -3100,17 +3209,30 @@ svg.hl .hl-ink {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Keep every block at its full height so the card scrolls instead of squeezing the screenshot. */
+.qa-body > * { flex-shrink: 0; }
 .qa-q {
   align-self: flex-end;
   max-width: 85%;
-  font-size: 13px;
+  font-size: calc(13px * var(--qa-s, 1));
   padding: 5px 10px;
   border-radius: 10px 10px 2px 10px;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   white-space: pre-wrap;
 }
-.qa-a { font-size: 13.5px; line-height: 1.5; }
+.qa-a { font-size: calc(13.5px * var(--qa-s, 1)); line-height: 1.5; }
 .qa-a > :first-child { margin-top: 2px; }
+.qa-a.md-read h3 { font-size: 1.22em; }
+.qa-a.md-read h4 { font-size: 1.1em; }
+.qa-a.md-read h5 { font-size: 1.03em; }
+.qa-body { position: relative; }
+.qa-zoom-tip {
+  position: sticky; top: 0; align-self: center; z-index: 2; margin-bottom: -22px;
+  padding: 2px 8px; border-radius: 999px; font: 600 11px/1.4 var(--font);
+  /* Fixed colours: theme inks can be light on light (Mix), and this must read on any card. */
+  background: rgba(28, 26, 24, 0.86); color: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  pointer-events: none; font-variant-numeric: tabular-nums;
+}
 .qa-a.live > :last-child::after {
   content: "";
   display: inline-block;
@@ -3151,8 +3273,63 @@ svg.hl .hl-ink {
 .qa-thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
 .qa-thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes qa-dot { 40% { transform: translateY(-3px); opacity: 1; } 0%, 80%, 100% { opacity: 0.4; } }
+/* A sent Analyze prompt reads as its action; click to see the full prompt. */
+.qa-q.qa-q-act {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  border: 0; color: var(--ink); cursor: pointer; text-align: left; font: inherit; font-size: calc(13px * var(--qa-s, 1));
+  transition: background-color 0.15s ease;
+}
+.qa-q.qa-q-act:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.qa-q.qa-q-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qa-q-act-head { display: inline-flex; align-items: center; gap: 6px; }
+.qa-q-act-head > svg:first-child { color: var(--accent); }
+.qa-q-act-head b { font-weight: 650; }
+.qa-q-act-head > svg:last-child { opacity: 0.6; transition: transform 0.18s ease; }
+.qa-q-act.open .qa-q-act-head > svg:last-child { transform: rotate(180deg); }
+.qa-q-act-text { align-self: stretch; color: var(--ink-2); font-size: calc(12.5px * var(--qa-s, 1)); line-height: 1.45; white-space: pre-wrap; }
+
+/* The answer block, with the model's reasoning folded above it. */
+.qa-turn-a { display: flex; flex-direction: column; gap: 6px; }
+.qa-thought-head {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 0;
+  border: 0; background: none; cursor: pointer; font: 500 calc(12px * var(--qa-s, 1))/1.3 var(--font); color: var(--ink-3, var(--ink-2));
+}
+.qa-thought-head:hover { color: var(--ink); }
+.qa-thought-head > svg { transition: transform 0.18s ease; }
+.qa-thought.open .qa-thought-head > svg { transform: rotate(180deg); }
+.qa-thought-text {
+  margin: 4px 0 2px; padding: 2px 0 2px 10px; border-left: 2px solid var(--border);
+  color: var(--ink-2); font-size: calc(12px * var(--qa-s, 1)); line-height: 1.5; white-space: pre-wrap;
+}
+
+/* Waiting for the answer: shown where the answer will appear, as the chat sites do. */
+.qa-pending { display: flex; flex-direction: column; gap: 6px; padding: 2px 0; }
+.qa-pending-head { display: inline-flex; align-items: center; gap: 7px; }
+.qa-pending-head > svg { color: var(--accent); animation: qa-spin 2.4s linear infinite; }
+.qa-shimmer {
+  font: 500 calc(13px * var(--qa-s, 1))/1.3 var(--font);
+  background: linear-gradient(90deg, var(--ink-2) 0%, var(--ink-2) 40%, var(--ink) 50%, var(--ink-2) 60%, var(--ink-2) 100%);
+  background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: qa-shimmer 1.8s linear infinite;
+}
+.qa-pending-thoughts {
+  display: flex; flex-direction: column; justify-content: flex-end; max-height: 7.5em; overflow: hidden;
+  padding-left: 10px; border-left: 2px solid var(--border);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 2.2em); mask-image: linear-gradient(to bottom, transparent, #000 2.2em);
+}
+.qa-pending-thoughts p { margin: 0; color: var(--ink-2); font-size: calc(12px * var(--qa-s, 1)); line-height: 1.5; white-space: pre-wrap; }
+.qa-typing { display: inline-flex; gap: 3px; padding: 0 0 2px; }
+.qa-typing span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0.4; animation: qa-dot 1s ease-in-out infinite; }
+.qa-typing span:nth-child(2) { animation-delay: 0.15s; }
+.qa-typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes qa-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+@keyframes qa-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .qa-pending-head > svg, .qa-shimmer, .qa-typing span { animation: none; }
+  .qa-shimmer { color: var(--ink-2); background: none; }
+}
 .qa-error { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.qa-error p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--danger, #b44040); }
+.qa-error p { margin: 0; font-size: calc(12.5px * var(--qa-s, 1)); line-height: 1.45; color: var(--danger, #b44040); }
 .qa-foot {
   display: flex;
   align-items: center;
@@ -4870,6 +5047,20 @@ svg.hl .hl-ink {
   white-space: nowrap;
 }
 .analyze-actions .btn { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.analyze-actions .analyze-act { display: inline-flex; align-items: center; gap: 6px; padding: 0 11px 0 9px; }
+.analyze-actions .analyze-act svg { opacity: 0.8; }
+.analyze-actions .analyze-act:hover svg { opacity: 1; }
+/* Outline of the area an open Analyze answer is about; drawn just outside it so it never shows in a capture. */
+.analyze-mark {
+  position: fixed;
+  z-index: 60;
+  box-sizing: border-box;
+  border: 2px dashed #3b82f6;
+  border-radius: 4px;
+  pointer-events: none;
+  animation: analyze-mark-in 0.18s ease-out;
+}
+@keyframes analyze-mark-in { from { opacity: 0; } to { opacity: 1; } }
 .analyze-actions .analyze-sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--border, rgba(127, 127, 127, 0.3)); }
 .analyze-actions .analyze-close { display: inline-flex; align-items: center; gap: 5px; padding: 0 9px 0 7px; opacity: 0.85; }
 .analyze-actions .analyze-close:hover { opacity: 1; }

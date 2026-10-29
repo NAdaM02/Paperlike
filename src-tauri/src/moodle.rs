@@ -69,8 +69,30 @@ mod win {
     static TUM_CLICKED: AtomicBool = AtomicBool::new(false);
     /// Latest file drag. A newer drag cancels the one still waiting for mouse-up.
     static FILE_DRAG: AtomicU64 = AtomicU64::new(0);
-    /// One automatic TOTP attempt per sign-in; a rejected code falls back to typing it.
-    static TOTP_TRIED: AtomicBool = AtomicBool::new(false);
+    /// Automatic TOTP attempts in this sign-in. A rejected code gets one retry with the
+    /// next code; after that the user types one.
+    static TOTP_TRIES: AtomicU64 = AtomicU64::new(0);
+    const TOTP_MAX_TRIES: u64 = 2;
+    /// Last 30-second step whose code was sent. TUM accepts each code only once, so a
+    /// second sign-in in the same window has to wait for the next code.
+    static TOTP_LAST_STEP: AtomicU64 = AtomicU64::new(0);
+
+    /// Appends one line to the two-factor log (no codes or keys are written).
+    fn log_2fa(msg: &str) {
+        use std::io::Write;
+        let paths = crate::state::AppPaths::resolve();
+        let file = paths.root.join("moodle-2fa-log.txt");
+        if std::fs::metadata(&file).map(|m| m.len() > 200_000).unwrap_or(false) {
+            let _ = std::fs::remove_file(&file);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&file) {
+            let t = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let _ = writeln!(f, "{t} {msg}");
+        }
+    }
     /// True while the user registers Paperlike's TOTP key in TUMonline.
     static TOTP_SETUP: AtomicBool = AtomicBool::new(false);
     /// TUMonline page listing the account's two-factor tokens ("Register TOTP").
@@ -85,7 +107,7 @@ mod win {
 
     pub fn totp_setup(app: &AppHandle, on: bool) -> Result<(), String> {
         TOTP_SETUP.store(on, Ordering::Release);
-        TOTP_TRIED.store(false, Ordering::Release);
+        TOTP_TRIES.store(0, Ordering::Release);
         if on {
             nav(app, TOTP_SETUP_URL.into())
         } else {
@@ -98,7 +120,8 @@ mod win {
     pub fn totp_found(app: &AppHandle, secret: &str) -> Result<(), String> {
         let paths = crate::state::AppPaths::resolve();
         crate::secret_store::save_moodle_totp(&paths, secret)?;
-        TOTP_TRIED.store(false, Ordering::Release);
+        TOTP_TRIES.store(0, Ordering::Release);
+        log_2fa("key saved");
         emit_msg(app, json!({"type": "totp-found"}));
         totp_fill_confirm(app)
     }
@@ -108,22 +131,31 @@ mod win {
         let Some(secret) = crate::secret_store::load_moodle_totp(&paths)? else {
             return Err("No two-factor key is saved.".into());
         };
-        let (code, _) = crate::totp::code_now(&secret)?;
+        let (step, _) = crate::totp::step_now()?;
+        let code = crate::totp::code_at(&secret, step * 30)?;
+        TOTP_LAST_STEP.fetch_max(step, Ordering::AcqRel);
         eval_js(
             app,
             format!("window.__paperlikeTotpConfirm && window.__paperlikeTotpConfirm(\"{code}\");"),
         )
     }
 
-    /// Fills and submits the IdP code page, avoiding a code that expires mid-flight.
-    fn auto_totp(app: &AppHandle, secret: String) {
+    /// Fills and submits the IdP code page, avoiding a code that expires mid-flight
+    /// and a code that was already sent (TUM rejects a reused one).
+    fn auto_totp(app: &AppHandle, secret: String, attempt: u64) {
         let app = app.clone();
         std::thread::spawn(move || {
-            let Ok((_, left)) = crate::totp::code_now(&secret) else { return };
-            if left < 4 {
+            let Ok((mut step, left)) = crate::totp::step_now() else { return };
+            let used = step <= TOTP_LAST_STEP.load(Ordering::Acquire);
+            if left < 4 || used {
+                log_2fa(&format!("attempt {attempt}: waiting {}s for a fresh code (reused={used})", left + 1));
                 std::thread::sleep(std::time::Duration::from_secs(left + 1));
+                let Ok((next, _)) = crate::totp::step_now() else { return };
+                step = next;
             }
-            let Ok((code, _)) = crate::totp::code_now(&secret) else { return };
+            let Ok(code) = crate::totp::code_at(&secret, step * 30) else { return };
+            TOTP_LAST_STEP.fetch_max(step, Ordering::AcqRel);
+            log_2fa(&format!("attempt {attempt}: sent the code for step {step}"));
             let _ = eval_js(
                 &app,
                 format!("window.__paperlikeFillOtp && window.__paperlikeFillOtp(\"{code}\");"),
@@ -520,6 +552,10 @@ mod win {
             "login-required" => emit_msg(app, json!({"type": "login-required"})),
             "login-mfa" => {
                 let active = v.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+                if active {
+                    let note = clip(v.get("msg").and_then(|s| s.as_str()).unwrap_or(""), 300);
+                    log_2fa(&format!("code page shown; page says: {:?}", note));
+                }
                 let paths = crate::state::AppPaths::resolve();
                 let saved = if active && !TOTP_SETUP.load(Ordering::Acquire) {
                     crate::secret_store::load_moodle_totp(&paths).ok().flatten()
@@ -527,11 +563,15 @@ mod win {
                     None
                 };
                 match saved {
-                    Some(secret) if !TOTP_TRIED.swap(true, Ordering::AcqRel) => {
-                        auto_totp(app, secret);
+                    Some(secret) if TOTP_TRIES.load(Ordering::Acquire) < TOTP_MAX_TRIES => {
+                        let attempt = TOTP_TRIES.fetch_add(1, Ordering::AcqRel) + 1;
+                        auto_totp(app, secret, attempt);
                         emit_msg(app, json!({"type": "login-auto"}));
                     }
-                    Some(_) => emit_msg(app, json!({"type": "login-mfa", "active": true, "autoFailed": true})),
+                    Some(_) => {
+                        log_2fa("automatic codes rejected; asking for a typed one");
+                        emit_msg(app, json!({"type": "login-mfa", "active": true, "autoFailed": true}))
+                    }
                     None => emit_msg(app, json!({"type": "login-mfa", "active": active})),
                 }
             }
@@ -674,7 +714,9 @@ mod win {
         if is_moodle_logged_in(&parsed) {
             AUTOFILL_DONE.store(false, Ordering::Release);
             TUM_CLICKED.store(false, Ordering::Release);
-            TOTP_TRIED.store(false, Ordering::Release);
+            if TOTP_TRIES.swap(0, Ordering::AcqRel) > 0 {
+                log_2fa("signed in");
+            }
             maybe_offer_save(app);
             return;
         }
@@ -930,7 +972,13 @@ mod win {
   function reportOtp() {
     try {
       if (!hostOk() || typeof window.paperlikePost !== "function") return;
-      window.paperlikePost({ type: "login-mfa", active: !!findOtp() });
+      var otp = findOtp();
+      var msg = "";
+      if (otp) {
+        var err = document.querySelector('.alert-danger, .alert-error, .error, .form-error, .output--error, [role="alert"], .text-danger');
+        msg = ((err && err.innerText) || "").trim().slice(0, 300);
+      }
+      window.paperlikePost({ type: "login-mfa", active: !!otp, msg: msg });
     } catch (e) {}
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(reportOtp, 300); });

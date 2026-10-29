@@ -160,7 +160,8 @@ export function summaryHtml(md: string): string {
   const out: string[] = [];
   const lines = md.replace(/\r/g, "").split("\n");
   let para: string[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
+  type Sub = { ordered: boolean; items: string[] };
+  let list: { ordered: boolean; start: number; items: { text: string; sub: Sub | null }[] } | null = null;
   const flushPara = () => {
     if (para.length) out.push(`<p>${inlineHtml(para.join(" "))}</p>`);
     para = [];
@@ -168,7 +169,14 @@ export function summaryHtml(md: string): string {
   const flushList = () => {
     if (!list) return;
     const tag = list.ordered ? "ol" : "ul";
-    out.push(`<${tag}>${list.items.map((i) => `<li>${inlineHtml(i)}</li>`).join("")}</${tag}>`);
+    const start = list.ordered && list.start !== 1 ? ` start="${list.start}"` : "";
+    const subHtml = (s: Sub) => {
+      const st = s.ordered ? "ol" : "ul";
+      return `<${st}>${s.items.map((i) => `<li>${inlineHtml(i)}</li>`).join("")}</${st}>`;
+    };
+    out.push(
+      `<${tag}${start}>${list.items.map((i) => `<li>${inlineHtml(i.text)}${i.sub ? subHtml(i.sub) : ""}</li>`).join("")}</${tag}>`,
+    );
     list = null;
   };
   for (let i = 0; i < lines.length; i++) {
@@ -222,13 +230,22 @@ export function summaryHtml(md: string): string {
     if (item) {
       flushPara();
       const ordered = /\d/.test(item[1]);
+      // An indented item under a list item is a sub-point of it, not a new list.
+      if (list && list.items.length && /^\s{2,}/.test(raw)) {
+        const last = list.items[list.items.length - 1];
+        if (!last.sub) last.sub = { ordered, items: [] };
+        last.sub.items.push(item[2]);
+        continue;
+      }
       if (list && list.ordered !== ordered) flushList();
-      if (!list) list = { ordered, items: [] };
-      list.items.push(item[2]);
+      if (!list) list = { ordered, start: ordered ? parseInt(item[1], 10) || 1 : 1, items: [] };
+      list.items.push({ text: item[2], sub: null });
       continue;
     }
     if (list && /^\s/.test(raw)) {
-      list.items[list.items.length - 1] += ` ${t}`;
+      const last = list.items[list.items.length - 1];
+      if (last.sub) last.sub.items[last.sub.items.length - 1] += ` ${t}`;
+      else last.text += ` ${t}`;
       continue;
     }
     flushList();

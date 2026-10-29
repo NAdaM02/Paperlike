@@ -508,10 +508,14 @@ export function MoodlePane({
       if (type === "login-mfa") {
         if (payload.active) {
           setStatus("");
-          setMfa((m) => ({ error: otpSent.current, autoFailed: !!payload.autoFailed, round: (m?.round ?? 0) + 1 }));
+          // Only a code typed for this prompt can have been rejected.
+          const rejected = otpSent.current;
+          otpSent.current = false;
+          setMfa((m) => ({ error: rejected, autoFailed: !!payload.autoFailed, round: (m?.round ?? 0) + 1 }));
           setOtp("");
           setOtpBusy(false);
         } else {
+          otpSent.current = false;
           setMfa(null);
         }
         return;
