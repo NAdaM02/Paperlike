@@ -365,7 +365,9 @@ type Props = {
 };
 
 /** chrono strftime patterns offered for "Add today"; the first is the default. */
-const TODAY_FORMATS = ["%Y-%m-%d", "%Y-%m-%d (%a)", "%d.%m.%Y", "%m-%d"];
+const TODAY_FORMATS = ["%Y-%m-%d", "%Y-%m-%d (%a)", "%d.%m.%Y", "%m-%d", "%m.%d"];
+/** Typed after the date so the rest of the title can follow straight away. */
+const TODAY_GAP = "  ";
 
 /** Live preview of a strftime pattern (only the specifiers used above). */
 function fmtToday(d: Date, f: string): string {
@@ -483,6 +485,7 @@ export function NotebookView({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [titleDraft, setTitleDraft] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [prompt, setPrompt] = useState<PromptState>(null);
@@ -2162,7 +2165,15 @@ export function NotebookView({
     const p = await api.addTodayTitle(cur0.path, format);
     const n = await api.loadNote(p);
     setNote((cur) => (cur ? { ...n, doc: cur.doc, media_b64: cur.media_b64 } : n));
-    setTitleDraft(n.display_title);
+    // A file name can't end in spaces, so the gap lives only in the field, with the cursor after it.
+    const draft = n.display_title + TODAY_GAP;
+    setTitleDraft(draft);
+    requestAnimationFrame(() => {
+      const el = titleInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(draft.length, draft.length);
+    });
     await refreshInfo();
   };
 
@@ -3713,6 +3724,7 @@ export function NotebookView({
                 <span className="title-sizer">
                   <span className="ghost">{titleDraft || "Untitled"}</span>
                   <input
+                    ref={titleInputRef}
                     className="title"
                     value={titleDraft}
                     placeholder="Untitled"
@@ -3722,7 +3734,9 @@ export function NotebookView({
                     }}
                     onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
                     onBlur={() => {
-                      if (titleDraft !== note.display_title) commitRename(note.path, titleDraft);
+                      const t = titleDraft.trimEnd();
+                      if (t !== note.display_title) commitRename(note.path, t);
+                      else if (t !== titleDraft) setTitleDraft(t);
                     }}
                   />
                 </span>

@@ -1,6 +1,6 @@
 [package]
 name = "paperlike-app"
-version = "1.3.8"
+version = "1.3.9"
 description = "Paperlike — local-first note-taking"
 authors = ["adama"]
 edition = "2021"
