@@ -386,7 +386,9 @@ fn gate_edit() -> Result<(), String> {
 #[tauri::command]
 pub fn create_note(notebook_path: String) -> Result<NoteListItem, String> {
     gate_edit()?;
-    notebook::create_note_in_notebook(Path::new(&notebook_path)).map_err(err_str)
+    let item = notebook::create_note_in_notebook(Path::new(&notebook_path)).map_err(err_str)?;
+    crate::gitsync::note_saved(&item.path);
+    Ok(item)
 }
 
 fn rewrite_home_path(items: &mut [HomeItem], old: &str, new: &str) -> bool {
@@ -411,6 +413,7 @@ fn rewrite_home_path(items: &mut [HomeItem], old: &str, new: &str) -> bool {
 pub fn rename_note(state: State<AppState>, path: String, new_title: String) -> Result<String, String> {
     gate_edit()?;
     let new_path = notebook::rename_note(Path::new(&path), &new_title).map_err(err_str)?;
+    crate::gitsync::note_renamed(&path, &new_path);
     // A standalone note may be pinned to Home; keep that reference valid.
     if new_path != path {
         if let Ok(mut home) = state::load_home(&state.paths) {
@@ -425,7 +428,9 @@ pub fn rename_note(state: State<AppState>, path: String, new_title: String) -> R
 #[tauri::command]
 pub fn delete_note(path: String) -> Result<(), String> {
     // Deleting a note stays available after the trial. Every other change stays gated.
-    trash::delete(&path).map_err(err_str)
+    trash::delete(&path).map_err(err_str)?;
+    crate::gitsync::note_deleted(&path);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -549,6 +554,7 @@ pub fn save_note(payload: NotePayload) -> Result<NotePayload, String> {
     note.doc.canvas.unknown_objects = payload.unknown_objects;
     let renames = note::normalize_media(&mut note);
     note::save_note(&path, &mut note).map_err(err_str)?;
+    crate::gitsync::note_saved(&path.to_string_lossy());
     if !renames.is_empty() {
         if let Ok(mut all) = media_aliases().lock() {
             all.entry(path.clone()).or_default().extend(renames);

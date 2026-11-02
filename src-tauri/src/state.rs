@@ -80,6 +80,12 @@ pub struct Settings {
     /// Moodle course browser. The browser itself is separate; this only stores the choice.
     #[serde(default)]
     pub moodle_enabled: bool,
+    /// Sync github: commit, pull and push the notes folder (gitsync.rs). Off by default.
+    #[serde(default)]
+    pub git_sync: bool,
+    /// The folder Sync github keeps in step with its remote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_sync_dir: Option<String>,
     /// Windows Ink. Off treats the pen like a mouse (no pressure, coalescing, or palm rejection).
     #[serde(default = "default_true")]
     pub pen_enabled: bool,
@@ -136,6 +142,8 @@ impl Default for Settings {
             study_preset: None,
             study_root: None,
             moodle_enabled: false,
+            git_sync: false,
+            git_sync_dir: None,
             pen_enabled: true,
             pen_always_draws: true,
             pen_pressure: true,

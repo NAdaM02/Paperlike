@@ -3731,6 +3731,79 @@ svg.hl .hl-ink {
 .settings-section h3 { margin: 0; font-size: 13px; letter-spacing: 0.02em; }
 .settings-section .switch { align-items: flex-start; gap: 8px; }
 .settings-hint { display: block; color: var(--ink-3); font-size: 12px; font-weight: 400; margin: 0; }
+
+/* Sync github */
+.git-sync-box { display: grid; gap: 4px; margin: 10px 0 0 40px; }
+.git-sync-folder { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.git-sync-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.settings-hint.git-sync-problem, .git-sync-problem { color: var(--danger); }
+.sync-chip {
+  position: fixed;
+  left: 16px;
+  bottom: 14px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.sync-chip.show { opacity: 1; transform: none; pointer-events: auto; }
+.sync-chip-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sync-chip[data-state="syncing"] .sync-chip-body, .sync-chip[data-state="ok"] .sync-chip-body { cursor: default; }
+.sync-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.sync-chip[data-state="syncing"] .sync-chip-dot { animation: sync-pulse 1.2s ease-in-out infinite; }
+.sync-chip[data-state="ok"] .sync-chip-dot { background: #4f9a5e; }
+.sync-chip[data-state="error"] .sync-chip-dot { background: var(--danger); }
+.sync-chip[data-state="conflict"] .sync-chip-dot { background: var(--warn); }
+.sync-chip-x {
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 9px 5px 2px;
+  cursor: pointer;
+}
+.sync-chip-x:hover { color: var(--ink); }
+@keyframes sync-pulse { 50% { opacity: 0.25; } }
+.sync-conflict-intro { margin: 0 0 12px; color: var(--ink-2); font-size: 13px; line-height: 1.45; max-width: 52ch; }
+.sync-conflicts { display: grid; gap: 8px; max-height: 50vh; overflow: auto; }
+.sync-conflict { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2); }
+.sync-conflict-name { font-weight: 600; font-size: 13.5px; color: var(--ink); }
+.sync-conflict-where { font-weight: 400; color: var(--ink-3); font-size: 12px; margin-left: 8px; }
+.sync-conflict-times { font-size: 12px; color: var(--ink-3); }
+.sync-conflict-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.sync-conflict-error { font-size: 12.5px; margin: 10px 0 0; }
 .settings-google-email { margin: 0; }
 :root[data-theme="dark"] .seg,
 :root[data-theme="mix"] .seg {

@@ -14,6 +14,7 @@ mod study;
 mod totp;
 mod feedback;
 mod gif;
+mod gitsync;
 mod google_account;
 mod moodle;
 pub mod cli;
@@ -111,6 +112,7 @@ pub fn run() {
             disable_native_zoom(app);
             #[cfg(target_os = "windows")]
             disable_pen_hold(app);
+            gitsync::install(app.handle());
             Ok(())
         })
         .manage(AppState { paths })
@@ -123,6 +125,12 @@ pub fn run() {
             exit_app,
             update_needs_admin,
             commands::get_settings,
+            gitsync::git_sync_status,
+            gitsync::git_sync_note_opened,
+            gitsync::git_sync_note_closed,
+            gitsync::git_sync_on_exit,
+            gitsync::git_sync_check,
+            gitsync::git_sync_resolve,
             commands::save_settings,
             commands::get_home,
             commands::save_home,

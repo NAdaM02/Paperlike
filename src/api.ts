@@ -11,6 +11,24 @@ export type HomeTile = {
   group_items?: HomeTile[] | null;
 };
 
+export type GitSyncConflict = {
+  path: string;
+  /** Path inside the repository, with forward slashes. */
+  name: string;
+  mine: string | null;
+  theirs: string | null;
+  is_note: boolean;
+};
+export type GitSyncStatus = {
+  state: "off" | "idle" | "syncing" | "ok" | "error" | "conflict";
+  /** Error kind, see messages.gitSyncErrors. */
+  code: string;
+  detail: string;
+  at: string | null;
+  conflicts: GitSyncConflict[];
+};
+export type GitSyncCheck = { code: string; detail: string; remote: string };
+
 export type Settings = {
   version: number;
   theme: string;
@@ -31,6 +49,9 @@ export type Settings = {
   study_preset?: string | null;
   study_root?: string | null;
   moodle_enabled?: boolean;
+  /** Sync github. Off by default. */
+  git_sync?: boolean;
+  git_sync_dir?: string | null;
   /** Windows Ink. Off treats the pen like a mouse. Missing means on. */
   pen_enabled?: boolean;
   /** Pen draws with the last pen or marker even when another tool is selected. */
@@ -327,6 +348,13 @@ export type NotebookUiState = {
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke("save_settings", { settings }),
+  gitSyncStatus: () => invoke<GitSyncStatus>("git_sync_status"),
+  gitSyncNoteOpened: (path: string) => invoke("git_sync_note_opened", { path }),
+  gitSyncNoteClosed: (path: string) => invoke("git_sync_note_closed", { path }),
+  gitSyncOnExit: () => invoke<GitSyncStatus>("git_sync_on_exit"),
+  gitSyncCheck: (folder: string) => invoke<GitSyncCheck>("git_sync_check", { folder }),
+  gitSyncResolve: (path: string, keep: "mine" | "theirs") =>
+    invoke<GitSyncStatus>("git_sync_resolve", { path, keep }),
   licensePrice: () => invoke<string>("license_price"),
   licenseStatus: () =>
     invoke<{ kind: string; days_left: number | null; secs_left: number | null; read_only: boolean; transfers_left: number | null }>("license_status"),

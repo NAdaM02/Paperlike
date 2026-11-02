@@ -193,6 +193,9 @@ out.
 - Single main window, standard Windows chrome, min size 900×600.
 - Window size/position/maximized state persist.
 - Closing the window with unsaved changes → same Save/Discard/Cancel guard.
+- With Sync github on, closing hides the window and runs one last sync before the
+  app exits ([`app-state.md`](app-state.md) §6). Its status chip sits at the bottom
+  left; a merge conflict opens the "Pick a version" card.
 - Global search entry point: Ctrl+Shift+F anywhere → [`search.md`](search.md).
 
 ---

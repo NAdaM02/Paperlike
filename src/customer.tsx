@@ -7,6 +7,7 @@ import { api, Settings } from "./api";
 import { messages, tourStepsFor, TourUntil } from "./copy/messages";
 import { IcClose, IcMix, IcMoon, IcSun } from "./icons";
 import { StudySetup } from "./StudySetup";
+import { GitSyncSettings } from "./GitSync";
 import { Modal } from "./ui";
 
 export const CUSTOMER = false;
@@ -380,7 +381,8 @@ export function SettingsDialog({
               </section>
             )}
             {tab === "files" && (
-              <section className="settings-section" style={sectionRest}>
+              <>
+              <section className="settings-section">
                 <h3>{messages.settingsFiles}</h3>
                 <button
                   className="btn"
@@ -399,6 +401,11 @@ export function SettingsDialog({
                 </button>
                 <p className="settings-hint">{messages.noteAssocHint}</p>
               </section>
+              <section className="settings-section" style={sectionRest}>
+                <h3>{messages.settingsSync}</h3>
+                <GitSyncSettings settings={settings} onSave={save} />
+              </section>
+              </>
             )}
             {tab === "license" && CUSTOMER && license && (
               <>

@@ -42,12 +42,14 @@ state files).
   "study_prompted": false,            // first-run study card answered
   "study_preset": null,               // e.g. "tum-aerospace" after the setup is created
   "study_root": null,                 // folder the preset was written into
-  "moodle_enabled": false             // Moodle course browser switch
+  "moodle_enabled": false,            // Moodle course browser switch
+  "git_sync": false,                  // Sync github (§6), off by default
+  "git_sync_dir": null                // the repository folder it syncs
 }
 ```
 
-`study_prompted`, `study_preset`, `study_root`, and `moodle_enabled` are optional
-on read. A settings file from before those fields existed still loads; the missing
+`study_prompted`, `study_preset`, `study_root`, `moodle_enabled`, `git_sync` and
+`git_sync_dir` are optional on read. A settings file from before those fields existed still loads; the missing
 ones default to false / empty. Saving writes them back.
 
 ### `home.json`
@@ -140,3 +142,48 @@ files changing under it.
   with a toast.
 - Never auto-resolve by deleting user data; every destructive branch requires the
   explicit button click above.
+
+## 6. Sync github
+
+Settings › Files › **Sync github** ("Synchronize with the repository where you keep
+your notes"). Off by default and not part of the welcome tour. Turning it on asks
+for the folder first (a git clone); "Change folder" picks another. The folder is
+checked right away (git missing, not a repository, no remote) and the remote URL
+is shown under it. Code: `src-tauri/src/gitsync.rs`, `src/GitSync.tsx`.
+
+**When it runs.** Only these, never on a timer or after each save:
+- on startup (about 1.5 s after launch);
+- on shutdown: the window hides, then one sync runs (the UI waits at most 30 s).
+  Hiding to the tray is not a shutdown;
+- about 2 minutes after a note that was saved while open is closed (switching
+  notes, leaving the notebook) and not reopened. The wait is per note; reopening
+  cancels it. A deleted note counts as closed. Notes outside the folder are ignored.
+
+One sync runs at a time; a trigger during a run queues one more run.
+
+**Steps** (the `sync` command line script): `add -A`; commit only when something is
+staged (`yyyy. MM. dd. - HH:mm`, so a nested repository that cannot be staged makes
+no empty commit); `fetch`; push with `-u` when the branch is not on the remote yet;
+merge `<remote>/<branch>` when behind; push when ahead. It uses the current branch
+(an empty repository starts on `main`), `origin` or else the first remote, and the
+system git with its credential helper (`GIT_TERMINAL_PROMPT=0`, no console window).
+After a pull, the notebook list refreshes and the open note reloads when it has no
+unsaved edits.
+
+**Status.** A small chip at the bottom left: "Syncing" only when a sync takes over
+0.6 s, then "Synced" for about 2 s; "Sync didn't finish" on an error (tooltip with
+the reason and git's last line, click opens Settings › Files, × hides it until the
+error changes); "Sync conflict" while files wait. The settings block shows the last
+sync time or the error in words: git missing, folder missing, not a repository, no
+remote, detached HEAD, sign-in refused, offline, push rejected, files that could not
+be added, commit failed (identity), merge failed.
+
+**Conflicts** are the only interruption. The merge is left in progress and each
+conflicted file is set to the local version, so the app never reads conflict
+markers. A card ("Pick a version") lists each file with the last local and remote
+commit times and **Keep mine** / **Keep theirs** / **Open note**; it opens once per
+new conflict, "Later" closes it and the chip reopens it. Keep mine stages the local
+file (edits made since the conflict included). Keep theirs first copies the local
+file to `<name> (my edits).<ext>` when it changed since the conflict, then checks
+out the remote version. When no file is left, the merge commit is made and pushed.
+Until then every sync stops at the conflict. Both versions stay in git history.

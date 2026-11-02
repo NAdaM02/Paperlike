@@ -1,6 +1,7 @@
 import { ReactNode, RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { MoodlePane } from "./MoodlePane";
 import {
@@ -763,6 +764,29 @@ export function NotebookView({
     setInfo(nb);
     return nb;
   }, [mode, path]);
+
+  /* ── Sync github: open/close drive the delayed sync; a pull reloads what changed ── */
+  const openNotePath = note?.path;
+  useEffect(() => {
+    if (!openNotePath) return;
+    void api.gitSyncNoteOpened(openNotePath).catch(() => {});
+    return () => {
+      void api.gitSyncNoteClosed(openNotePath).catch(() => {});
+    };
+  }, [openNotePath]);
+  useEffect(() => {
+    const norm = (p: string) => p.replace(/\//g, "\\").toLowerCase();
+    const un = listen<string[]>("git-sync-changed", (e) => {
+      const changed = e.payload.map(norm);
+      const base = `${norm(path)}\\`;
+      if (mode === "notebook" && changed.some((p) => p.startsWith(base))) void refreshInfo().catch(() => {});
+      const cur = noteRef.current?.path;
+      if (cur && !dirtyRef.current && changed.includes(norm(cur))) void loadNoteAt(cur).catch(() => {});
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [mode, path, refreshInfo, loadNoteAt]);
 
   /* ── saving ── */
   /** Saves the open note; false when the write failed (the edits then go to recovery). */

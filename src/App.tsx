@@ -21,6 +21,7 @@ import { CUSTOMER, FeedbackDock, LicenseStatus, SettingsDialog, TrialCorner, Wel
 import { messages } from "./copy/messages";
 import { IcClose } from "./icons";
 import { StudySetup } from "./StudySetup";
+import { GitSyncDock, syncBeforeExit } from "./GitSync";
 import "./styles.css";
 
 type Route =
@@ -513,6 +514,7 @@ export default function App() {
       // No update: the tray keeps the process. Rust already hid the window.
       if (!update) {
         if (trayRef.current && !quitting) return;
+        await syncBeforeExit(() => win.hide());
         await win.destroy();
         return;
       }
@@ -521,6 +523,7 @@ export default function App() {
       promptingRef.current = true;
       try {
         await win.hide().catch(() => {});
+        await syncBeforeExit(async () => {});
         await invoke("record_update_note", {
           version: update.version,
           notes: update.body ?? "",
@@ -987,6 +990,13 @@ export default function App() {
         />
       )}
       <FeedbackDock showButton={route.view === "home"} />
+      <GitSyncDock
+        onOpenSettings={() => {
+          setSettingsTab("files");
+          setSettingsOpen(true);
+        }}
+        onOpenNote={(p) => void routeLaunchPath(p, navigate)}
+      />
       {CUSTOMER && trialNotice && (
         <div className="trial-notice" role="status">
           <button
