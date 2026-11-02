@@ -279,7 +279,7 @@ fn note_to_md(note: &NoteFile, title: &str, opts: &ExportOptions) -> Result<Stri
         .objects
         .iter()
         .filter_map(|o| match o {
-            CanvasObject::Text(_) | CanvasObject::Image(_) => {
+            CanvasObject::Text(_) | CanvasObject::Image(_) | CanvasObject::File(_) => {
                 let (x, y, w, h) = md_bbox(o);
                 Some((o.id().to_string(), x, y, w, h))
             }
@@ -458,6 +458,22 @@ fn note_to_md(note: &NoteFile, title: &str, opts: &ExportOptions) -> Result<Stri
                 }
             },
             MdBody::Obj(CanvasObject::Group(_)) => {}
+            MdBody::Obj(CanvasObject::File(f)) => {
+                out.push_str(&format!(
+                    "<!--pl:file id={} rel=\"{rel}\" name=\"{}\"-->\n",
+                    f.id,
+                    html_attr(&f.name)
+                ));
+                out.push_str(&format!("Attached file: {} ({}).\n\n", f.name, size_label(f.size)));
+                prev.push(RelTarget {
+                    id,
+                    label: f.name.clone(),
+                    x,
+                    y,
+                    w,
+                    h,
+                });
+            }
             MdBody::Obj(CanvasObject::Pdf(pdf)) => {
                 let pages = pdf
                     .pages
@@ -574,6 +590,20 @@ fn md_bbox(obj: &CanvasObject) -> (f64, f64, f64, f64) {
     }
 }
 
+/// File size the way Explorer shows it.
+fn size_label(bytes: u64) -> String {
+    let b = bytes as f64;
+    if b < 1024.0 {
+        format!("{bytes} B")
+    } else if b < 1024.0 * 1024.0 {
+        format!("{:.0} KB", (b / 1024.0).max(1.0))
+    } else if b < 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.1} MB", b / 1024.0 / 1024.0)
+    } else {
+        format!("{:.1} GB", b / 1024.0 / 1024.0 / 1024.0)
+    }
+}
+
 fn image_filename(media: &str) -> String {
     Path::new(media)
         .file_name()
@@ -660,6 +690,9 @@ fn object_labels(note: &NoteFile) -> HashMap<String, String> {
             CanvasObject::Group(_) => {}
             CanvasObject::Pdf(p) => {
                 m.insert(p.id.clone(), format!("pdf ({} pages)", p.pages.len()));
+            }
+            CanvasObject::File(f) => {
+                m.insert(f.id.clone(), f.name.clone());
             }
         }
     }
@@ -1202,7 +1235,7 @@ fn build_geometry(note: &NoteFile) -> GeometryDoc {
         .objects
         .iter()
         .filter_map(|o| match o {
-            CanvasObject::Text(_) | CanvasObject::Image(_) => {
+            CanvasObject::Text(_) | CanvasObject::Image(_) | CanvasObject::File(_) => {
                 let (x, y, w, h) = md_bbox(o);
                 Some((o.id().to_string(), x, y, w, h))
             }
@@ -1258,6 +1291,12 @@ fn build_geometry(note: &NoteFile) -> GeometryDoc {
                 objects.push(serde_json::json!({
                     "id": p.id, "type": "pdf", "x": p.x, "y": p.y, "z": p.z,
                     "w": w, "h": h, "pages": p.pages, "layout": p.layout,
+                }));
+            }
+            CanvasObject::File(f) => {
+                objects.push(serde_json::json!({
+                    "id": f.id, "type": "file", "x": f.x, "y": f.y, "z": f.z,
+                    "w": f.width, "h": f.height, "name": f.name, "size": f.size,
                 }));
             }
         }
@@ -1843,6 +1882,12 @@ pub fn export_pdf(
                         draw_drawing(&mut layer, d, &map, scale);
                     }
                     CanvasObject::Group(_) => {}
+                    CanvasObject::File(f) => {
+                        if f.y > page_bottom || f.y + f.height < page_top {
+                            continue;
+                        }
+                        draw_file_chip(&mut layer, f, &map, scale);
+                    }
                     CanvasObject::Pdf(pdf) => {
                         let (ox, oy, _, oh) = obj.bbox();
                         if oy > page_bottom || oy + oh < page_top {
@@ -2290,6 +2335,46 @@ mod ink {
             assert!(min_x > -0.5, "round cap would pass the start, min_x {min_x}");
         }
     }
+}
+
+/// A file chip on paper: the frame, the file name, and its type and size.
+fn draw_file_chip(layer: &mut Layer, f: &crate::note::FileObject, map: &Mapper, scale: f64) {
+    let frame = crate::note::DrawingObject {
+        id: f.id.clone(),
+        x: f.x,
+        y: f.y,
+        z: f.z,
+        item: DrawingItem::Shape {
+            shape: "rect".into(),
+            w: f.width,
+            h: f.height,
+            width: 1.0,
+            color: "#c9c3b8".into(),
+            fill: Some("#fbfaf6".into()),
+        },
+        locked: false,
+        extra: Default::default(),
+    };
+    draw_drawing(layer, &frame, map, scale);
+    let fits = (((f.width - 28.0) / 6.6).floor().max(4.0)) as usize;
+    let mut name: String = f.name.chars().take(fits).collect();
+    if f.name.chars().count() > fits {
+        name = format!("{}...", name.chars().take(fits.saturating_sub(3)).collect::<String>());
+    }
+    layer.set_fill_color(hex_color(&Some("#2a2722".into())));
+    layer.use_text(pdf_text(&name), (10.5 * scale) as f32, map.mm_x(f.x + 14.0), map.mm_y(f.y + 22.0), BuiltinFont::Helvetica);
+    let ext = Path::new(&f.name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_uppercase())
+        .unwrap_or_else(|| "FILE".into());
+    layer.set_fill_color(hex_color(&Some("#8a8478".into())));
+    layer.use_text(
+        pdf_text(&format!("{ext} · {}", size_label(f.size))),
+        (8.0 * scale) as f32,
+        map.mm_x(f.x + 14.0),
+        map.mm_y(f.y + 38.0),
+        BuiltinFont::Helvetica,
+    );
 }
 
 fn draw_drawing(
@@ -2756,7 +2841,7 @@ fn page_cuts(note: &NoteFile, top: f64, bottom: f64, first_span: f64, full_span:
                     lines.push((y0, y1));
                 }
             }
-            CanvasObject::Image(_) | CanvasObject::Drawing(_) => {
+            CanvasObject::Image(_) | CanvasObject::Drawing(_) | CanvasObject::File(_) => {
                 let (_, y, _, h) = obj.bbox();
                 wholes.push((y, h));
             }

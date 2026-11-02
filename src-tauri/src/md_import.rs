@@ -409,6 +409,15 @@ fn apply_geo(built: &mut Built, g: &GeoObj) {
                 o.z = z;
             }
         }
+        CanvasObject::File(o) => {
+            if let (Some(x), Some(y)) = (x, y) {
+                o.x = x;
+                o.y = y;
+            }
+            if let Some(z) = g.z {
+                o.z = z;
+            }
+        }
     }
 }
 
@@ -477,6 +486,10 @@ fn set_xy(obj: &mut CanvasObject, x: f64, y: f64) {
             o.x = x;
             o.y = y;
         }
+        CanvasObject::File(o) => {
+            o.x = x;
+            o.y = y;
+        }
     }
 }
 
@@ -487,6 +500,7 @@ fn set_z(obj: &mut CanvasObject, z: i32) {
         CanvasObject::Drawing(o) => o.z = z,
         CanvasObject::Group(o) => o.z = z,
         CanvasObject::Pdf(o) => o.z = z,
+        CanvasObject::File(o) => o.z = z,
     }
 }
 

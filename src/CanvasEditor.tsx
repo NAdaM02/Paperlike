@@ -20,6 +20,7 @@ import {
   PaperStyle,
   PdfLayout,
   PdfMask,
+  FileObject,
   PdfObject,
   TextObject,
 } from "./api";
@@ -53,6 +54,9 @@ import { drawingTouchesRect, lassoLoop, pushLassoPoint, refineSmartStroke } from
 import { markerOutlinePath, outlinePath, pressureHitWidth, pushPenSample, smoothInk, strokeOutline, strokeRuns } from "./ink";
 import { isGifBase64, StillImage } from "./stillImage";
 import { ArrowInk } from "./ArrowInk";
+import { FileChip, IMAGE_EXTS, fileExt } from "./fileChip";
+import { messages } from "./copy/messages";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { arrowHeadKind, arrowHeadPoints, scaleDrawing, shaftIsStraight, smoothFreeShaft, type Pt } from "./drawGeom";
 
 /** How long a lifted pen still counts as "in use" for palm rejection. */
@@ -176,6 +180,9 @@ type Props = {
   onToolChord?: (x: number, y: number) => void;
   /** The drawing just placed. Ribbon color and width restyle it until the next click or stroke. */
   onLiveDraw?: (id: string | null) => void;
+  onToast?: (m: string) => void;
+  /** Pasted files that are not all pictures: the notebook adds them (PDFs, file chips). */
+  onPasteFiles?: (files: File[]) => void;
   viewRef?: React.MutableRefObject<CanvasViewApi | null>;
   paper: PaperStyle;
   /** Draw tools can ask the ribbon to switch. The lasso stays on Lasso. */
@@ -383,6 +390,7 @@ export function objectBBox(
     return { x: o.x, y: o.y, w: o.width, h };
   }
   if (o.type === "image") return { x: o.x, y: o.y, w: o.width, h: o.height };
+  if (o.type === "file") return { x: o.x, y: o.y, w: o.width, h: o.height };
   if (o.type === "group") return { x: o.x, y: o.y, w: o.width, h: Math.max(GROUP_MIN_H, o.min_height ?? GROUP_MIN_H) };
   if (o.type === "pdf") {
     const size = pdfSize(o);
@@ -442,6 +450,8 @@ export function CanvasEditor({
   arrowBody = "single",
   onToolChord,
   onLiveDraw,
+  onToast,
+  onPasteFiles,
   viewRef,
   paper,
   lockedView,
@@ -682,7 +692,7 @@ export function CanvasEditor({
     if (!objs.length) return;
     const media: Record<string, string> = {};
     for (const o of objs) {
-      if ((o.type === "image" || o.type === "pdf") && noteMediaRef.current[o.media]) {
+      if ((o.type === "image" || o.type === "pdf" || o.type === "file") && noteMediaRef.current[o.media]) {
         media[o.media] = noteMediaRef.current[o.media];
       }
     }
@@ -3015,6 +3025,58 @@ export function CanvasEditor({
     h: wrapBox.h / cam.z,
   };
 
+  /* ── file chips (editor.md §2.7) ── */
+  const lastChipDown = useRef<{ id: string; t: number; x: number; y: number } | null>(null);
+  const openFileChip = async (o: FileObject) => {
+    const b64 = noteMediaRef.current[o.media];
+    if (!b64) {
+      onToast?.(messages.fileMissing);
+      return;
+    }
+    try {
+      const r = await api.openAttachment(o.name, b64);
+      if (r.how === "shown") onToast?.(messages.fileShownNotRun);
+    } catch (err) {
+      onToast?.(messages.fileError(String(err)));
+    }
+  };
+  const saveFileChip = async (o: FileObject) => {
+    const b64 = noteMediaRef.current[o.media];
+    if (!b64) {
+      onToast?.(messages.fileMissing);
+      return;
+    }
+    const ext = fileExt(o.name);
+    const dest = await saveDialog({
+      defaultPath: o.name,
+      filters: ext ? [{ name: ext.toUpperCase(), extensions: [ext] }] : undefined,
+    }).catch(() => null);
+    if (!dest) return;
+    try {
+      await api.saveAttachment(dest, b64);
+      onToast?.(messages.fileSaved);
+    } catch (err) {
+      onToast?.(messages.fileError(String(err)));
+    }
+  };
+  // Pointer capture during a move swallows dblclick, so double-clicks are timed here.
+  const fileChipDown = (e: React.PointerEvent, o: FileObject) => {
+    const now = performance.now();
+    const last = lastChipDown.current;
+    const plain = e.button === 0 && !e.ctrlKey && !e.shiftKey && !e.metaKey;
+    if (plain && last && last.id === o.id && now - last.t < 450 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 6) {
+      lastChipDown.current = null;
+      e.stopPropagation();
+      e.preventDefault();
+      void openFileChip(o);
+      return;
+    }
+    lastChipDown.current = plain ? { id: o.id, t: now, x: e.clientX, y: e.clientY } : null;
+    startMove(e, o.id);
+  };
+  const paintFile = (o: FileObject, sel: boolean) => (
+    <FileChip key={o.id} obj={o} selected={sel} onPointerDown={(e) => fileChipDown(e, o)} />
+  );
   const paintPdf = (o: PdfObject, sel: boolean) => (
     <PdfView
       key={o.id}
@@ -3168,6 +3230,17 @@ export function CanvasEditor({
       const text = data?.getData("text/plain") ?? "";
       const items = data?.items;
       if (text !== OBJECT_CLIP_MARKER && items) {
+        // Copied files that aren't all pictures (a PDF, a document, a mix) go to the notebook.
+        const files = Array.from(items)
+          .filter((it) => it.kind === "file")
+          .map((it) => it.getAsFile())
+          .filter((f): f is File => !!f);
+        if (onPasteFiles && files.some((f) => !f.type.startsWith("image/") || !IMAGE_EXTS.includes(fileExt(f.name) || f.type.slice(6)))) {
+          e.preventDefault();
+          e.stopPropagation();
+          onPasteFiles(files);
+          return;
+        }
         for (const item of Array.from(items)) {
           if (!item.type.startsWith("image/")) continue;
           const file = item.getAsFile();
@@ -3384,6 +3457,7 @@ export function CanvasEditor({
             );
           }
           if (o.type === "pdf") return paintPdf(o, sel);
+          if (o.type === "file") return paintFile(o, sel);
           if (o.type !== "drawing") return null;
           return (
             <DrawingViewStable
@@ -3479,6 +3553,7 @@ export function CanvasEditor({
                     );
                   }
                   if (o.type === "pdf") return paintPdf(o, sel);
+                  if (o.type === "file") return paintFile(o, sel);
                   return (
                     <DrawingViewStable
                       key={o.id}
@@ -3727,6 +3802,14 @@ export function CanvasEditor({
           items={((): MenuItem[] => {
             const ids = objMenu.ids;
             const items: MenuItem[] = [];
+            const chip = ids.length === 1 ? objects.find((o) => o.id === ids[0]) : undefined;
+            if (chip?.type === "file") {
+              items.push(
+                { label: messages.fileOpen, onClick: () => void openFileChip(chip) },
+                { label: messages.fileSaveAs, onClick: () => void saveFileChip(chip) },
+                "sep",
+              );
+            }
             if (ids.length) {
               items.push(
                 { label: "Cut", hint: "Ctrl+X", onClick: () => { copyObjects(ids); deleteIds(ids, true); } },

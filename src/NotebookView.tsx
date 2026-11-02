@@ -3,6 +3,7 @@ import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { MoodlePane } from "./MoodlePane";
 import {
   finishMoodleDrag,
@@ -17,6 +18,8 @@ import "mathlive/fonts.css";
 import { QuickAskField, QuickSeed } from "./QuickAsk";
 import {
   api,
+  CanvasObject,
+  FileObject,
   HomeTile,
   GifHit,
   GroupObject,
@@ -102,6 +105,7 @@ import {
 } from "./ui";
 import {
   IcArrow,
+  IcAttach,
   IcEllipse,
   IcLine,
   IcRect,
@@ -146,6 +150,7 @@ import {
   IcTrash,
   IcUndo,
 } from "./icons";
+import { FILE_CHIP_H, FILE_MAX_BYTES, FileChip, IMAGE_EXTS, fileExt, makeFileObject } from "./fileChip";
 
 type Ribbon = "File" | "Edit" | "Draw" | "View";
 const RIBBON_ORDER: Ribbon[] = ["File", "Edit", "Draw", "View"];
@@ -436,6 +441,35 @@ export function NotebookView({
   const [moodlePreserve, setMoodlePreserve] = useState(false);
   const [moodleHint, setMoodleHint] = useState(false);
   const insertPdfRef = useRef<(paths: string[]) => void>(() => {});
+  // Files dragged in from Explorer (Tauri delivers paths, not DOM drop events).
+  const dropPathsRef = useRef<(paths: string[], at?: { x: number; y: number }) => void>(() => {});
+  const [fileDrop, setFileDrop] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let stop: (() => void) | undefined;
+    void getCurrentWebview()
+      .onDragDropEvent((ev) => {
+        const p = ev.payload;
+        if (p.type === "enter") {
+          setFileDrop(p.paths.length > 0);
+          return;
+        }
+        if (p.type === "over") return;
+        setFileDrop(false);
+        if (p.type !== "drop" || !p.paths.length) return;
+        const dpr = window.devicePixelRatio || 1;
+        const at = viewRef.current?.point(p.position.x / dpr, p.position.y / dpr);
+        dropPathsRef.current(p.paths, at);
+      })
+      .then((un) => {
+        if (alive) stop = un;
+        else un();
+      });
+    return () => {
+      alive = false;
+      stop?.();
+    };
+  }, []);
   const [dragGhost, setDragGhost] = useState<MoodleDragGhost | null>(null);
   const dragLand = useRef<{ token: number; x: number; y: number } | null>(null);
   const dragReady = useRef<{ token: number; b64: string; media: string; aspects: number[]; preview: string } | null>(null);
@@ -799,7 +833,7 @@ export function NotebookView({
       const doc = { ...n.doc, canvas: { ...n.doc.canvas, objects } };
       // Only files an object uses; the save drops the rest anyway.
       const used = new Set<string>();
-      for (const o of objects) if ((o.type === "image" || o.type === "pdf") && n.media_b64[o.media]) used.add(o.media);
+      for (const o of objects) if ((o.type === "image" || o.type === "pdf" || o.type === "file") && n.media_b64[o.media]) used.add(o.media);
       const onDisk = diskMediaRef.current.path === n.path ? diskMediaRef.current.keys : null;
       // Files already in the note stay on disk: send just their names, not the bytes.
       const payload = (incremental: boolean): NotePayload => {
@@ -2186,7 +2220,7 @@ export function NotebookView({
       return;
     }
     if (!["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-      onToast("That file can't be added to a note.");
+      await insertLocalPaths([filePath]);
       return;
     }
     const n = noteRef.current;
@@ -2230,6 +2264,109 @@ export function NotebookView({
   };
   insertPdfRef.current = (paths) => {
     for (const filePath of paths) void insertFileFromPath(filePath);
+  };
+
+  /** Files picked, dropped or pasted: pictures and PDFs as usual, anything else as a file chip. */
+  const placeLocalFiles = async (picked: { name: string; size: number; b64: string }[], at?: { x: number; y: number }) => {
+    if (!picked.length) return;
+    if (!noteRef.current) {
+      onToast(messages.fileOpenNoteFirst);
+      return;
+    }
+    const origin = at ?? insertAt();
+    const pdfs: { b64: string; aspects: number[] }[] = [];
+    const made: { obj: ImageObject | FileObject; b64: string; cx: number; cy: number }[] = [];
+    let pics = 0;
+    let chipY = origin.y - FILE_CHIP_H / 2;
+    for (const f of picked) {
+      const ext = fileExt(f.name);
+      if (ext === "pdf") {
+        try {
+          pdfs.push({ b64: f.b64, aspects: await pdfAspects(b64ToBytes(f.b64)) });
+          continue;
+        } catch {
+          // A PDF the viewer can't read is still kept, as a file.
+        }
+      }
+      if (IMAGE_EXTS.includes(ext)) {
+        try {
+          const natural = await imageSize(f.b64);
+          const { width, height } = fitImage(natural.width, natural.height);
+          const x = Math.round(origin.x - width / 2 + pics * 24);
+          const y = Math.round(origin.y - height / 2 + pics * 24);
+          pics++;
+          const obj: ImageObject = {
+            type: "image",
+            id: newId("i"),
+            x,
+            y,
+            z: 0,
+            media: `media/${newId("m").slice(2)}.${ext === "jpeg" ? "jpg" : ext}`,
+            width,
+            height,
+          };
+          made.push({ obj, b64: f.b64, cx: x + width / 2, cy: y + height / 2 });
+          continue;
+        } catch {
+          // Not a picture the editor can show: keep it as a file.
+        }
+      }
+      const obj = makeFileObject(f.name, f.size, origin.x, chipY, 0);
+      chipY += FILE_CHIP_H + 10;
+      made.push({ obj, b64: f.b64, cx: obj.x + obj.width / 2, cy: obj.y + FILE_CHIP_H / 2 });
+    }
+    const latest = noteRef.current;
+    if (!latest) return;
+    let next = latest;
+    if (made.length) {
+      if (!pdfs.length) snapshot("insert-file");
+      let z = latest.doc.canvas.objects.reduce((m, o) => Math.max(m, o.z), 0);
+      const media = { ...latest.media_b64 };
+      let placed = latest.doc.canvas.objects;
+      for (const m of made) {
+        const obj: CanvasObject = { ...m.obj, z: ++z };
+        media[m.obj.media] = m.b64;
+        placed = placeNew(placed, obj, m.cx, m.cy, (o) => objectBBox(o, heightsRef.current));
+      }
+      next = { ...latest, media_b64: media, doc: { ...latest.doc, canvas: { ...latest.doc.canvas, objects: placed } } };
+    }
+    if (pdfs.length) commitPdfs(next, pdfs, { x: origin.x, y: made.length ? chipY + 20 : origin.y });
+    else if (made.length) noteChanged(next);
+  };
+  const insertLocalPaths = async (paths: string[], at?: { x: number; y: number }) => {
+    if (!paths.length) return;
+    if (!noteRef.current) {
+      onToast(messages.fileOpenNoteFirst);
+      return;
+    }
+    if (expired) return;
+    const read: { name: string; size: number; b64: string }[] = [];
+    for (const p of paths) {
+      try {
+        read.push(await api.readLocalFile(p));
+      } catch (err) {
+        onToast(messages.fileReadError(p.split(/[\\/]/).pop() || p, String(err)));
+      }
+    }
+    await placeLocalFiles(read, at);
+  };
+  dropPathsRef.current = (paths, at) => void insertLocalPaths(paths, at);
+  const insertFiles = async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({ multiple: true, directory: false, title: messages.fileInsertTitle }).catch(() => null);
+    await insertLocalPaths(Array.isArray(picked) ? picked : picked ? [picked] : []);
+  };
+  const pasteFiles = async (files: File[]) => {
+    if (expired) return;
+    const read: { name: string; size: number; b64: string }[] = [];
+    for (const f of files) {
+      if (f.size > FILE_MAX_BYTES) {
+        onToast(messages.fileReadError(f.name, "file-too-large"));
+        continue;
+      }
+      read.push({ name: f.name || "file", size: f.size, b64: bytesToB64(new Uint8Array(await f.arrayBuffer())) });
+    }
+    await placeLocalFiles(read);
   };
 
   const addToday = async (format?: string) => {
@@ -3138,6 +3275,9 @@ export function NotebookView({
             </button>
             <button className="btn" title="Insert a PDF as one joined set of pages" onClick={insertPdfs}>
               <IcPdf size={15} /> PDF
+            </button>
+            <button className="btn" title={messages.fileInsertHint} onClick={() => void insertFiles()}>
+              <IcAttach size={15} /> File
             </button>
             <button className="btn" title="Collapsible note — draw and type inside it" onClick={insertFold}>
               <IcFold size={15} /> Fold
@@ -4080,6 +4220,8 @@ export function NotebookView({
                                 onWindowSelect={onWindowSelect}
                                 onSelectionChange={onCanvasSelection}
                                 onLiveDraw={onLiveDraw}
+                  onToast={onToast}
+                  onPasteFiles={(files) => void pasteFiles(files)}
                               />
                             ) : (
                               <LazyPdfStatic
@@ -4141,6 +4283,8 @@ export function NotebookView({
                   onWindowSelect={onWindowSelect}
                   onSelectionChange={onCanvasSelection}
                   onLiveDraw={onLiveDraw}
+                  onToast={onToast}
+                  onPasteFiles={(files) => void pasteFiles(files)}
                   dragGhost={dragGhost}
                 />
               )}
@@ -4271,6 +4415,11 @@ export function NotebookView({
             </>
           )}
         </DrawOptionsPop>
+      )}
+      {fileDrop && note && !expired && (
+        <div className="file-drop-veil">
+          <span>{messages.fileDropHint}</span>
+        </div>
       )}
       {gifOpen && <GifPicker onClose={() => setGifOpen(false)} onPick={(hit) => void insertGif(hit)} />}
 
@@ -5218,6 +5367,7 @@ function PdfStatic({ note, view }: { note: NotePayload; view: PdfCanvasView }) {
               )
             ) : null;
           }
+          if (o.type === "file") return <FileChip key={o.id} obj={o} selected={false} onPointerDown={() => {}} />;
           if (o.type === "group") {
             if (!o.collapsed) return null;
             return (

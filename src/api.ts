@@ -284,7 +284,23 @@ export type PdfObject = {
 
 export type PdfMask = { page: number; x: number; y: number; w: number; h: number; color: string };
 
-export type CanvasObject = TextObject | ImageObject | DrawingObject | GroupObject | PdfObject;
+/** Any other file kept in the note's media folder, shown as a chip. specs/editor.md §2.7 */
+export type FileObject = {
+  type: "file";
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  locked?: boolean;
+  media: string;
+  /** Original file name, used when opening or saving it. */
+  name: string;
+  size: number;
+  width: number;
+  height: number;
+};
+
+export type CanvasObject = TextObject | ImageObject | DrawingObject | GroupObject | PdfObject | FileObject;
 
 export type NoteDocument = {
   format: string;
@@ -355,6 +371,9 @@ export const api = {
   gitSyncCheck: (folder: string) => invoke<GitSyncCheck>("git_sync_check", { folder }),
   gitSyncResolve: (path: string, keep: "mine" | "theirs") =>
     invoke<GitSyncStatus>("git_sync_resolve", { path, keep }),
+  readLocalFile: (path: string) => invoke<{ name: string; size: number; b64: string }>("read_local_file", { path }),
+  openAttachment: (name: string, b64: string) => invoke<{ how: "opened" | "shown" }>("open_attachment", { name, b64 }),
+  saveAttachment: (dest: string, b64: string) => invoke<void>("save_attachment", { dest, b64 }),
   licensePrice: () => invoke<string>("license_price"),
   licenseStatus: () =>
     invoke<{ kind: string; days_left: number | null; secs_left: number | null; read_only: boolean; transfers_left: number | null }>("license_status"),

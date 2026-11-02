@@ -238,6 +238,21 @@ black in bright theme / white in dark theme; **exports resolve `auto` to black**
 all booleans false, `hl` none. A run with explicit `color` keeps that exact color in
 both themes and in exports.
 
+#### 1.3.7 `file` — any other file, shown as a chip
+
+```json
+{
+  "id": "f_…", "type": "file", "x": 120, "y": 300, "z": 6,
+  "media": "media/4c1d….docx",
+  "name": "Lab report.docx",
+  "size": 48213,
+  "width": 236, "height": 52
+}
+```
+
+The bytes live in `media/` like images and PDFs; `name` is the original file name
+used for Open and Save as, `size` is in bytes. `locked` works as on other objects.
+
 ### 1.4 Versioning & robustness
 
 - `version` is a single integer. An app reading a **newer** major version than it
@@ -246,6 +261,8 @@ both themes and in exports.
   object types are kept too and written back; they are not shown. A note whose
   `version` is newer than this build opens with a read-only notice and is never
   rewritten.
+- Saving drops media files no object uses. A `media` string on an unknown object
+  type counts as used, so a newer object kind keeps its file through an older save.
 - A `.note` that fails to parse: show error, offer "Open backup" (see
   `app-state.md` §Data safety), never overwrite the corrupt file silently.
 

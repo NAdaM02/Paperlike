@@ -195,6 +195,24 @@ over only the styles that were actually set, never the plain default font or col
   the source format is not in the allowed set; otherwise original bytes kept).
 - Resize via frame handles keeps aspect ratio; Alt+drag resizes freely.
 
+### 2.7 File chips (any other file)
+
+- Ribbon "Insert" → **File** picks one or more files. Files dragged in from File
+  Explorer land where they're dropped (a dashed frame shows while dragging), and
+  pasted files land at the view center. Pictures and PDFs still become images and
+  joined PDF pages; everything else becomes a file chip. Several chips stack
+  downwards. Files over 100 MB and folders are refused with a toast.
+- A chip shows a page icon with the extension, the file name (ellipsis when long)
+  and the size. It moves, selects, locks, copies and deletes like an image; it
+  can't be resized.
+- **Double-click** or right-click → **Open** opens the file in its default app.
+  The app gets a copy in `%TEMP%\Paperlike open files` (cleared at the next
+  start); edits made there don't flow back into the note. Programs and scripts
+  (exe, msi, bat, cmd, ps1, vbs, js, lnk, reg, jar, …) are never run: the copy is
+  selected in File Explorer instead, with a toast saying so.
+- Right-click → **Save as…** writes the original bytes anywhere.
+- Markdown export writes "Attached file: NAME (SIZE)."; PDF export draws the chip.
+
 ---
 
 ## 3. Draw tools (ribbon "Draw")

@@ -100,6 +100,7 @@ pub enum CanvasObject {
     Drawing(DrawingObject),
     Group(GroupObject),
     Pdf(PdfObject),
+    File(FileObject),
 }
 
 impl CanvasObject {
@@ -110,6 +111,7 @@ impl CanvasObject {
             CanvasObject::Drawing(o) => &o.id,
             CanvasObject::Group(o) => &o.id,
             CanvasObject::Pdf(o) => &o.id,
+            CanvasObject::File(o) => &o.id,
         }
     }
 
@@ -120,6 +122,7 @@ impl CanvasObject {
             CanvasObject::Drawing(o) => o.z,
             CanvasObject::Group(o) => o.z,
             CanvasObject::Pdf(o) => o.z,
+            CanvasObject::File(o) => o.z,
         }
     }
 
@@ -133,8 +136,30 @@ impl CanvasObject {
                 let (w, h) = o.size();
                 (o.x, o.y, w, h)
             }
+            CanvasObject::File(o) => (o.x, o.y, o.width, o.height),
         }
     }
+}
+
+/// Any other file, embedded whole and shown as a chip. `name` is the original
+/// file name, used for Open and Save as; the bytes are in `media`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileObject {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub z: i32,
+    pub media: String,
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
+    pub width: f64,
+    pub height: f64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub locked: bool,
+    /// Fields this version does not know, kept so a save writes them back.
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 /// A collapsible note on the canvas. Members are other objects (absolute coordinates)
@@ -757,6 +782,14 @@ pub fn save_note(path: &Path, note: &mut NoteFile) -> Result<()> {
             used.insert(img.media.clone());
         } else if let CanvasObject::Pdf(pdf) = obj {
             used.insert(pdf.media.clone());
+        } else if let CanvasObject::File(file) = obj {
+            used.insert(file.media.clone());
+        }
+    }
+    // Objects from a newer version keep their files too.
+    for obj in &note.doc.canvas.unknown_objects {
+        if let Some(m) = obj.get("media").and_then(|m| m.as_str()) {
+            used.insert(m.to_string());
         }
     }
     note.media.retain(|k, _| used.contains(k));
@@ -862,6 +895,7 @@ pub fn normalize_media(note: &mut NoteFile) -> HashMap<String, String> {
         let media = match obj {
             CanvasObject::Image(img) => &mut img.media,
             CanvasObject::Pdf(pdf) => &mut pdf.media,
+            CanvasObject::File(file) => &mut file.media,
             _ => continue,
         };
         if let Some(new_key) = renames.get(media) {

@@ -1,7 +1,27 @@
 /** Every sentence a person sees in the tour, license card, feedback, and settings.
  *  Rewrite these in your own voice. The components only read this file. */
 
+const FILE_ERRORS: Record<string, string> = {
+  "file-missing": "That file isn't there anymore.",
+  "file-folder": "Folders can't be added. Add the files inside it.",
+  "file-too-large": "Files over 100 MB can't be added to a note.",
+  "file-unreadable": "Windows didn't let Paperlike read that file. It may be open in another app.",
+  "file-open-failed": "Couldn't open the file.",
+  "file-save-failed": "Couldn't save the file there.",
+};
+
 export const messages = {
+  fileOpen: "Open",
+  fileSaveAs: "Save as…",
+  fileSaved: "Saved.",
+  fileMissing: "This file isn't in the note anymore.",
+  fileShownNotRun: "Programs and scripts don't run from a note. It's selected in File Explorer instead.",
+  fileOpenNoteFirst: "Open a note to add files.",
+  fileInsertHint: "Add any file. Double-click it on the page to open it.",
+  fileInsertTitle: "Add files to this note",
+  fileDropHint: "Drop to add to this note",
+  fileError: (code: string) => FILE_ERRORS[code] ?? "Something went wrong with that file.",
+  fileReadError: (name: string, code: string) => `${name}: ${FILE_ERRORS[code] ?? "couldn't be read."}`,
   whatsappUrl: "https://wa.me/qr/NCPPW4YCTTZ4K1",
 
   trialDays: (n: number) => (n === 1 ? "1 day left" : `${n} days left`),

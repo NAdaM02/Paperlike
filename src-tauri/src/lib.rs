@@ -13,6 +13,7 @@ mod state;
 mod study;
 mod totp;
 mod feedback;
+mod attachments;
 mod gif;
 mod gitsync;
 mod google_account;
@@ -113,6 +114,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             disable_pen_hold(app);
             gitsync::install(app.handle());
+            attachments::clean_open_copies();
             Ok(())
         })
         .manage(AppState { paths })
@@ -131,6 +133,9 @@ pub fn run() {
             gitsync::git_sync_on_exit,
             gitsync::git_sync_check,
             gitsync::git_sync_resolve,
+            attachments::read_local_file,
+            attachments::open_attachment,
+            attachments::save_attachment,
             commands::save_settings,
             commands::get_home,
             commands::save_home,
