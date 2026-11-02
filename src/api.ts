@@ -297,6 +297,8 @@ export type NotePayload = {
   read_only?: boolean;
   /** Objects this version cannot show; passed back untouched on save. */
   unknown_objects?: unknown[];
+  /** Save only: files already in the note on disk that were not resent in media_b64. */
+  media_keep?: string[];
 };
 
 export type DetectedItem = {

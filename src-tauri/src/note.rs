@@ -783,9 +783,66 @@ pub fn save_note(path: &Path, note: &mut NoteFile) -> Result<()> {
     Ok(())
 }
 
+/// Read the named `media/` entries of a saved note. Names that are not in the
+/// file are simply left out; the caller decides whether that is an error.
+pub fn read_media_entries(path: &Path, names: &[String]) -> Result<HashMap<String, Vec<u8>>> {
+    let mut out = HashMap::new();
+    if names.is_empty() {
+        return Ok(out);
+    }
+    let file = std::fs::File::open(path).with_context(|| format!("read {}", path.display()))?;
+    let mut zip = ZipArchive::new(file).context("not a valid .note ZIP")?;
+    for name in names {
+        if out.contains_key(name) || !name.starts_with("media/") || name.contains("..") {
+            continue;
+        }
+        let Ok(mut entry) = zip.by_name(name) else { continue };
+        if entry.size() > 120_000_000 {
+            bail!("media entry too large: {name}");
+        }
+        let mut buf = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut buf)?;
+        out.insert(name.clone(), buf);
+    }
+    Ok(out)
+}
+
+/// Marker in the error a save returns when a file the editor said was already
+/// saved is not in the note on disk. The editor then saves again sending every file.
+pub const MEDIA_MISSING: &str = "media-missing";
+
+/// For an incremental save: put back the files the editor did not resend.
+/// `keep` names files by the editor's keys; `aliases` maps a key to the
+/// content-addressed name an earlier save stored it under.
+pub fn fill_kept_media(
+    path: &Path,
+    media: &mut HashMap<String, Vec<u8>>,
+    keep: &[String],
+    aliases: &HashMap<String, String>,
+) -> Result<()> {
+    let wanted: Vec<(String, String)> = keep
+        .iter()
+        .filter(|k| !media.contains_key(*k))
+        .map(|k| (k.clone(), aliases.get(k).cloned().unwrap_or_else(|| k.clone())))
+        .collect();
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<String> = wanted.iter().map(|(_, stored)| stored.clone()).collect();
+    let found = read_media_entries(path, &names)?;
+    for (key, stored) in wanted {
+        let Some(bytes) = found.get(&stored) else {
+            bail!("{MEDIA_MISSING}: {key}");
+        };
+        media.insert(key, bytes.clone());
+    }
+    Ok(())
+}
+
 /// Rename media entries to content-addressed names and rewrite the object
-/// references, so the same picture inserted twice is stored once.
-pub fn normalize_media(note: &mut NoteFile) {
+/// references, so the same picture inserted twice is stored once. Returns the
+/// renames (old key -> stored name).
+pub fn normalize_media(note: &mut NoteFile) -> HashMap<String, String> {
     let mut renames: HashMap<String, String> = HashMap::new();
     let mut next: HashMap<String, Vec<u8>> = HashMap::new();
     for (key, bytes) in note.media.drain() {
@@ -801,9 +858,6 @@ pub fn normalize_media(note: &mut NoteFile) {
     }
     note.media = next;
 
-    if renames.is_empty() {
-        return;
-    }
     for obj in note.doc.canvas.objects.iter_mut() {
         let media = match obj {
             CanvasObject::Image(img) => &mut img.media,
@@ -814,6 +868,7 @@ pub fn normalize_media(note: &mut NoteFile) {
             *media = new_key.clone();
         }
     }
+    renames
 }
 
 #[cfg(test)]
@@ -922,5 +977,72 @@ mod tests {
         let out = serde_json::to_string(&c).unwrap();
         assert!(out.contains(r#""type":"group""#) && out.contains(r#""children":["t"]"#));
         assert!(!out.contains("collapsed"), "false collapsed must be omitted");
+    }
+
+    fn image(id: &str, media: &str) -> CanvasObject {
+        serde_json::from_str(&format!(
+            r#"{{"type":"image","id":"{id}","x":0,"y":0,"z":1,"media":"{media}","width":10,"height":10}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn incremental_save_reuses_files_already_in_the_note() {
+        let dir = std::env::temp_dir().join(format!("ow_incr_note_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pics.note");
+        let png = b"\x89PNG fake picture bytes".to_vec();
+        let pdf = b"%PDF-1.4 fake".to_vec();
+
+        // First save: the editor sends both files under its own temporary keys,
+        // the same picture twice.
+        let mut note = NoteFile::new_empty();
+        note.doc.canvas.objects = vec![image("a", "media/tmp1.png"), image("b", "media/tmp2.png")];
+        note.media.insert("media/tmp1.png".into(), png.clone());
+        note.media.insert("media/tmp2.png".into(), png.clone());
+        let aliases = normalize_media(&mut note);
+        save_note(&path, &mut note).unwrap();
+        assert_eq!(note.media.len(), 1, "identical pictures are stored once");
+
+        // Second save: the editor still uses its old keys and resends nothing for them,
+        // adding one new file.
+        let mut media = HashMap::new();
+        media.insert("media/tmp3.pdf".to_string(), pdf.clone());
+        let keep = vec!["media/tmp1.png".to_string(), "media/tmp2.png".to_string()];
+        fill_kept_media(&path, &mut media, &keep, &aliases).unwrap();
+        let mut next = NoteFile::new_empty();
+        next.doc.canvas.objects = vec![image("a", "media/tmp1.png"), image("b", "media/tmp2.png")];
+        next.media = media;
+        normalize_media(&mut next);
+        save_note(&path, &mut next).unwrap();
+
+        let back = load_note(&path).unwrap();
+        for obj in &back.doc.canvas.objects {
+            let CanvasObject::Image(img) = obj else { panic!("image") };
+            assert_eq!(back.media.get(&img.media), Some(&png));
+        }
+        assert_eq!(back.media.len(), 1, "the unused PDF is not kept");
+
+        // A file the editor claims is saved but is not in the note asks for a full save.
+        let mut media = HashMap::new();
+        let err = fill_kept_media(&path, &mut media, &["media/nope.png".to_string()], &HashMap::new())
+            .unwrap_err();
+        assert!(err.to_string().starts_with(MEDIA_MISSING));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_media_still_opens_and_saves() {
+        let dir = std::env::temp_dir().join(format!("ow_missing_media_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("broken.note");
+        let mut note = NoteFile::new_empty();
+        note.doc.canvas.objects = vec![image("a", "media/gone.png")];
+        save_note(&path, &mut note).unwrap();
+        let mut back = load_note(&path).expect("a note with a missing picture still opens");
+        assert!(back.media.is_empty());
+        assert_eq!(back.doc.canvas.objects.len(), 1, "the object stays, shown as missing");
+        save_note(&path, &mut back).expect("and it still saves");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

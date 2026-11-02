@@ -150,7 +150,8 @@ bar beneath. The action bar contents:
 ### 2.3 Note-list sidebar
 
 - Lists the notebook's notes; entry = title (dim "Untitled" if empty-named) +
-  small creation date. Current note highlighted.
+  small creation date (hover shows the relative label from `relativeDay` plus the
+  full timestamp). Current note highlighted.
 - **Sort control** (top of sidebar): Name ↑ / Name ↓ / Created ↑ / Created ↓.
   Persisted per notebook in `.notebook_data` (`sort`), so the order follows the
   folder.

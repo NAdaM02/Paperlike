@@ -49,6 +49,7 @@ import { DrawOptionsPop, ToolWheel } from "./toolWheel";
 import { GifPicker } from "./gifPicker";
 import { collapsedIds, placeNew } from "./group";
 import { messages } from "./copy/messages";
+import { relativeDay, useToday } from "./relativeDate";
 import { pdfAspects, pdfPlacement } from "./pdfDoc";
 import { PdfView, type PdfCanvasView } from "./PdfView";
 import { pdfSize } from "./pdfLayout";
@@ -258,6 +259,29 @@ function themeInk(theme: string): string {
   return theme === "dark" ? "#ece7df" : "#23201c";
 }
 
+/* ── text formatting defaults (app-wide, survive restarts) ── */
+
+const TEXT_PREFS_KEY = "paperlike-text-prefs";
+
+/** The typing style new text starts with. color null = theme ink. */
+type TextPrefs = { font: string; size: number; color: string | null; hl: string };
+
+function loadTextPrefs(): TextPrefs {
+  const base: TextPrefs = { font: DEFAULT_FONT, size: DEFAULT_SIZE, color: null, hl: "#ffe066" };
+  const isHex = (c: unknown): c is string => typeof c === "string" && /^#[0-9a-f]{3,8}$/i.test(c);
+  try {
+    const p = JSON.parse(localStorage.getItem(TEXT_PREFS_KEY) ?? "{}") as Partial<TextPrefs>;
+    return {
+      font: typeof p.font === "string" && p.font.trim() ? p.font : base.font,
+      size: typeof p.size === "number" && p.size >= 5 && p.size <= 200 ? p.size : base.size,
+      color: isHex(p.color) ? p.color : null,
+      hl: isHex(p.hl) ? p.hl : base.hl,
+    };
+  } catch {
+    return base;
+  }
+}
+
 const TOOL_KEYS: Record<string, Tool> = {
   v: "select",
   s: "lasso",
@@ -404,6 +428,7 @@ export function NotebookView({
   moodleDock = null,
   onFloatMoodle,
 }: Props) {
+  const today = useToday();
   const [info, setInfo] = useState<NotebookInfo | null>(null);
   const [moodleOpen, setMoodleOpen] = useState(false);
   const [tourAt, setTourAt] = useState("");
@@ -473,13 +498,23 @@ export function NotebookView({
   >(null);
   const mathEditSeq = useRef(0);
   const mathInsertRef = useRef<() => void>(() => {});
-  const [defaultFont, setDefaultFont] = useState(DEFAULT_FONT);
-  const [defaultSize, setDefaultSize] = useState(DEFAULT_SIZE);
+  const [textPrefs, setTextPrefs] = useState<TextPrefs>(loadTextPrefs);
+  const updateTextPrefs = (patch: Partial<TextPrefs>) =>
+    setTextPrefs((p) => {
+      const next = { ...p, ...patch };
+      try {
+        localStorage.setItem(TEXT_PREFS_KEY, JSON.stringify(next));
+      } catch {
+        /* quota / private mode */
+      }
+      return next;
+    });
+  const defaultFont = textPrefs.font;
+  const defaultSize = textPrefs.size;
   const [sizeDraft, setSizeDraft] = useState<string | null>(null);
-  const [lastColor, setLastColor] = useState(() =>
-    settings.theme === "dark" ? "#ffffff" : "#000000",
-  );
-  const [lastHl, setLastHl] = useState("#ffe066");
+  /** What the text colour button shows and applies; "Default" shows as plain black/white. */
+  const lastColor = textPrefs.color ?? (settings.theme === "dark" ? "#ffffff" : "#000000");
+  const lastHl = textPrefs.hl;
   const [findOpen, setFindOpen] = useState(!!initialFind);
   const [findQ, setFindQ] = useState(initialFind ?? "");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -674,9 +709,13 @@ export function NotebookView({
     setDirty(true);
   }, []);
 
+  /** Media keys known to be in the note file on disk, so a save sends only new files. */
+  const diskMediaRef = useRef<{ path: string; keys: Set<string> }>({ path: "", keys: new Set() });
+
   /* ── loading ── */
   const loadNoteAt = useCallback(async (p: string) => {
     const n = await api.loadNote(p);
+    diskMediaRef.current = { path: n.path, keys: new Set(Object.keys(n.media_b64)) };
     past.current = [];
     future.current = [];
     heightsRef.current = {};
@@ -732,16 +771,30 @@ export function NotebookView({
     if (!n || n.read_only) return true;
     setSaveInFlight(true);
     try {
-      const saved = await api.saveNoteInfo({
-        ...n,
-        doc: {
-          ...n.doc,
-          canvas: {
-            ...n.doc.canvas,
-            objects: n.doc.canvas.objects.filter((o) => !(o.type === "pdf" && o.pending)),
-          },
-        },
-      });
+      const objects = n.doc.canvas.objects.filter((o) => !(o.type === "pdf" && o.pending));
+      const doc = { ...n.doc, canvas: { ...n.doc.canvas, objects } };
+      // Only files an object uses; the save drops the rest anyway.
+      const used = new Set<string>();
+      for (const o of objects) if ((o.type === "image" || o.type === "pdf") && n.media_b64[o.media]) used.add(o.media);
+      const onDisk = diskMediaRef.current.path === n.path ? diskMediaRef.current.keys : null;
+      // Files already in the note stay on disk: send just their names, not the bytes.
+      const payload = (incremental: boolean): NotePayload => {
+        const media_b64: Record<string, string> = {};
+        const media_keep: string[] = [];
+        for (const k of used) {
+          if (incremental && onDisk?.has(k)) media_keep.push(k);
+          else media_b64[k] = n.media_b64[k];
+        }
+        return { ...n, doc, media_b64, media_keep };
+      };
+      let saved;
+      try {
+        saved = await api.saveNoteInfo(payload(true));
+      } catch (e) {
+        if (!String(e).includes("media-missing")) throw e;
+        saved = await api.saveNoteInfo(payload(false));
+      }
+      diskMediaRef.current = { path: saved.path, keys: used };
       const cur = noteRef.current;
       if (!cur || cur.path !== n.path) return true;
       // Keep any edits that landed while the write was in flight.
@@ -1027,12 +1080,6 @@ export function NotebookView({
     return () => window.removeEventListener("keydown", onKey);
   }, [tool]);
 
-  useEffect(() => {
-    setLastColor((c) =>
-      c === "#000000" || c === "#ffffff" ? (settings.theme === "dark" ? "#ffffff" : "#000000") : c,
-    );
-  }, [settings.theme]);
-
   /* ── notes list ── */
   const sortedNotes = useMemo(() => {
     if (!info) return [] as NoteListItem[];
@@ -1099,6 +1146,7 @@ export function NotebookView({
       await refreshInfo();
       if (noteRef.current?.path === notePath) {
         const n = await api.loadNote(newPath);
+        diskMediaRef.current = { path: n.path, keys: new Set(Object.keys(n.media_b64)) };
         setNote((cur) => (cur ? { ...n, doc: cur.doc, media_b64: cur.media_b64 } : n));
         setTitleDraft(n.display_title);
       }
@@ -1400,14 +1448,14 @@ export function NotebookView({
 
   /** Font: whole window when canvas-highlighted; else caret/selection (typing default). */
   const changeFont = (font: string) => {
-    setDefaultFont(font);
+    updateTextPrefs({ font });
     applyLiveFormat(() => setFontFamily(font));
   };
 
   /** Size: whole window when canvas-highlighted; else caret/selection (typing default). */
   const changeSize = (pt: number) => {
     const size = Math.max(5, Math.min(200, pt));
-    setDefaultSize(size);
+    updateTextPrefs({ size });
     setSizeDraft(null);
     applyLiveFormat(() => setFontSize(size));
   };
@@ -1417,13 +1465,14 @@ export function NotebookView({
   const changeColor = (c: string | null) => {
     const color =
       c ?? (settings.theme === "dark" ? "#ffffff" : "#000000");
-    setLastColor(color);
+    // Re-applying the shown default (the main button) keeps new text on theme ink.
+    updateTextPrefs({ color: c === null || (textPrefs.color === null && c === lastColor) ? null : c });
     applyLiveFormat(() => setTextColor(color));
   };
 
   /** Highlight: sticky default (when non-null) + apply / clear on selection. */
   const changeHighlight = (c: string | null) => {
-    if (c) setLastHl(c);
+    if (c) updateTextPrefs({ hl: c });
     applyLiveFormat(() => setHighlight(c));
   };
 
@@ -3645,7 +3694,12 @@ export function NotebookView({
                             {item.n.display_title || "Untitled"}
                           </span>
                         )}
-                        <span className="dt" title={`Created ${huDateTime(item.n.created)}`}>
+                        <span
+                          className="dt"
+                          title={[relativeDay(item.n.created, today), `Created ${huDateTime(item.n.created)}`]
+                            .filter(Boolean)
+                            .join("\n")}
+                        >
                           {huDate(item.n.created)}
                         </span>
                       </li>,
@@ -3751,6 +3805,9 @@ export function NotebookView({
                 )}
                 <span className="meta" title={`Created ${huDateTime(note.created)}`}>
                   {huDate(note.created)}
+                  {relativeDay(note.created, today) && (
+                    <span className="meta-rel">{relativeDay(note.created, today)}</span>
+                  )}
                 </span>
                 {expired && (
                   <span className="note-readonly" title={messages.expiredBanner}>
@@ -3993,7 +4050,7 @@ export function NotebookView({
                                 heightsRef={heightsRef}
                                 defaultFont={defaultFont}
                                 defaultSize={defaultSize}
-                                defaultColor={lastColor}
+                                defaultColor={textPrefs.color ?? undefined}
                                 highlightedTextId={highlightedTextId}
                                 onTextEditStart={onTextEditStart}
                                 onWindowSelect={onWindowSelect}
@@ -4054,7 +4111,7 @@ export function NotebookView({
                   heightsRef={heightsRef}
                   defaultFont={defaultFont}
                   defaultSize={defaultSize}
-                  defaultColor={lastColor}
+                  defaultColor={textPrefs.color ?? undefined}
                   highlightedTextId={highlightedTextId}
                   onTextEditStart={onTextEditStart}
                   onWindowSelect={onWindowSelect}

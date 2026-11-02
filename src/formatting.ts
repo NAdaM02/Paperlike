@@ -9,9 +9,12 @@
  * selection over the replacements.
  *
  * Important: the marker pass often flattens nested spans, so we snapshot the
- * caret's computed font/size/colour/highlight *before* execCommand and paint
- * those back onto the new span (minus the property being changed). Otherwise
- * changing the font family after a size change would drop the size, etc.
+ * font/size/colour/highlight set on the caret's spans *before* execCommand and
+ * paint those back onto the new span (minus the property being changed).
+ * Otherwise changing the font family after a size change would drop the size.
+ * Only styles someone actually set are carried over: copying the computed
+ * colour froze "default" text to black or white, so it stopped following the
+ * theme, and baked the plain font and size into every span.
  */
 
 const MARKER_SIZE = "7";
@@ -31,7 +34,7 @@ function rgbToHex(c: string): string {
   return `#${hex(m[1])}${hex(m[2])}${hex(m[3])}`;
 }
 
-/** Snapshot styles at the selection so a later format pass doesn't wipe them. */
+/** Snapshot the styles set on the selection's spans so a format pass doesn't wipe them. */
 function captureSelectionStyles(): Preserved {
   const sel = window.getSelection();
   if (!sel?.anchorNode) return {};
@@ -47,29 +50,30 @@ function captureSelectionStyles(): Preserved {
     node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node.parentElement;
   if (!el) return {};
 
-  const cs = getComputedStyle(el);
-  const font = cs.fontFamily.split(",")[0].replace(/["']/g, "").trim();
-  const sizePt = Math.round((parseFloat(cs.fontSize) * 72) / 96);
-  const color = rgbToHex(cs.color) || undefined;
-
-  let highlight: string | undefined;
-  let hn: HTMLElement | null = el;
+  // Walk up to (not including) the box itself; the box's own style is read on save.
   const root = el.closest(".content");
-  while (hn && hn !== root) {
-    const bg = rgbToHex(getComputedStyle(hn).backgroundColor);
-    if (bg) {
-      highlight = bg;
-      break;
+  let font: string | undefined;
+  let sizePt: number | undefined;
+  let color: string | undefined;
+  let highlight: string | undefined;
+  for (let n: HTMLElement | null = el; n && n !== root; n = n.parentElement) {
+    const st = n.style;
+    const isFont = n.tagName === "FONT";
+    if (!font) {
+      const f = st.fontFamily || (isFont ? n.getAttribute("face") ?? "" : "");
+      font = f.split(",")[0].replace(/["']/g, "").trim() || undefined;
     }
-    hn = hn.parentElement;
+    if (sizePt === undefined && st.fontSize) {
+      const pt = Math.round((parseFloat(getComputedStyle(n).fontSize) * 72) / 96);
+      if (Number.isFinite(pt)) sizePt = pt;
+    }
+    if (!color && (st.color || (isFont && n.hasAttribute("color")))) {
+      color = rgbToHex(getComputedStyle(n).color) || undefined;
+    }
+    if (!highlight) highlight = rgbToHex(getComputedStyle(n).backgroundColor) || undefined;
   }
 
-  return {
-    font: font || undefined,
-    sizePt: Number.isFinite(sizePt) ? sizePt : undefined,
-    color,
-    highlight,
-  };
+  return { font, sizePt, color, highlight };
 }
 
 function paintPreserved(

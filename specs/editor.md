@@ -107,6 +107,14 @@ the caret, or the sticky style set via ribbon toggles when the selection is empt
 Toggle semantics on mixed selections: if any part of the selection lacks the style,
 the first press applies it to all; a second press removes it from all.
 
+Typing defaults: the last font, size, text colour and highlight colour picked in the
+ribbon become the style new text boxes start with. They are app-wide and survive
+restarts (`paperlike-text-prefs` in local storage). Text colour "Default" means theme
+ink, so it follows light and dark mode; it is never stored as black or white.
+Saving keeps that starting style on the text itself, so it is still there after
+switching notes or reopening the app. Changing one property (say the size) carries
+over only the styles that were actually set, never the plain default font or colour.
+
 ### 2.4 Lists (bullets only)
 
 - Ribbon "bullets" button with style dropdown: `disc`, `circle`, `square`, `dash`,
@@ -290,6 +298,10 @@ settings persist app-wide.
 
 - Title (rendered as editable single-line field, dim "Untitled" placeholder when
   empty) + creation date underneath (read-only, from `meta.created`, local format).
+- After the date, a quiet relative label ("Today", "Yesterday", weekday, "Last week",
+  "N weeks ago", "Last month", month name, "Last year", "N years ago"), from
+  `relativeDay` in `src/relativeDate.ts`. Local calendar days, Monday-first weeks;
+  it refreshes at midnight. Hidden for future dates.
 - **"Add today"** button — appears only while the title is empty; inserts
   `yyyy-mm-dd` per [`file-formats.md`](file-formats.md) §3.
 - Renaming here = renaming the file (same rules and separator-reference updates as

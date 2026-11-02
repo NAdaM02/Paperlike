@@ -1462,6 +1462,8 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
 }
 .note-title-row input.title::placeholder { color: var(--ink-3); font-style: italic; }
 .note-title-row .meta { color: var(--ink-3); font-size: 12.5px; flex: none; }
+.note-title-row .meta-rel { margin-left: 6px; font-style: italic; }
+.note-title-row .meta-rel::before { content: "·"; margin-right: 6px; font-style: normal; opacity: 0.6; }
 .note-readonly {
   flex: none;
   font-size: 12px;

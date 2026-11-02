@@ -445,6 +445,20 @@ pub struct NotePayload {
     /// Objects of kinds this version cannot show; they ride along and are saved back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unknown_objects: Vec<serde_json::Value>,
+    /// Incremental save: files already in the note on disk, which the editor did
+    /// not resend in `media_b64`. Saving copies them over from the file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media_keep: Vec<String>,
+}
+
+/// Per note path, the editor's media keys and the content-addressed names an
+/// earlier save stored them under. The editor keeps its own keys for the whole
+/// session, so an incremental save needs this to find the stored file.
+fn media_aliases() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, std::collections::HashMap<String, String>>> {
+    static ALIASES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, std::collections::HashMap<String, String>>>,
+    > = std::sync::OnceLock::new();
+    ALIASES.get_or_init(Default::default)
 }
 
 #[tauri::command]
@@ -473,6 +487,7 @@ pub fn load_note(path: String) -> Result<NotePayload, String> {
         media_b64,
         read_only,
         unknown_objects,
+        media_keep: Vec::new(),
     })
 }
 
@@ -519,14 +534,26 @@ pub fn save_note(payload: NotePayload) -> Result<NotePayload, String> {
     if payload.read_only {
         return Err("This note was written by a newer Paperlike; it opens read-only.".into());
     }
+    let path = PathBuf::from(&payload.path);
+    if !payload.media_keep.is_empty() {
+        let aliases = media_aliases()
+            .lock()
+            .map(|m| m.get(&path).cloned().unwrap_or_default())
+            .unwrap_or_default();
+        note::fill_kept_media(&path, &mut media, &payload.media_keep, &aliases).map_err(err_str)?;
+    }
     let mut note = NoteFile {
         doc: payload.doc,
         media,
     };
     note.doc.canvas.unknown_objects = payload.unknown_objects;
-    note::normalize_media(&mut note);
-    let path = PathBuf::from(&payload.path);
+    let renames = note::normalize_media(&mut note);
     note::save_note(&path, &mut note).map_err(err_str)?;
+    if !renames.is_empty() {
+        if let Ok(mut all) = media_aliases().lock() {
+            all.entry(path.clone()).or_default().extend(renames);
+        }
+    }
     let unknown_objects = std::mem::take(&mut note.doc.canvas.unknown_objects);
     let stem = path
         .file_stem()
@@ -548,6 +575,7 @@ pub fn save_note(payload: NotePayload) -> Result<NotePayload, String> {
         media_b64,
         read_only: false,
         unknown_objects,
+        media_keep: Vec::new(),
     })
 }
 

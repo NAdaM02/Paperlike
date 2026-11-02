@@ -34,6 +34,13 @@ Rules:
 - `media/` files are content-addressed. Inserting the same image twice creates one
   media entry referenced twice. On save, media entries referenced by zero objects are
   removed.
+- A note is self-contained: every picture and PDF lives in its `media/`, never as a
+  path to an outside file, so a copied `.note` opens anywhere. An object whose media
+  entry is missing still opens and saves; it shows as a missing picture or page.
+- Saving is incremental: the editor sends only files that are not in the note on disk
+  yet and names the rest (`media_keep`), which are copied over from the existing file.
+  If a named file is not there, the save is redone with every file. Large PDFs are
+  therefore not resent on each autosave.
 - Writers MUST produce `note.json` as UTF-8, pretty-printed with 2-space indent
   (human inspectability is a goal; file size is not a concern at note scale).
 

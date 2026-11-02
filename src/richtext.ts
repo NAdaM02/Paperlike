@@ -154,6 +154,21 @@ function fontSizeToPt(v: string): number | undefined {
 
 type StyleState = Omit<Run, "text">;
 
+/** The style a text box's own container carries. A new box takes the sticky font,
+ *  size and colour on its `.content` element, so text typed straight into it has no
+ *  span of its own; without this starting style it saved as the plain default. */
+function containerStyle(root: HTMLElement): StyleState {
+  const base: StyleState = {};
+  const st = root.style;
+  const font = st.fontFamily.split(",")[0].replace(/["']/g, "").trim();
+  if (font && font !== DEFAULT_FONT) base.font = font;
+  const size = fontSizeToPt(st.fontSize);
+  if (size && size !== DEFAULT_SIZE) base.size = size;
+  const color = cssColorToHex(st.color);
+  if (color) base.color = color;
+  return base;
+}
+
 function collectRuns(node: Node, state: StyleState, out: Run[]) {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = (node.textContent ?? "").replace(/\u200b/g, "");
@@ -231,16 +246,16 @@ function mergeRuns(runs: Run[]): Run[] {
   return out.length ? out : [{ text: "" }];
 }
 
-function parseParagraph(el: HTMLElement): Paragraph {
+function parseParagraph(el: HTMLElement, base: StyleState = {}): Paragraph {
   const indent = Math.min(8, Math.max(0, parseInt(el.dataset.indent ?? "0") || 0));
   const bullet = el.dataset.bullet || null;
   const align = el.style.textAlign || "left";
   const runs: Run[] = [];
-  el.childNodes.forEach((ch) => collectRuns(ch, {}, runs));
+  el.childNodes.forEach((ch) => collectRuns(ch, base, runs));
   return { kind: "p", indent: indent as number, bullet, align, runs: mergeRuns(runs) };
 }
 
-function parseTable(el: HTMLTableElement): TableBlock {
+function parseTable(el: HTMLTableElement, base: StyleState = {}): TableBlock {
   const colWidths: number[] = [];
   el.querySelectorAll("colgroup col").forEach((c) => {
     const w = parseFloat((c as HTMLElement).style.width || "120");
@@ -253,10 +268,10 @@ function parseTable(el: HTMLTableElement): TableBlock {
       const blocks: Paragraph[] = [];
       const divs = td.querySelectorAll(":scope > div, :scope > p");
       if (divs.length) {
-        divs.forEach((d) => blocks.push(parseParagraph(d as HTMLElement)));
+        divs.forEach((d) => blocks.push(parseParagraph(d as HTMLElement, base)));
       } else {
         const runs: Run[] = [];
-        td.childNodes.forEach((ch) => collectRuns(ch, {}, runs));
+        td.childNodes.forEach((ch) => collectRuns(ch, base, runs));
         blocks.push({ kind: "p", indent: 0, bullet: null, align: "left", runs: mergeRuns(runs) });
       }
       cells.push({ blocks });
@@ -275,6 +290,7 @@ function paragraphFromNodes(
   indent = 0,
   bullet: string | null = null,
   align = "left",
+  base: StyleState = {},
 ): Paragraph | null {
   if (!nodes.length) return null;
   if (
@@ -282,7 +298,7 @@ function paragraphFromNodes(
     nodes[0] instanceof HTMLElement &&
     (nodes[0].tagName === "DIV" || nodes[0].tagName === "P")
   ) {
-    const p = parseParagraph(nodes[0] as HTMLElement);
+    const p = parseParagraph(nodes[0] as HTMLElement, base);
     return {
       ...p,
       indent: (indent || p.indent || 0) as number,
@@ -293,24 +309,24 @@ function paragraphFromNodes(
   const holder = document.createElement("div");
   nodes.forEach((n) => holder.appendChild(n.cloneNode(true)));
   const runs: Run[] = [];
-  holder.childNodes.forEach((ch) => collectRuns(ch, {}, runs));
+  holder.childNodes.forEach((ch) => collectRuns(ch, base, runs));
   return { kind: "p", indent, bullet, align, runs: mergeRuns(runs) };
 }
 
-function pushBlockElement(el: HTMLElement, blocks: Block[]) {
+function pushBlockElement(el: HTMLElement, blocks: Block[], base: StyleState = {}) {
   if (el instanceof HTMLTableElement) {
-    blocks.push(parseTable(el));
+    blocks.push(parseTable(el, base));
     return;
   }
   if (el.tagName !== "DIV" && el.tagName !== "P") {
-    const p = paragraphFromNodes([el]);
+    const p = paragraphFromNodes([el], 0, null, "left", base);
     if (p) blocks.push(p);
     return;
   }
 
   // Tables nested inside a paragraph (common after insertHTML) must be hoisted.
   if (!el.querySelector("table")) {
-    blocks.push(parseParagraph(el));
+    blocks.push(parseParagraph(el, base));
     return;
   }
 
@@ -327,18 +343,18 @@ function pushBlockElement(el: HTMLElement, blocks: Block[]) {
     );
     pending = [];
     if (!meaningful.length) return;
-    const p = paragraphFromNodes(meaningful, indent, bullet, align);
+    const p = paragraphFromNodes(meaningful, indent, bullet, align, base);
     if (p) blocks.push(p);
   };
   el.childNodes.forEach((ch) => {
     if (ch instanceof HTMLTableElement) {
       flushPending();
-      blocks.push(parseTable(ch));
+      blocks.push(parseTable(ch, base));
       return;
     }
     if (ch instanceof HTMLElement && ch.querySelector("table")) {
       flushPending();
-      pushBlockElement(ch, blocks);
+      pushBlockElement(ch, blocks, base);
       return;
     }
     pending.push(ch);
@@ -347,6 +363,7 @@ function pushBlockElement(el: HTMLElement, blocks: Block[]) {
 }
 
 export function htmlToBlocks(root: HTMLElement): Block[] {
+  const base = containerStyle(root);
   const blocks: Block[] = [];
   let pendingInline: Run[] = [];
   const flushInline = () => {
@@ -364,15 +381,15 @@ export function htmlToBlocks(root: HTMLElement): Block[] {
   root.childNodes.forEach((node) => {
     if (node instanceof HTMLTableElement) {
       flushInline();
-      blocks.push(parseTable(node));
+      blocks.push(parseTable(node, base));
       return;
     }
     if (node instanceof HTMLElement && (node.tagName === "DIV" || node.tagName === "P")) {
       flushInline();
-      pushBlockElement(node, blocks);
+      pushBlockElement(node, blocks, base);
       return;
     }
-    collectRuns(node, {}, pendingInline);
+    collectRuns(node, base, pendingInline);
   });
   flushInline();
   if (!blocks.length) {
