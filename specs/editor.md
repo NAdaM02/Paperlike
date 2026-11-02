@@ -244,6 +244,11 @@ settings persist app-wide.
   the pen" drops touch pointer-downs while the pen is down, hovering, or was used
   in the last 500 ms, so a palm does not draw, select, or pan. Wheel and
   precision-touchpad scrolling stay.
+  While the stroke is in progress it is painted at most once per frame on its own
+  canvas above the page, one canvas pixel per device pixel, sized to the stroke
+  plus a margin. The page underneath is not re-rendered or re-layered per sample,
+  so drawing costs the same in an empty note and in one with thousands of strokes.
+  On release the stroke becomes a normal drawing object and the canvas hides.
 - **Marker** (highlighter): like the pen (smoothing, Shift = straight), but wide
   (S/M/L = 8/14/22 DIP, `[` `]` step) with flat ends and its own pastel colours
   (yellow, green, blue, pink, orange). Stored as a stroke with `highlighter: true`

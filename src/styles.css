@@ -2001,6 +2001,13 @@ math-field::part(placeholder) { color: var(--ink-3); }
    so text and objects stay visible even where multiply does not apply. */
 .draw-obj.hl,
 svg.hl { mix-blend-mode: multiply; }
+/* The stroke being drawn, in screen pixels over the page. */
+.live-ink {
+  position: absolute;
+  left: 0; top: 0;
+  pointer-events: none;
+}
+.live-ink.hl { mix-blend-mode: multiply; }
 .draw-obj.hl > svg { mix-blend-mode: normal; }
 svg.hl .hl-ink {
   fill: var(--hl);
@@ -2008,7 +2015,8 @@ svg.hl .hl-ink {
   stroke: none;
 }
 :root[data-theme="dark"] .draw-obj.hl,
-:root[data-theme="dark"] svg.hl { mix-blend-mode: normal; }
+:root[data-theme="dark"] svg.hl,
+:root[data-theme="dark"] .live-ink.hl { mix-blend-mode: normal; }
 
 /* Collapsible note. The layer sits above PDFs (they are pinned to z-index 1).
    pointer-events is inherited, so the layer ignores the page underneath and

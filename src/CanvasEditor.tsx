@@ -465,8 +465,11 @@ export function CanvasEditor({
   const onPointerMoveRef = useRef<(e: React.PointerEvent<HTMLDivElement>) => void>(() => {});
   const onPointerUpRef = useRef<(e: React.PointerEvent<HTMLDivElement>) => void>(() => {});
   const marqueeElRef = useRef<HTMLDivElement>(null);
-  const liveInkRef = useRef<SVGSVGElement>(null);
-  const liveInkPathRef = useRef<SVGPathElement>(null);
+  /** The stroke in progress is painted on its own canvas above the page. Changing it
+   *  repaints only that canvas, so a note full of ink does not slow the pen down. */
+  const liveInkRef = useRef<HTMLCanvasElement>(null);
+  /** Live canvas box in device pixels, and its sub-pixel offset from the pixel grid. */
+  const liveInkGrid = useRef({ fx: 0, fy: 0, x: 0, y: 0, w: 0, h: 0 });
   const lastEmptyClick = useRef({ t: 0, x: 0, y: 0 });
   const marqueeRaf = useRef(0);
   /** Shift is the shared "reach through" modifier: pick PDF images, move locked items. */
@@ -1530,8 +1533,12 @@ export function CanvasEditor({
     const pt = { x: (e.clientX - r.left - c.x) / c.z, y: (e.clientY - r.top - c.y) / c.z };
     const hl = lastInk.current.hl;
     const recordPressure = penSettingsRef.current.pen_pressure && !hl;
-    setSelected([]);
-    setAdjustId(null);
+    // The stroke paints on its own canvas. Rebuilding the page now would only
+    // delay the first sample, so selection chrome clears in the background.
+    startTransition(() => {
+      setSelected((s) => (s.length ? [] : s));
+      setAdjustId(null);
+    });
     onLiveDrawRef.current?.(null);
     dragRef.current = {
       mode: "draw",
@@ -1547,7 +1554,6 @@ export function CanvasEditor({
       width: lastInk.current.width,
     };
     // Do not capture the pen. WebView2 freezes clientX/clientY after capture.
-    forceRender((n) => n + 1);
   };
 
   /* ── pointer on empty canvas ── */
@@ -1602,9 +1608,9 @@ export function CanvasEditor({
       const penOn = penSettingsRef.current.pen_enabled && e.pointerType === "pen";
       const recordPressure = penOn && penSettingsRef.current.pen_pressure && !hl;
       // Don't rebuild the page before the first sample. The stroke paints on
-      // its own SVG; selection chrome clears after the ink is already down.
+      // its own canvas; selection chrome clears after the ink is already down.
       startTransition(() => {
-        setSelected([]);
+        setSelected((s) => (s.length ? [] : s));
         setAdjustId(null);
       });
       const draw: Drag = {
@@ -1835,43 +1841,84 @@ export function CanvasEditor({
 
   /** Ink for the stroke in progress. Updating the path avoids a full page render on each sample. */
   const paintLiveInk = (d: Extract<Drag, { mode: "draw" }>) => {
-    const svg = liveInkRef.current;
-    const path = liveInkPathRef.current;
-    if (!svg || !path) return;
+    const cv = liveInkRef.current;
+    const wrap = wrapRef.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !wrap || !ctx) return;
     const width = d.width ?? drawWidth;
     const color = d.color ?? drawColor;
     const pts = d.smart ? smoothPoints(d.pts, 1) : d.pts;
-    svg.style.display = "block";
-    svg.style.left = `${d.sx}px`;
-    svg.style.top = `${d.sy}px`;
-    svg.classList.toggle("hl", !!d.hl);
+    // One canvas pixel per device pixel, lined up with the screen's pixel grid,
+    // so the live line is as sharp as the saved one. The canvas covers only the
+    // stroke plus a margin and grows in steps, so each frame touches few pixels.
+    const dpr = window.devicePixelRatio || 1;
+    const c = camRef.current;
+    const k = dpr * c.z;
+    const ox = dpr * (c.x + d.sx * c.z);
+    const oy = dpr * (c.y + d.sy * c.z);
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const [px, py] of pts) {
+      if (px < x1) x1 = px;
+      if (px > x2) x2 = px;
+      if (py < y1) y1 = py;
+      if (py > y2) y2 = py;
+    }
+    const pad = width * 2 * k + 4;
+    x1 = ox + x1 * k - pad;
+    y1 = oy + y1 * k - pad;
+    x2 = ox + x2 * k + pad;
+    y2 = oy + y2 * k + pad;
+    const g = liveInkGrid.current;
+    if (cv.style.display !== "block") {
+      const r = wrap.getBoundingClientRect();
+      g.fx = ((((r.left + wrap.clientLeft) * dpr) % 1) + 1) % 1;
+      g.fy = ((((r.top + wrap.clientTop) * dpr) % 1) + 1) % 1;
+      g.w = 0;
+    }
+    if (!g.w || x1 < g.x || y1 < g.y || x2 > g.x + g.w || y2 > g.y + g.h) {
+      const m = 160 * dpr;
+      const has = g.w > 0;
+      const nx = Math.floor((has ? Math.min(x1, g.x) : x1) - m);
+      const ny = Math.floor((has ? Math.min(y1, g.y) : y1) - m);
+      const nx2 = Math.ceil((has ? Math.max(x2, g.x + g.w) : x2) + m);
+      const ny2 = Math.ceil((has ? Math.max(y2, g.y + g.h) : y2) + m);
+      g.x = nx;
+      g.y = ny;
+      g.w = nx2 - nx;
+      g.h = ny2 - ny;
+      cv.width = g.w;
+      cv.height = g.h;
+      cv.style.transform = `translate(${(g.x - g.fx) / dpr}px, ${(g.y - g.fy) / dpr}px)`;
+      cv.style.width = `${g.w / dpr}px`;
+      cv.style.height = `${g.h / dpr}px`;
+    }
+    cv.style.display = "block";
+    cv.classList.toggle("hl", !!d.hl);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(k, 0, 0, k, ox - g.x + g.fx, oy - g.y + g.fy);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
     const marker = d.hl && pts.length >= 2 ? strokeOutline(pts, undefined, width, false) : [];
     const outlined =
       !d.hl && d.pressure && d.pressure.length === pts.length && pts.length >= 2
         ? strokeOutline(pts, d.pressure, width)
         : [];
     if (marker.length >= 3) {
-      path.setAttribute("d", outlinePath(marker));
-      path.setAttribute("fill", color);
-      path.setAttribute("stroke", "none");
-      path.style.fillOpacity = String(d.opacity ?? hlOpacity);
+      ctx.globalAlpha = d.opacity ?? hlOpacity;
+      ctx.fill(new Path2D(outlinePath(marker)));
+      ctx.globalAlpha = 1;
       return;
     }
     if (outlined.length >= 3) {
-      path.setAttribute("d", outlinePath(outlined));
-      path.setAttribute("fill", color);
-      path.setAttribute("stroke", "none");
-      path.style.fillOpacity = "1";
+      ctx.fill(new Path2D(outlinePath(outlined)));
       return;
     }
     const dot = pts.length < 2;
-    path.setAttribute("d", dot ? "M 0 0 L 0.01 0" : strokePath(pts));
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", color);
-    path.setAttribute("stroke-width", String(width));
-    path.setAttribute("stroke-linecap", dot || !d.hl ? "round" : "butt");
-    path.setAttribute("stroke-linejoin", "round");
-    path.style.fillOpacity = "1";
+    ctx.lineWidth = width;
+    ctx.lineCap = dot || !d.hl ? "round" : "butt";
+    ctx.lineJoin = "round";
+    ctx.stroke(new Path2D(dot ? "M 0 0 L 0.01 0" : strokePath(pts)));
   };
 
   /** Raw pointer samples can arrive far faster than the screen refreshes. Ink is
@@ -3533,13 +3580,6 @@ export function CanvasEditor({
 
         {/* marquee selection box. Moved from the pointer, not from a re-render. */}
         <div ref={marqueeElRef} className="marquee" style={{ display: "none" }} />
-        <svg
-          ref={liveInkRef}
-          className="draw-obj"
-          style={{ display: "none", position: "absolute", overflow: "visible", width: 1, height: 1, zIndex: 100000, pointerEvents: "none" }}
-        >
-          <path ref={liveInkPathRef} />
-        </svg>
 
         {(tool === "select" || tool === "lasso") &&
           selected.length > 1 &&
@@ -3593,7 +3633,6 @@ export function CanvasEditor({
             );
           })()}
 
-        {/* live stroke is painted on liveInkRef so the first sample does not wait on React */}
         {d?.mode === "lasso" && d.pts.length > 1 && (
           <svg className="draw-obj lasso-path" style={{ left: 0, top: 0, overflow: "visible", width: 1, height: 1 }}>
             <polygon points={lassoLoop(d.pts).map((p) => p.join(",")).join(" ")} vectorEffect="non-scaling-stroke" />
@@ -3659,6 +3698,8 @@ export function CanvasEditor({
           />
         )}
       </div>
+      {/* live stroke: painted directly, so the first sample does not wait on React */}
+      <canvas ref={liveInkRef} className="live-ink" style={{ display: "none" }} aria-hidden />
       {objMenu && (
         <ContextMenu
           x={objMenu.x}
