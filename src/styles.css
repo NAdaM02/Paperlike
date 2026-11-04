@@ -1301,28 +1301,33 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   width: 3px;
   background: var(--accent);
 }
-/* Note list overlays the editor — open/collapse never nudges the canvas. */
+/* Note list overlays the editor — open/collapse never nudges the canvas.
+   z-index above Analyze marks (60) and QuickAsk cards (65/66). transform keeps a
+   stacking context, so the z-index must win at this level. */
 .sidebar-slot {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  z-index: 25;
+  z-index: 70;
   display: flex;
   min-height: 0;
   width: var(--sidebar-w, 224px);
   overflow: hidden;
   transform: translateX(0);
   transition: transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1), opacity 220ms ease;
-  box-shadow: 6px 0 24px color-mix(in srgb, var(--ink) 14%, transparent);
+  /* No soft right glow — it bled onto the shifted title bar as a light smear. */
+  box-shadow: none;
   border-right: 1px solid var(--border);
   background: var(--surface);
+  /* Keep the note-area's left corners rounded while the list is open. */
+  border-top-left-radius: var(--r-lg);
+  border-bottom-left-radius: var(--r-lg);
 }
 .sidebar-slot.is-collapsed {
   transform: translateX(-100%);
   opacity: 0;
   pointer-events: none;
-  box-shadow: none;
 }
 .sidebar-slot .sidebar {
   flex: none;
@@ -1370,7 +1375,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   bottom: 0;
   width: 0;
   overflow: visible;
-  z-index: 26;
+  z-index: 71;
   pointer-events: none;
 }
 .sidebar-reveal-slot.is-open { width: 14px; pointer-events: auto; }
