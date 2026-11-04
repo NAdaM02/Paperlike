@@ -160,6 +160,9 @@ const RIBBON_ORDER: Ribbon[] = ["File", "Edit", "Draw", "View"];
 const TITLE_AUTOHIDE_Y = 48;
 /** Stay hidden until the view is this close to the top, so the row does not flicker. */
 const TITLE_AUTOSHOW_Y = 24;
+/** Note-space margin: sidebar stays open while the view's left strip is this empty. */
+const SIDE_AUTOHIDE_X = 36;
+const SIDE_AUTOSHOW_X = 18;
 
 const A4 = { w: 794, h: 1123, margin: 40 };
 const PDF_ZOOM_MIN = 0.4;
@@ -691,18 +694,25 @@ export function NotebookView({
   };
 
   const noteOpen = !!note;
-  // Note list auto-hide: a thin rail; the list slides out over the editor on hover.
+  // Note list auto-hide mirrors the title bar: open over empty paper, hide when note
+  // content sits under the strip, hold open after a manual reveal, peek on left-edge hover.
   const sideAuto = settings.sidebar_auto_hide === true;
+  const [sideContentUnder, setSideContentUnder] = useState(false);
+  const [sideHoldOpen, setSideHoldOpen] = useState(false);
   const [sidePeek, setSidePeek] = useState(false);
+  const sideAwayRef = useRef(false);
   const peekTimer = useRef(0);
+  const sideWidthRef = useRef(ui.sidebar_width);
+  sideWidthRef.current = ui.sidebar_width;
   const peekOpen = () => {
     window.clearTimeout(peekTimer.current);
     setSidePeek(true);
+    if (sideContentUnder) setSideHoldOpen(true);
   };
   const peekClose = () => {
     window.clearTimeout(peekTimer.current);
     const check = () => {
-      const el = document.querySelector(".sidebar.peek");
+      const el = document.querySelector(".sidebar.peek, .sidebar-rail");
       const a = document.activeElement;
       const busy = !!el && (el.matches(":hover") || (!!a && el.contains(a) && a.matches("input, textarea, select")));
       if (busy) peekTimer.current = window.setTimeout(check, 400);
@@ -729,6 +739,54 @@ export function NotebookView({
       setTitleScrolledAway(away);
     }
   }, []);
+
+  const sideAutoRef = useRef(sideAuto);
+  sideAutoRef.current = sideAuto;
+  /** True when note ink sits under the strip the list would cover. */
+  const checkSideAway = useCallback(() => {
+    if (!sideAutoRef.current) {
+      if (sideAwayRef.current) {
+        sideAwayRef.current = false;
+        setSideContentUnder(false);
+      }
+      return;
+    }
+    const cam = camRef.current;
+    const n = noteRef.current;
+    if (!cam || cam.z <= 0 || !n) return;
+    // Left edge of the view in note units; content under the sidebar width counts as "under".
+    const left = -cam.x / cam.z;
+    const strip = sideWidthRef.current / cam.z;
+    const right = left + strip;
+    let under = false;
+    for (const o of n.doc.canvas.objects) {
+      let x = o.x;
+      let w = 40;
+      if (o.type === "text" || o.type === "image" || o.type === "file" || o.type === "group") w = Math.max(24, o.width);
+      else if (o.type === "pdf") w = Math.max(24, o.pageWidth || 400);
+      else if (o.type === "drawing") {
+        x = o.x - 16;
+        w = 64;
+      }
+      if (x + w > left && x < right) {
+        under = true;
+        break;
+      }
+    }
+    // Hysteresis like the title bar so the list does not flicker at the edge.
+    const prev = sideAwayRef.current;
+    // Prefer the object test; fall back to having scrolled into the note.
+    const next = under ? true : left > (prev ? SIDE_AUTOSHOW_X : SIDE_AUTOHIDE_X);
+    if (next !== prev) {
+      sideAwayRef.current = next;
+      setSideContentUnder(next);
+    }
+  }, []);
+
+  const checkChromeAway = useCallback(() => {
+    checkTitleAway();
+    checkSideAway();
+  }, [checkTitleAway, checkSideAway]);
   useEffect(() => {
     if (!titleHideOn) {
       titleAwayRef.current = false;
@@ -748,6 +806,20 @@ export function NotebookView({
   useEffect(() => {
     if (!titleScrolledAway) setTitleHoldOpen(false);
   }, [titleScrolledAway]);
+
+  useEffect(() => {
+    if (!sideContentUnder) setSideHoldOpen(false);
+  }, [sideContentUnder]);
+
+  useEffect(() => {
+    if (!sideAuto) {
+      sideAwayRef.current = false;
+      setSideContentUnder(false);
+      setSideHoldOpen(false);
+      return;
+    }
+    checkSideAway();
+  }, [sideAuto, checkSideAway, note?.path, note?.doc.canvas.objects]);
 
   /** True while undo/redo is writing the document, so the blur-commit cannot clobber it or clear redo. */
   const applyingHist = useRef(false);
@@ -3747,16 +3819,16 @@ export function NotebookView({
             </div>
           ) : (
             <>
-              {sideAuto && (
+              {sideAuto && (sideContentUnder && !sideHoldOpen) && (
                 <div className="sidebar-rail" onMouseEnter={peekOpen} onClick={peekOpen}>
                   <button className="btn icon" title={messages.showNoteList} aria-label={messages.showNoteList} onClick={peekOpen}>
                     <IcExpand size={15} />
                   </button>
                 </div>
               )}
-              {(!sideAuto || sidePeek) && (
+              {(!sideAuto || !sideContentUnder || sideHoldOpen || sidePeek) && (
               <div
-                className={`sidebar${sideAuto ? " peek" : ""}`}
+                className={`sidebar${sideAuto && (sideContentUnder || sidePeek) ? " peek" : ""}${titleHidden ? " with-title-collapsed" : ""}`}
                 data-tour="nb-sidebar"
                 style={{ width: ui.sidebar_width }}
                 onMouseEnter={sideAuto ? peekOpen : undefined}
@@ -3794,8 +3866,15 @@ export function NotebookView({
                     aria-label={messages.sidebarAutoHide}
                     aria-pressed={sideAuto}
                     onClick={() => {
-                      patchSettings({ sidebar_auto_hide: !sideAuto });
-                      setSidePeek(true);
+                      const next = !sideAuto;
+                      patchSettings({ sidebar_auto_hide: next });
+                      if (next) {
+                        setSidePeek(true);
+                        setSideHoldOpen(true);
+                      } else {
+                        setSidePeek(false);
+                        setSideHoldOpen(false);
+                      }
                     }}
                   >
                     <IcAutoHide size={15} />
@@ -4450,7 +4529,7 @@ export function NotebookView({
                   }}
                   viewRef={viewRef}
                   liveCamRef={camRef}
-                  onLiveCam={checkTitleAway}
+                  onLiveCam={checkChromeAway}
                   initialCam={restoreCamRef.current}
                   paper={paper}
                   onRequestTool={setTool}

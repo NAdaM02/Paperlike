@@ -1302,26 +1302,27 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   background: var(--accent);
 }
 .sidebar-rail {
-  width: 6px;
+  width: 10px;
   flex: none;
   position: relative;
   z-index: 6;
   cursor: pointer;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  /* Same colour as the editor — no separate lip beside the list. */
+  background: transparent;
+  border-right: none;
 }
 /* The hover strip widens over the editor, so the layout never moves. */
 .sidebar-rail::before {
   content: "";
   position: absolute;
   top: 0; bottom: 0; left: 0;
-  width: 6px;
-  background: var(--surface-2, var(--surface));
-  border-right: 1px solid var(--border);
+  width: 10px;
+  background: color-mix(in srgb, var(--bg) 92%, var(--ink));
+  border-right: none;
   opacity: 0;
   transition: width 140ms ease, opacity 140ms ease;
 }
-.sidebar-rail:hover::before { width: 28px; opacity: 1; }
+.sidebar-rail:hover::before { width: 28px; opacity: 0.55; }
 .sidebar-rail .btn.icon {
   position: absolute;
   top: 8px; left: 2px;
@@ -1343,6 +1344,21 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   box-shadow: 6px 0 24px color-mix(in srgb, var(--ink) 14%, transparent);
   animation: sidebar-peek 140ms ease-out;
 }
+/* Title bar collapsed: keep the same rounded meeting corner as when both are open. */
+.sidebar.with-title-collapsed,
+.sidebar.peek.with-title-collapsed {
+  border-top-right-radius: 12px;
+}
+.sidebar-head .btn.icon.title-autohide.is-on {
+  color: var(--ink-2);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ink-3) 22%, var(--surface)),
+    color-mix(in srgb, var(--ink-3) 10%, var(--surface))
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-3) 28%, transparent);
+}
+.sidebar-head .btn.icon.title-autohide.is-on:hover { color: var(--ink); }
 @keyframes sidebar-peek { from { transform: translateX(-16px); opacity: 0; } }
 
 /* Export-select bar — sits under the note list, not over the canvas */
