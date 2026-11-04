@@ -123,7 +123,6 @@ import {
   IcCursor,
   IcDoc,
   IcEraser,
-  IcExpand,
   IcExport,
   IcExportMulti,
   IcFullscreen,
@@ -160,9 +159,14 @@ const RIBBON_ORDER: Ribbon[] = ["File", "Edit", "Draw", "View"];
 const TITLE_AUTOHIDE_Y = 48;
 /** Stay hidden until the view is this close to the top, so the row does not flicker. */
 const TITLE_AUTOSHOW_Y = 24;
-/** Note-space margin: sidebar stays open while the view's left strip is this empty. */
+/** Note-space X: past this, the note list can auto-hide (mirrors TITLE_AUTOHIDE_Y). */
 const SIDE_AUTOHIDE_X = 36;
 const SIDE_AUTOSHOW_X = 18;
+
+/** Shared title/sidebar hysteresis: hide past hideAt, stay hidden until back under showAt. */
+function axisAway(prev: boolean, pos: number, hideAt: number, showAt: number) {
+  return prev ? pos > showAt : pos > hideAt;
+}
 
 const A4 = { w: 794, h: 1123, margin: 40 };
 const PDF_ZOOM_MIN = 0.4;
@@ -694,32 +698,14 @@ export function NotebookView({
   };
 
   const noteOpen = !!note;
-  // Note list auto-hide mirrors the title bar: open over empty paper, hide when note
-  // content sits under the strip, hold open after a manual reveal, peek on left-edge hover.
+  // Note list collapse mirrors the title bar: same manual collapse, auto-hide, hold-open,
+  // edge reveal, and slot animation. Auto-hide also considers note elements under the strip.
   const sideAuto = settings.sidebar_auto_hide === true;
-  const [sideContentUnder, setSideContentUnder] = useState(false);
+  const [sideScrolledAway, setSideScrolledAway] = useState(false);
   const [sideHoldOpen, setSideHoldOpen] = useState(false);
-  const [sidePeek, setSidePeek] = useState(false);
   const sideAwayRef = useRef(false);
-  const peekTimer = useRef(0);
   const sideWidthRef = useRef(ui.sidebar_width);
   sideWidthRef.current = ui.sidebar_width;
-  const peekOpen = () => {
-    window.clearTimeout(peekTimer.current);
-    setSidePeek(true);
-    if (sideContentUnder) setSideHoldOpen(true);
-  };
-  const peekClose = () => {
-    window.clearTimeout(peekTimer.current);
-    const check = () => {
-      const el = document.querySelector(".sidebar.peek, .sidebar-rail");
-      const a = document.activeElement;
-      const busy = !!el && (el.matches(":hover") || (!!a && el.contains(a) && a.matches("input, textarea, select")));
-      if (busy) peekTimer.current = window.setTimeout(check, 400);
-      else setSidePeek(false);
-    };
-    peekTimer.current = window.setTimeout(check, 350);
-  };
   const titleHideOn = noteOpen && settings.title_auto_hide !== false;
   const titleAutoHideRef = useRef(titleHideOn);
   titleAutoHideRef.current = titleHideOn;
@@ -733,7 +719,7 @@ export function NotebookView({
     const top = cam && cam.z > 0 ? -cam.y / cam.z : 0;
     const prev = titleAwayRef.current;
     const editingTitle = !!document.activeElement?.closest(".note-title-row");
-    const away = !editingTitle && (prev ? top > TITLE_AUTOSHOW_Y : top > TITLE_AUTOHIDE_Y);
+    const away = !editingTitle && axisAway(prev, top, TITLE_AUTOHIDE_Y, TITLE_AUTOSHOW_Y);
     if (away !== prev) {
       titleAwayRef.current = away;
       setTitleScrolledAway(away);
@@ -742,23 +728,20 @@ export function NotebookView({
 
   const sideAutoRef = useRef(sideAuto);
   sideAutoRef.current = sideAuto;
-  /** True when note ink sits under the strip the list would cover. */
+  const sideHideOn = noteOpen && sideAuto;
+  const sideAutoHideRef = useRef(sideHideOn);
+  sideAutoHideRef.current = sideHideOn;
+  /** Away when note ink sits under the list strip, or the view has panned past the left margin. */
   const checkSideAway = useCallback(() => {
-    if (!sideAutoRef.current) {
-      if (sideAwayRef.current) {
-        sideAwayRef.current = false;
-        setSideContentUnder(false);
-      }
-      return;
-    }
+    if (!sideAutoHideRef.current) return;
     const cam = camRef.current;
     const n = noteRef.current;
     if (!cam || cam.z <= 0 || !n) return;
-    // Left edge of the view in note units; content under the sidebar width counts as "under".
     const left = -cam.x / cam.z;
     const strip = sideWidthRef.current / cam.z;
     const right = left + strip;
     let under = false;
+    const editingSide = !!document.activeElement?.closest(".sidebar");
     for (const o of n.doc.canvas.objects) {
       let x = o.x;
       let w = 40;
@@ -773,13 +756,11 @@ export function NotebookView({
         break;
       }
     }
-    // Hysteresis like the title bar so the list does not flicker at the edge.
     const prev = sideAwayRef.current;
-    // Prefer the object test; fall back to having scrolled into the note.
-    const next = under ? true : left > (prev ? SIDE_AUTOSHOW_X : SIDE_AUTOHIDE_X);
-    if (next !== prev) {
-      sideAwayRef.current = next;
-      setSideContentUnder(next);
+    const away = !editingSide && (under || axisAway(prev, left, SIDE_AUTOHIDE_X, SIDE_AUTOSHOW_X));
+    if (away !== prev) {
+      sideAwayRef.current = away;
+      setSideScrolledAway(away);
     }
   }, []);
 
@@ -804,22 +785,28 @@ export function NotebookView({
   }, [titleHideOn, checkTitleAway]);
 
   useEffect(() => {
+    if (!sideHideOn) {
+      sideAwayRef.current = false;
+      setSideScrolledAway(false);
+      return;
+    }
+    checkSideAway();
+    const onFocus = () => checkSideAway();
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("focusout", onFocus);
+    return () => {
+      document.removeEventListener("focusin", onFocus);
+      document.removeEventListener("focusout", onFocus);
+    };
+  }, [sideHideOn, checkSideAway, note?.path, note?.doc.canvas.objects]);
+
+  useEffect(() => {
     if (!titleScrolledAway) setTitleHoldOpen(false);
   }, [titleScrolledAway]);
 
   useEffect(() => {
-    if (!sideContentUnder) setSideHoldOpen(false);
-  }, [sideContentUnder]);
-
-  useEffect(() => {
-    if (!sideAuto) {
-      sideAwayRef.current = false;
-      setSideContentUnder(false);
-      setSideHoldOpen(false);
-      return;
-    }
-    checkSideAway();
-  }, [sideAuto, checkSideAway, note?.path, note?.doc.canvas.objects]);
+    if (!sideScrolledAway) setSideHoldOpen(false);
+  }, [sideScrolledAway]);
 
   /** True while undo/redo is writing the document, so the blur-commit cannot clobber it or clear redo. */
   const applyingHist = useRef(false);
@@ -3040,6 +3027,12 @@ export function NotebookView({
     if (settingsRef.current.title_collapsed) patchSettings({ title_collapsed: false });
     if ((settingsRef.current.title_auto_hide !== false) && titleScrolledAway) setTitleHoldOpen(true);
   };
+  const sideHidden =
+    ui.sidebar_collapsed === true || (sideAuto && noteOpen && sideScrolledAway && !sideHoldOpen);
+  const revealSidebar = () => {
+    if (ui.sidebar_collapsed) persistUi({ ...ui, sidebar_collapsed: false });
+    if (sideAuto && sideScrolledAway) setSideHoldOpen(true);
+  };
   const toggleFullscreen = () => {
     window.dispatchEvent(new Event("paperlike-toggle-fullscreen"));
   };
@@ -3813,33 +3806,17 @@ export function NotebookView({
 
       {/* ── body ── */}
       <div className="nb-body" style={{ position: "relative" }}>
-        {mode === "notebook" &&
-          (ui.sidebar_collapsed ? (
-            <div className="sidebar-rail" onClick={() => persistUi({ ...ui, sidebar_collapsed: false })}>
-              <button
-                className="btn icon"
-                title="Expand note list"
-                onClick={() => persistUi({ ...ui, sidebar_collapsed: false })}
-              >
-                <IcExpand size={15} />
-              </button>
-            </div>
-          ) : (
-            <>
-              {sideAuto && (sideContentUnder && !sideHoldOpen) && (
-                <div className="sidebar-rail" onMouseEnter={peekOpen} onClick={peekOpen}>
-                  <button className="btn icon" title={messages.showNoteList} aria-label={messages.showNoteList} onClick={peekOpen}>
-                    <IcExpand size={15} />
-                  </button>
-                </div>
-              )}
-              {(!sideAuto || !sideContentUnder || sideHoldOpen || sidePeek) && (
+        {mode === "notebook" && (
+          <>
+            <div
+              className={`sidebar-slot${sideHidden ? " is-collapsed" : ""}${titleHidden ? " with-title-collapsed" : ""}`}
+              style={{ ["--sidebar-w" as string]: `${ui.sidebar_width}px` }}
+            >
               <div
-                className={`sidebar${sideAuto && (sideContentUnder || sidePeek) ? " peek" : ""}${titleHidden ? " with-title-collapsed" : ""}`}
+                className="sidebar"
                 data-tour="nb-sidebar"
                 style={{ width: ui.sidebar_width }}
-                onMouseEnter={sideAuto ? peekOpen : undefined}
-                onMouseLeave={sideAuto ? peekClose : undefined}
+                inert={sideHidden || undefined}
                 onContextMenu={(e) => {
                   const t = e.target as HTMLElement;
                   if (t.closest(".note-item, .sep-line, .sidebar-head, .sidebar-new, .sidebar-filter, button, input, select")) return;
@@ -3872,24 +3849,18 @@ export function NotebookView({
                     title={messages.sidebarAutoHide}
                     aria-label={messages.sidebarAutoHide}
                     aria-pressed={sideAuto}
-                    onClick={() => {
-                      const next = !sideAuto;
-                      patchSettings({ sidebar_auto_hide: next });
-                      if (next) {
-                        setSidePeek(true);
-                        setSideHoldOpen(true);
-                      } else {
-                        setSidePeek(false);
-                        setSideHoldOpen(false);
-                      }
-                    }}
+                    onClick={() => patchSettings({ sidebar_auto_hide: !sideAuto })}
                   >
                     <IcAutoHide size={15} />
                   </button>
                   <button
                     className="btn icon"
                     title="Collapse"
-                    onClick={() => persistUi({ ...ui, sidebar_collapsed: true })}
+                    aria-label="Collapse"
+                    onClick={() => {
+                      setSideHoldOpen(false);
+                      persistUi({ ...ui, sidebar_collapsed: true });
+                    }}
                   >
                     <IcCollapse size={15} />
                   </button>
@@ -4189,15 +4160,26 @@ export function NotebookView({
                   </div>
                 )}
               </div>
-              )}
               {!sideAuto && (
                 <div
                   className={`sidebar-resizer ${sbDragging ? "drag" : ""}`}
                   onMouseDown={() => setSbDragging(true)}
                 />
               )}
-            </>
-          ))}
+            </div>
+            <div className={`sidebar-reveal-slot${sideHidden ? " is-open" : ""}`}>
+              <button
+                className="sidebar-reveal"
+                title={messages.showNoteList}
+                aria-label={messages.showNoteList}
+                onClick={revealSidebar}
+                onMouseEnter={revealSidebar}
+              >
+                <IcChevron size={12} />
+              </button>
+            </div>
+          </>
+        )}
 
         {/* editor */}
         <div className={`editor-pane${titleHidden ? " title-collapsed" : ""}`} data-tour="nb-canvas">
