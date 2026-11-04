@@ -1602,43 +1602,14 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   background-image: radial-gradient(var(--canvas-dot) 1.2px, transparent 1.2px);
   background-size: 22px 22px;
   outline: none;
+  /* Lip + radius stay the paper's own; when the list opens we only grow the left inset. */
+  transition: margin-left 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
 }
-/* Concave paper corners against the open note list (chrome = list surface).
-   left = list width minus the wrap's left margin, so the scoop sits on the cut edge. */
-.canvas-wrap::before,
-.canvas-wrap::after {
-  content: "";
-  position: absolute;
-  z-index: 35;
-  left: calc(var(--sidebar-w, 224px) - 14px);
-  width: var(--r-lg);
-  height: var(--r-lg);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
+/* Same 14px chrome lip as the closed view, now between the list and the paper — no scoop seams. */
+.editor-pane.side-open .canvas-wrap:not(.locked) {
+  margin-left: calc(var(--sidebar-w, 224px) + 14px);
 }
-.canvas-wrap::before {
-  top: 0;
-  background: radial-gradient(
-    circle at 100% 100%,
-    transparent calc(var(--r-lg) - 0.5px),
-    var(--surface) var(--r-lg)
-  );
-}
-.canvas-wrap::after {
-  bottom: 0;
-  background: radial-gradient(
-    circle at 100% 0%,
-    transparent calc(var(--r-lg) - 0.5px),
-    var(--surface) var(--r-lg)
-  );
-}
-.editor-pane.side-open .canvas-wrap::before,
-.editor-pane.side-open .canvas-wrap::after {
-  opacity: 1;
-}
-.editor-pane.side-resizing .canvas-wrap::before,
-.editor-pane.side-resizing .canvas-wrap::after {
+.editor-pane.side-resizing .canvas-wrap {
   transition: none;
 }
 .canvas-wrap.locked {
@@ -5489,14 +5460,6 @@ svg.hl .hl-ink {
   background: color-mix(in srgb, var(--surface) 85%, transparent);
   cursor: pointer;
   opacity: 0.75;
-  transition:
-    opacity 120ms,
-    left 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
-}
-.editor-pane.side-open .canvas-minimap {
-  left: calc(10px + var(--sidebar-w, 224px));
-}
-.editor-pane.side-resizing .canvas-minimap {
   transition: opacity 120ms;
 }
 .canvas-minimap:hover { opacity: 1; }
