@@ -269,3 +269,18 @@ the button, or a click outside closes it. Saved to `checklist.json` (app-state.m
 auto-hide on (setting `sidebar_auto_hide`). The list then shrinks to the 6 px rail;
 moving onto the rail slides the list out over the editor (no layout shift), and it
 slides away 350 ms after the mouse leaves, unless a field in it has focus.
+
+**Answer cards.** Several Quick question and Analyze cards can be open at once (up to 8); the one
+used last is on top, and plain questions fan out 28 px down and left of each other. Questions go
+one at a time across cards, since the hidden chat views are shared: a card waiting its turn shows
+"Waiting for the other answer to finish". When a model's view shows another card's chat, the card
+goes back to its own chat's address first (or, for a private chat with no address, starts over
+with the conversation so far). An Analyze card opens **pinned**: it sits beside its area on the
+note, pans and zooms with it, hides while that note isn't shown, and is cut at the edges of the
+note's view; a small pin in its header says so. Dragging or resizing frees it, and it then stays
+where it is on screen. Each card draws its own area outline. Closed cards go to the session
+history with their area, image and place, so reopening puts them back and Recapture works.
+
+**Moving the note while selecting.** With the Analyze overlay up, the wheel scrolls and
+Ctrl+wheel zooms the note underneath, and a right or middle drag pans it, so the area can be
+framed without leaving the overlay. Cards and outlines are hidden while selecting.

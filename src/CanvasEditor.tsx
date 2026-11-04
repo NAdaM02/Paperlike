@@ -404,6 +404,35 @@ export function objectBBox(
   return drawingBBox(o);
 }
 
+/** Joined pictures laid out like joined PDF pages: top to bottom under the top one, all at one width. */
+function stackJoined(objs: CanvasObject[], join: string, width?: number): CanvasObject[] {
+  const members = objs
+    .filter((o): o is ImageObject => o.type === "image" && o.join === join)
+    .sort((a, b) => a.y - b.y || a.x - b.x);
+  if (!members.length) return objs;
+  const w = Math.max(24, width ?? members[0].width);
+  const x = members[0].x;
+  let y = members[0].y;
+  const next = new Map<string, ImageObject>();
+  for (const m of members) {
+    const h = m.height * (w / m.width);
+    next.set(m.id, { ...m, x, y, width: w, height: h });
+    y += h + IMAGE_JOIN_GAP;
+  }
+  return objs.map((o) => next.get(o.id) ?? o);
+}
+
+/** `ids` plus every picture joined to one of them. */
+function withJoined(objs: CanvasObject[], ids: string[]): string[] {
+  const joins = new Set(objs.flatMap((o) => (o.type === "image" && o.join && ids.includes(o.id) ? [o.join] : [])));
+  if (!joins.size) return ids;
+  const out = [...ids];
+  for (const o of objs) if (o.type === "image" && o.join && joins.has(o.join) && !out.includes(o.id)) out.push(o.id);
+  return out;
+}
+
+const IMAGE_JOIN_GAP = 14;
+
 /** Collapsed fold marker. New folds store the chevron center; older ones sit on x,y. */
 function collapsedBox(g: GroupObject): { x: number; y: number; w: number; h: number } {
   return { x: g.marker_x ?? g.x, y: g.marker_y ?? g.y, w: 28, h: 28 };
@@ -756,9 +785,16 @@ export function CanvasEditor({
     const prefix: Record<string, string> = { text: "t", image: "i", drawing: "d", group: "g", pdf: "p" };
     for (const o of clip.objects) idOf.set(o.id, newId(prefix[o.type] ?? "o"));
     let z = objectsRef.current.reduce((m, o) => Math.max(m, o.z), 0);
+    // Pasted joined pictures form a set of their own.
+    const joinOf = new Map<string, string>();
     const clones = clip.objects.map((o) => {
       const id = idOf.get(o.id)!;
       const moved = { ...structuredClone(o), id, x: o.x + 24, y: o.y + 24, z: ++z };
+      if (moved.type === "image" && moved.join) {
+        const j = joinOf.get(moved.join) ?? newId("j");
+        joinOf.set(moved.join, j);
+        moved.join = j;
+      }
       if (moved.type === "group") {
         moved.children = moved.children.map((c) => idOf.get(c) ?? c);
         if (moved.marker_x != null || moved.marker_y != null) {
@@ -1005,8 +1041,11 @@ export function CanvasEditor({
           };
         });
       } else if (e.shiftKey) {
+        // The canvas takes the wheel; nothing around it should scroll too.
+        e.preventDefault();
         setCam((c) => ({ ...c, x: c.x - e.deltaY }));
       } else {
+        e.preventDefault();
         setCam((c) => ({ x: c.x - e.deltaX, y: c.y - e.deltaY, z: c.z }));
       }
     };
@@ -2231,16 +2270,21 @@ export function CanvasEditor({
     if (d.mode === "resize-img") {
       const dx = pt.x - d.sx;
       const dy = pt.y - d.sy;
-      updateObjects((objs) =>
-        objs.map((o) => {
+      updateObjects((objs) => {
+        const me = objs.find((o) => o.id === d.id);
+        if (me?.type === "image" && me.join) {
+          // Joined pictures keep one width, so the corner of any of them resizes them all.
+          return stackJoined(objs, me.join, d.ow * Math.max((d.ow + dx) / d.ow, 24 / d.ow));
+        }
+        return objs.map((o) => {
           if (o.id !== d.id || o.type !== "image") return o;
           if (e.altKey) {
             return { ...o, width: Math.max(24, d.ow + dx), height: Math.max(24, d.oh + dy) };
           }
           const s = Math.max((d.ow + dx) / d.ow, 24 / d.ow);
           return { ...o, width: d.ow * s, height: d.oh * s };
-        }),
-      );
+        });
+      });
       return;
     }
     if (d.mode === "lasso") {
@@ -2681,10 +2725,13 @@ export function CanvasEditor({
     focusCanvas();
     const pt = toCanvas(e.clientX, e.clientY);
     if ((e.ctrlKey || e.metaKey) && selectedNow.includes(id)) {
-      setSelected(selectedNow.filter((i) => i !== id));
+      const off = new Set(withJoined(objsNow, [id]));
+      setSelected(selectedNow.filter((i) => !off.has(i)));
       return;
     }
-    const base = e.ctrlKey || e.metaKey ? [...new Set([...selectedNow, id])] : selectedNow.includes(id) ? selectedNow : [id];
+    const picked = e.ctrlKey || e.metaKey ? [...new Set([...selectedNow, id])] : selectedNow.includes(id) ? selectedNow : [id];
+    // Joined pictures are picked, moved and deleted together.
+    const base = withJoined(objsNow, picked);
     const ids = [...base];
     for (const mid of base) {
       const o = objsNow.find((x) => x.id === mid);
@@ -2903,6 +2950,31 @@ export function CanvasEditor({
   };
 
   /** Stack every selected piece into one PDF at the top-left piece. */
+  /** Join pictures like PDF pages: one under the other at the top one's width, moving and resizing as one. */
+  const joinImages = (ids: string[]) => {
+    if (!canEdit) return;
+    const members = withJoined(objectsRef.current, ids).filter((i) =>
+      objectsRef.current.some((o) => o.id === i && o.type === "image"),
+    );
+    if (members.length < 2) return;
+    snapshot("image-join");
+    const join = newId("j");
+    const pick = new Set(members);
+    updateObjects((objs) => stackJoined(objs.map((o) => (o.type === "image" && pick.has(o.id) ? { ...o, join } : o)), join));
+    setSelected(members);
+  };
+
+  /** Let joined pictures go again, each where it sits. */
+  const separateImages = (ids: string[]) => {
+    if (!canEdit) return;
+    const joins = new Set(
+      objectsRef.current.flatMap((o) => (o.type === "image" && o.join && ids.includes(o.id) ? [o.join] : [])),
+    );
+    if (!joins.size) return;
+    snapshot("image-separate");
+    updateObjects((objs) => objs.map((o) => (o.type === "image" && o.join && joins.has(o.join) ? { ...o, join: undefined } : o)));
+  };
+
   const joinSelectedPdfs = (ids: string[]) => {
     if (!canEdit) return;
     const cur = objectsRef.current;
@@ -3417,7 +3489,20 @@ export function CanvasEditor({
 
   const q = findQuery.trim().toLowerCase();
   const d = dragRef.current;
-  const soloSelected = selected.length === 1;
+  // One object, or one set of joined pictures: each of them shows its resize corner.
+  const soloSelected =
+    selected.length === 1 ||
+    (() => {
+      const first = objects.find((o) => o.id === selected[0]);
+      const join = first?.type === "image" ? first.join : undefined;
+      return (
+        !!join &&
+        selected.every((i) => {
+          const o = objects.find((x) => x.id === i);
+          return o?.type === "image" && o.join === join;
+        })
+      );
+    })();
 
   const cursor = panning
     ? "grabbing"
@@ -3973,6 +4058,20 @@ export function CanvasEditor({
                     onClick: () => joinSelectedPdfs(ids),
                   };
                   return [item];
+                })(),
+                ...(() => {
+                  const imgs = ids
+                    .map((i) => objects.find((o) => o.id === i))
+                    .filter((o): o is ImageObject => o?.type === "image");
+                  const out: MenuItem[] = [];
+                  const oneSet = !!imgs[0]?.join && imgs.every((o) => o.join === imgs[0].join);
+                  if (imgs.length >= 2 && !oneSet) {
+                    out.push({ label: messages.joinImages, onClick: () => joinImages(imgs.map((o) => o.id)) });
+                  }
+                  if (imgs.some((o) => o.join)) {
+                    out.push({ label: messages.separateImages, onClick: () => separateImages(imgs.map((o) => o.id)) });
+                  }
+                  return out;
                 })(),
                 "sep",
                 { label: "Delete", hint: "Del", danger: true, onClick: () => deleteIds(ids, true) },

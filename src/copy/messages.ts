@@ -12,6 +12,11 @@ const FILE_ERRORS: Record<string, string> = {
 
 export const messages = {
   fileOpen: "Open",
+  joinImages: "Join images",
+  separateImages: "Separate images",
+  analyzeHint: "Drag to select an area · Scroll or right-drag to move the note · Esc to cancel",
+  quickWaiting: "Waiting for the other answer to finish",
+  quickPinned: "Pinned to the note beside its area. Moving or resizing the card frees it.",
   fileSaveAs: "Save as…",
   fileSaved: "Saved.",
   fileMissing: "This file isn't in the note anymore.",

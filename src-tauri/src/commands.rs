@@ -2389,6 +2389,7 @@ pub async fn quick_ask(
     private: Option<bool>,
     note_paths: Option<Vec<String>>,
     file_paths: Option<Vec<String>>,
+    resume: Option<String>,
 ) -> Result<(), String> {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -2408,6 +2409,17 @@ pub async fn quick_ask(
     }
     if fresh || created {
         tokio_sleep(Duration::from_millis(1200)).await;
+    }
+    // Several answer cards share this view: go back to the asking card's chat when the
+    // view shows another one now, or was closed and opened again on a new chat.
+    if let Some(u) = resume.filter(|u| !fresh && u.starts_with("https://")) {
+        let here = view.url().map(|x| x.to_string()).unwrap_or_default();
+        if created || here.trim_end_matches('/') != u.trim_end_matches('/') {
+            quick_note(&log, "reopening the card's chat");
+            view.navigate(u.parse().map_err(|e: url::ParseError| e.to_string())?)
+                .map_err(err_str)?;
+            tokio_sleep(Duration::from_millis(1800)).await;
+        }
     }
     // A freshly opened view can still be loading or redirecting, and WebView2 then
     // rejects the script call ("The parameter is incorrect"). Looking for the box

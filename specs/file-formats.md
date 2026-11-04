@@ -144,7 +144,8 @@ A **Block** is one of:
 {
   "id": "i_…", "type": "image", "x": 0, "y": 0, "z": 2,
   "media": "media/a3f9c2d4e5b60718.png",   // path inside the ZIP
-  "width": 300, "height": 200               // display size (DIP); aspect free but UI defaults to locked ratio
+  "width": 300, "height": 200,              // display size (DIP); aspect free but UI defaults to locked ratio
+  "join": "j_…"                             // optional; pictures joined like PDF pages share it
 }
 ```
 

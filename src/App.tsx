@@ -191,7 +191,8 @@ export default function App() {
     clampAskWidth(Number(localStorage.getItem("pl.ask.width")) || ASK_DEFAULT_W),
   );
   const saveOpenNote = useRef<(() => Promise<void>) | null>(null);
-  const [quick, setQuick] = useState<QuickSeed | null>(null);
+  /** Open answer cards; each stays on its note until closed. */
+  const [quicks, setQuicks] = useState<QuickSeed[]>([]);
   const [calcOpen, setCalcOpen] = useState(false);
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
   /** Outline of the area an Analyze answer is about; `askId` once that chat moved to the Ask pane. */
@@ -246,8 +247,7 @@ export default function App() {
       openLicense();
       return;
     }
-    setQuick(seed);
-    setAnalyzeMark(seed.anchor ? { rect: seed.anchor, area: seed.area ?? null } : null);
+    setQuicks((cur) => (cur.some((q) => q.id === seed.id) ? cur : [...cur, seed].slice(-8)));
   };
 
   const openCalc = () => setCalcOpen((open) => !open);
@@ -277,13 +277,12 @@ export default function App() {
     });
   };
 
-  // The outline stays while its answer is open: the quick card, or the Ask pane it continued in.
+  // Cards draw their own outline. This one is for an answer continued in the Ask pane, while it is open.
   useEffect(() => {
     if (!analyzeMark) return;
-    const inCard = !!quick?.anchor && analyzeMark.askId === undefined;
     const inPane = analyzeMark.askId !== undefined && ask?.id === analyzeMark.askId;
-    if (!inCard && !inPane) setAnalyzeMark(null);
-  }, [analyzeMark, quick, ask]);
+    if (!inPane) setAnalyzeMark(null);
+  }, [analyzeMark, ask]);
 
   type UpdateAnnouncement = { version: string; notes: string; date: string };
   const promptingRef = useRef(false);
@@ -898,10 +897,11 @@ export default function App() {
           onAskHere={openBriefAsk}
         />
       )}
-      {quick && (
+      {quicks.map((quick) => (
         <QuickAskCard
           key={quick.id}
           seed={quick}
+          stack={quick.anchor ? 0 : quicks.filter((q) => !q.anchor).indexOf(quick)}
           initialHost={lastHost()}
           notePath={openNotePath}
           noteTitle={openNotePath ? titleFromPath(openNotePath) : undefined}
@@ -909,14 +909,14 @@ export default function App() {
           onHost={rememberHost}
           onOpenPanel={(host, question, url) => {
             const id = Date.now();
-            setQuick(null);
+            setQuicks((cur) => cur.filter((q) => q.id !== quick.id));
             rememberHost(host);
             setAsk({ id, host, briefPaths: null, question: url ? "" : question, send: false, url });
-            setAnalyzeMark((m) => (m ? { ...m, askId: id } : m));
+            setAnalyzeMark(quick.anchor ? { rect: quick.anchor, area: quick.area ?? null, askId: id } : null);
           }}
-          onClose={() => setQuick(null)}
+          onClose={() => setQuicks((cur) => cur.filter((q) => q.id !== quick.id))}
         />
-      )}
+      ))}
       {calcOpen && <Calculator onClose={() => setCalcOpen(false)} />}
       {analyzeMark && (
         <AnalyzeMark rect={analyzeMark.rect} area={analyzeMark.area} />

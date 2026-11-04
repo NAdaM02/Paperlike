@@ -66,6 +66,7 @@ export const IcFloat = (p: P) => <I {...p} d="M9 9H4v11h11v-5M11 4h9v9M20 4l-8 8
 /** A floating window returning to the dock. */
 export const IcDock = (p: P) => <I {...p} d="M14 4H4v16h10M10 12h10m0 0-4-4m4 4-4 4" />;
 export const IcClose = (p: P) => <I {...p} d="M6 6l12 12M18 6 6 18" />;
+export const IcPin = (p: P) => <I {...p} d="M9.5 3.5h5l-.8 5.2 3.3 3.1v1.4H7v-1.4l3.3-3.1-.8-5.2ZM12 13.2v7.3" />;
 export const IcSave = (p: P) => (
   <I {...p} d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2ZM7 3v5h8M7 13h10v8H7z" />
 );

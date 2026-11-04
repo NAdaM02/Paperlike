@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { CHAT_NAME, ChatHost, defaultHost, setDefaultHost } from "./chat";
+import { messages } from "./copy/messages";
 import { HostLogo, IcAsk, IcClose, IcExplain, IcSolve, IcVerify } from "./icons";
 
 export type AnalyzeAction = "explain" | "solve" | "factcheck";
@@ -175,6 +176,86 @@ export function AnalyzeOverlay({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onCancel]);
 
+  /** What is under the overlay at a point: the note the wheel and pan drags go to. */
+  const under = (x: number, y: number): Element | null => {
+    const el = overlayRef.current;
+    if (!el) return null;
+    el.style.pointerEvents = "none";
+    const hit = document.elementFromPoint(x, y);
+    el.style.pointerEvents = "";
+    return hit;
+  };
+
+  // The wheel moves and zooms the note underneath, so the area can be framed before or after selecting.
+  useEffect(() => {
+    document.body.classList.add("analyzing");
+    return () => document.body.classList.remove("analyzing");
+  }, []);
+
+  useEffect(() => {
+    const el = overlayRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if ((e.target as Element | null)?.closest?.(".analyze-actions")) return;
+      e.preventDefault();
+      const t = under(e.clientX, e.clientY);
+      if (!t) return;
+      const fwd = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        deltaZ: e.deltaZ,
+        deltaMode: e.deltaMode,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        buttons: e.buttons,
+      });
+      if (!t.dispatchEvent(fwd) || e.ctrlKey) return;
+      // Nothing took it (a page view, a list): scroll what is under the pointer, as the wheel would.
+      for (let s: Element | null = t; s && s !== document.body; s = s.parentElement) {
+        const o = getComputedStyle(s).overflowY;
+        if ((o === "auto" || o === "scroll") && s.scrollHeight > s.clientHeight + 1) {
+          const k = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? s.clientHeight : 1;
+          s.scrollBy({ top: (e.shiftKey ? 0 : e.deltaY) * k, left: (e.shiftKey ? e.deltaY : e.deltaX) * k });
+          return;
+        }
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  /** Right or middle drag pans the note under the overlay. It goes to the note as a middle-button
+   *  press, which pans whatever tool is on; the note then holds the pointer until release. */
+  const panUnder = (e: PointerEvent) => {
+    const t = under(e.clientX, e.clientY);
+    if (!t) return;
+    t.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        pointerId: e.pointerId,
+        pointerType: e.pointerType,
+        isPrimary: e.isPrimary,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        button: 1,
+        buttons: 4,
+      }),
+    );
+  };
+
   const clampRect = (r: Rect): Rect => {
     const maxW = window.innerWidth;
     const maxH = window.innerHeight;
@@ -195,6 +276,11 @@ export function AnalyzeOverlay({
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
+    if ((e.button === 1 || e.button === 2) && !busy && !drag) {
+      e.preventDefault();
+      panUnder(e.nativeEvent);
+      return;
+    }
     if (e.button !== 0 || busy) return;
     const t = e.target as HTMLElement;
     if (t.closest(".analyze-actions, .analyze-grip, .analyze-hint")) return;
@@ -284,10 +370,14 @@ export function AnalyzeOverlay({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onMouseDown={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
+      onContextMenu={(e) => e.preventDefault()}
     >
       {!rect && <div className="analyze-dim" />}
       <div className="analyze-hint">
-        Drag to select an area · Esc to cancel
+        {messages.analyzeHint}
         <button
           type="button"
           className="btn icon"

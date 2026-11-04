@@ -360,3 +360,9 @@ spacing drops below 6 screen px.
 
 Inserted images, and tables inserted with no text window focused, are placed at
 the viewport centre.
+
+**Joined images.** Right-click two or more selected pictures → **Join images**: they line up
+like joined PDF pages, top to bottom under the top one, all at its width, 14 DIP apart, and
+share a `join` id. Clicking one selects the set; they move, copy and delete together, and the
+corner of any of them resizes them all. **Separate images** lets them go again, each where it
+sits. Pasted joined pictures get a join id of their own.

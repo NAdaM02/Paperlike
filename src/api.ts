@@ -176,6 +176,8 @@ export type ImageObject = {
   media: string;
   width: number;
   height: number;
+  /** Pictures joined like PDF pages share this id: they select, move and resize together. */
+  join?: string;
 };
 
 export type DrawingItem =
@@ -490,6 +492,7 @@ export const api = {
     isPrivate: boolean,
     notePaths?: string[],
     filePaths?: string[],
+    resume?: string | null,
   ) =>
     invoke("quick_ask", {
       id,
@@ -499,6 +502,7 @@ export const api = {
       private: isPrivate,
       notePaths: notePaths ?? [],
       filePaths: filePaths ?? [],
+      resume: resume ?? null,
     }),
   quickStop: () => invoke("quick_stop"),
   quickRelease: () => invoke("quick_release"),

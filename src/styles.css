@@ -5384,3 +5384,16 @@ svg.hl .hl-ink {
 }
 .checklist-add input:focus { border-color: var(--accent); }
 .checklist-hint { padding: 0 10px 8px; font-size: 11px; color: var(--ink-3); }
+
+/* Several answer cards: the one used last is on top. Pinned ones show a small pin. */
+.qa-card.front { z-index: 66; }
+.qa-pin {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  margin-right: 2px;
+  cursor: help;
+}
+/* While an area is being selected, cards and outlines step aside so they stay out of the capture. */
+body.analyzing .qa-card,
+body.analyzing .analyze-mark { visibility: hidden !important; }

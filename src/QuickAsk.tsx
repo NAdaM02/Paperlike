@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { AnalyzeAction, AnalyzeIcon, analyzeLabel, analyzePrompt, AnalyzeRect, areaOnScreen, captureArea, promptAction, visiblePart } from "./Analyze";
+import { AnalyzeAction, AnalyzeIcon, analyzeLabel, AnalyzeMark, analyzePrompt, AnalyzeRect, areaOnScreen, captureArea, promptAction, visiblePart } from "./Analyze";
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { noteText, summaryHtml } from "./brief";
 import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
 import { ChecklistPanel } from "./Checklist";
 import { messages } from "./copy/messages";
-import { HostLogo, IcCalc, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
+import { HostLogo, IcCalc, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
 const BRIEFLY =
@@ -49,7 +49,17 @@ export type QuickSeed = {
   area?: NoteArea | null;
   /** Reopen a past session chat. */
   prior?: { host: ChatHost; turns: QuickTurn[]; url?: string | null };
+  /** Where the card was when it closed; reopening puts it back there. */
+  place?: CardPlace;
 };
+
+/** A pinned card's place and size in note units, measured from its area. `h` is null while it grows with the answer. */
+type CardRel = { side: "right" | "left"; gap: number; oy: number; w: number; h: number | null };
+
+/** Where a card was: pinned beside its area at a note zoom, or free on the screen. */
+export type CardPlace =
+  | { pinned: true; rel: CardRel; zBase: number }
+  | { pinned: false; x: number; y: number; w: number; h: number | null };
 
 export type QuickHistoryEntry = {
   id: number;
@@ -61,6 +71,11 @@ export type QuickHistoryEntry = {
   at: number;
   imagePreview?: string;
   analyze?: AnalyzeAction;
+  imagePath?: string;
+  custom?: boolean;
+  anchor?: AnalyzeRect;
+  area?: NoteArea | null;
+  place?: CardPlace;
 };
 
 const historyListeners = new Set<() => void>();
@@ -92,6 +107,23 @@ export function recordQuickHistory(entry: QuickHistoryEntry) {
   if (!entry.turns.some((t) => t.role === "user")) return;
   pushHistory(entry);
 }
+
+/** Questions go one at a time across all cards: the hidden chat views are shared, and a new
+ *  question in a view stops the one it is answering. */
+let askQueue: Promise<void> = Promise.resolve();
+let asking = 0;
+function takeTurn(): Promise<() => void> {
+  let release = () => {};
+  const done = new Promise<void>((r) => (release = r));
+  const wait = askQueue;
+  askQueue = wait.then(() => done);
+  return wait.then(() => release);
+}
+/** The card whose chat each model's hidden view shows now. */
+const viewOwner: Partial<Record<ChatHost, number>> = {};
+
+const transcript = (turns: QuickTurn[]) =>
+  turns.map((t) => `${t.role === "user" ? "I asked" : "You answered"}:\n${t.text}`).join("\n\n");
 
 /** The small "Quick question" field in the header, with calculator / history / analyze. */
 export function QuickAskField({
@@ -345,7 +377,12 @@ export function QuickAskField({
                     question: h.question,
                     selection: h.selection,
                     imagePreview: h.imagePreview,
+                    imagePath: h.imagePath,
                     analyze: h.analyze,
+                    custom: h.custom,
+                    anchor: h.anchor,
+                    area: h.area,
+                    place: h.place,
                     prior: { host: h.host, turns: h.turns, url: h.url },
                   });
                 }}
@@ -438,8 +475,11 @@ export function QuickAskCard({
   onHost,
   onOpenPanel,
   onClose,
+  stack = 0,
 }: {
   seed: QuickSeed;
+  /** Plain cards already open: a new one opens a step down and left of them. */
+  stack?: number;
   initialHost: ChatHost;
   notePath?: string;
   noteTitle?: string;
@@ -462,10 +502,24 @@ export function QuickAskCard({
   // The note toggle gave way to Recapture; a stored "on" must not keep sending the note unseen.
   const useNote = false;
   const [priv, setPriv] = useState(privateChats);
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const [size, setSize] = useState<CardSize | null>(savedCardSize);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(() =>
+    seed.place && !seed.place.pinned ? { x: seed.place.x, y: seed.place.y } : null,
+  );
+  const [size, setSize] = useState<CardSize | null>(() => {
+    const p = seed.place;
+    if (p && !p.pinned) return p.h != null ? { w: p.w, h: p.h } : null;
+    return savedCardSize();
+  });
   /** A narrower width for this card only, when the saved size doesn't fit beside the area. */
-  const [fitW, setFitW] = useState<number | null>(null);
+  const [fitW, setFitW] = useState<number | null>(() =>
+    seed.place && !seed.place.pinned && seed.place.h == null ? seed.place.w : null,
+  );
+  /** Pinned: it sits on the note beside its area until it is moved or resized. */
+  const [pinned, setPinned] = useState(() => (seed.place ? seed.place.pinned : !!seed.area?.w));
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
+  /** Another card's question is being answered; this one goes next. */
+  const [waiting, setWaiting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [url, setUrl] = useState<string | null>(seed.prior?.url ?? null);
   /** The latest capture of the area; Rescan replaces it. */
@@ -546,9 +600,15 @@ export function QuickAskCard({
           at: Date.now(),
           imagePreview: shotRef.current,
           analyze: seed.analyze,
+          imagePath: imageRef.current,
+          custom: seed.custom,
+          anchor: seed.anchor,
+          area: seed.area,
+          place: placeNow(),
         });
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [seed.id, seed.question, seed.selection, seed.analyze],
   );
 
@@ -559,9 +619,10 @@ export function QuickAskCard({
    */
   /** The image this card asks about: the first capture, then the latest rescan. */
   const imageRef = useRef<string | undefined>(seed.imagePath);
-  const relRef = useRef<{ side: "right" | "left"; gap: number; oy: number; w: number; h: number | null } | null>(null);
+  const relRef = useRef<CardRel | null>(seed.place?.pinned ? seed.place.rel : null);
   /** Note zoom when the card was first placed: its text is 100% there and scales with the note from it. */
-  const zBaseRef = useRef<number | null>(null);
+  const zBaseRef = useRef<number | null>(seed.place?.pinned ? seed.place.zBase : null);
+  const freeRef = useRef<CardPlace | null>(seed.place && !seed.place.pinned ? seed.place : null);
 
   /** Remember where the card is (screen px) relative to the area, as shown at `r` and zoom `z`. */
   const pin = (c: { x: number; y: number; w: number; h: number }, r: AnalyzeRect, z: number, fixedH: boolean) => {
@@ -585,36 +646,102 @@ export function QuickAskCard({
     pin(c, at.rect, at.rect.w / area.w, fixedH);
   };
 
-  // The card travels and scales with the outlined area when the note pans or zooms.
-  useEffect(() => {
+  // A pinned card travels and scales with its area like something drawn on the note. It is
+  // hidden while that note isn't shown, and the edges of the note's view cut it like the page.
+  useLayoutEffect(() => {
     const area = seed.area;
-    if (!area || !area.w) return;
-    return subscribeCanvas(() => {
-      const card = cardRef.current;
+    const card = cardRef.current;
+    if (!area || !area.w || !pinned || !card) return;
+    const place = () => {
       const rel = relRef.current;
+      if (!rel || !pinnedRef.current || card.classList.contains("resizing")) return;
       const at = screenOf(area);
-      if (!card || !rel || !at || card.classList.contains("resizing")) return;
+      if (!at) {
+        card.style.display = "none";
+        return;
+      }
       const r = at.rect;
       const z = r.w / area.w;
       const w = Math.max(MIN_W, rel.w * z);
       const x = rel.side === "right" ? r.x + r.w + rel.gap * z : r.x - rel.gap * z - w;
+      const y = r.y + rel.oy * z;
+      card.style.display = "";
       card.style.left = `${x}px`;
-      card.style.top = `${r.y + rel.oy * z}px`;
+      card.style.top = `${y}px`;
       card.style.right = "auto";
       card.style.width = `${w}px`;
       if (rel.h != null) card.style.height = `${Math.max(MIN_H, rel.h * z)}px`;
       // The text grows and shrinks with the note too, so the answer wraps the same at any zoom.
       const base = zBaseRef.current;
       if (base) card.style.setProperty("--qa-z", String(Math.min(4, Math.max(0.3, z / base))));
-    });
-  }, [seed.area]);
+      const c = at.clip;
+      const h = card.offsetHeight;
+      const it = Math.max(0, c.top - y);
+      const il = Math.max(0, c.left - x);
+      const ib = Math.max(0, y + h - c.bottom);
+      const ir = Math.max(0, x + w - c.right);
+      const gone = it + ib >= h || il + ir >= w;
+      card.style.visibility = gone ? "hidden" : "";
+      card.style.clipPath = !gone && (it || il || ib || ir) ? `inset(${it}px ${ir}px ${ib}px ${il}px)` : "";
+    };
+    place();
+    // The answer grows while it streams in; keep the cut at the view's edge.
+    const ro = new ResizeObserver(() => place());
+    ro.observe(card);
+    const off = subscribeCanvas(place);
+    return () => {
+      ro.disconnect();
+      off();
+    };
+  }, [seed.area, pinned]);
 
-  // An Analyze card opens just right of the captured area (left of it when there's no room),
-  // so the answer sits next to what it is about.
+  /** Moving or resizing frees a pinned card: it stays where it is put, over everything. */
+  const unpin = () => {
+    if (!pinnedRef.current) return;
+    pinnedRef.current = false;
+    setPinned(false);
+    const card = cardRef.current;
+    if (card) {
+      card.style.clipPath = "";
+      card.style.visibility = "";
+    }
+  };
+
+  /** Remember where a free card is, for reopening it from history. */
+  const rememberFree = () => {
+    const card = cardRef.current;
+    if (!card) return;
+    const c = card.getBoundingClientRect();
+    freeRef.current = { pinned: false, x: c.left, y: c.top, w: c.width, h: card.style.height ? c.height : null };
+  };
+
+  const placeNow = (): CardPlace | undefined => {
+    const rel = relRef.current;
+    const zBase = zBaseRef.current;
+    if (pinnedRef.current && rel && zBase) return { pinned: true, rel, zBase };
+    return freeRef.current ?? undefined;
+  };
+
+  /** The card clicked last is on top of the others. */
+  const toFront = () => {
+    document.querySelectorAll(".qa-card.front").forEach((el) => el.classList.remove("front"));
+    cardRef.current?.classList.add("front");
+  };
+
+  // An Analyze card opens just right of the captured area, so the answer sits next to what it is
+  // about. A card reopened from history goes back where it was; plain questions fan out.
   useLayoutEffect(() => {
+    toFront();
     const a = seed.anchor;
     const card = cardRef.current;
-    if (!a || !card) return;
+    if (seed.place || !card) return;
+    if (!a) {
+      if (stack) {
+        const r = card.getBoundingClientRect();
+        setPos({ x: Math.max(EDGE, r.left - 28 * stack), y: Math.min(window.innerHeight - 160, r.top + 28 * stack) });
+      }
+      return;
+    }
     const r = card.getBoundingClientRect();
     const askW = parseFloat(getComputedStyle(card).getPropertyValue("--ask-w")) || 0;
     const spot = besideArea(a, r.width, askW);
@@ -664,12 +791,42 @@ export function QuickAskCard({
     setTurns((cur) => [...(fresh ? [] : cur), { role: "user", text: question.trim() }]);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // One question at a time across cards: this one waits while another is being answered.
+    if (asking++ > 0) setWaiting(true);
+    const turn = takeTurn();
+    const release = await new Promise<(() => void) | null>((done) => {
+      ctrl.signal.addEventListener("abort", () => done(null), { once: true });
+      void turn.then(done);
+    });
+    if (current()) setWaiting(false);
+    if (!release) {
+      asking--;
+      void turn.then((r) => r());
+      if (current()) {
+        setBusy(false);
+        busyRef.current = false;
+        abortRef.current = null;
+      }
+      return;
+    }
+    // The model's view may show another card's chat now: go back to this one's, or, with no
+    // address to go back to (a private chat), start over with the conversation so far.
+    let prompt = parts.join("\n\n");
+    let anew = fresh;
+    const resume = fresh ? null : urlRef.current;
+    if (!fresh && !resume && viewOwner[via] !== undefined && viewOwner[via] !== seed.id) {
+      const before = turnsRef.current.slice(0, -1);
+      anew = true;
+      prompt = `Our conversation so far:\n"""\n${transcript(before)}\n"""\n\n${prompt}\n\n${BRIEFLY}`;
+    }
+    viewOwner[via] = seed.id;
     let soFar = "";
     try {
       const reply = await askInBackground({
         host: via,
-        text: parts.join("\n\n"),
-        fresh,
+        text: prompt,
+        fresh: anew,
+        resume,
         signal: ctrl.signal,
         filePaths: files,
         onThinking: (t) => {
@@ -700,6 +857,8 @@ export function QuickAskCard({
       setError({ text: e instanceof Error ? e.message : String(e), signin: e instanceof ChatError && e.code === "signin" });
       convo.current = null;
     } finally {
+      asking--;
+      release();
       if (current()) {
         setLive("");
         setThinking("");
@@ -832,10 +991,11 @@ export function QuickAskCard({
     const move = (ev: PointerEvent) => {
       const x = Math.max(4, Math.min(ev.clientX - dx, window.innerWidth - askW - r.width - 4));
       const y = Math.max(4, Math.min(ev.clientY - dy, window.innerHeight - 60));
+      unpin();
       setPos({ x, y });
-      repin({ x, y, w: r.width, h: r.height }, relRef.current?.h != null);
     };
     const up = () => {
+      rememberFree();
       head.removeEventListener("pointermove", move);
       head.removeEventListener("pointerup", up);
       head.removeEventListener("pointercancel", up);
@@ -879,6 +1039,7 @@ export function QuickAskCard({
       if (edge.includes("s")) bottom = Math.min(maxB, Math.max(top + MIN_H, r.bottom + dy));
       if (edge.startsWith("n")) top = Math.max(4, Math.min(bottom - MIN_H, r.top + dy));
       next = { x: left, y: top, w: right - left, h: bottom - top };
+      unpin();
       apply();
     };
     const up = () => {
@@ -890,8 +1051,7 @@ export function QuickAskCard({
       setPos({ x: next.x, y: next.y });
       setSize(sz);
       setFitW(null);
-      // Keep following the area from where, and at the size, the card now is.
-      repin(next, true);
+      rememberFree();
       localStorage.setItem("pl.quick.size", JSON.stringify(sz));
     };
     handle.addEventListener("pointermove", move);
@@ -906,7 +1066,8 @@ export function QuickAskCard({
       card.style.width = "";
       card.style.height = "";
       const c = card.getBoundingClientRect();
-      repin({ x: c.left, y: c.top, w: c.width, h: c.height }, false);
+      if (pinnedRef.current) repin({ x: c.left, y: c.top, w: c.width, h: c.height }, false);
+      else rememberFree();
     }
     setSize(null);
     setFitW(null);
@@ -921,9 +1082,13 @@ export function QuickAskCard({
     : firstQuestion;
 
   return (
+    <>
+    {seed.anchor && <AnalyzeMark rect={seed.anchor} area={seed.area} />}
     <div
       ref={cardRef}
       className="qa-card"
+      data-qid={seed.id}
+      onPointerDownCapture={toFront}
       style={{
         ...(pos ? { left: pos.x, top: pos.y, right: "auto" } : null),
         ...(size ? { width: size.w, height: size.h } : null),
@@ -967,6 +1132,11 @@ export function QuickAskCard({
           ))}
         </div>
         <div className="spacer" />
+        {pinned && (
+          <span className="qa-pin" title={messages.quickPinned}>
+            <IcPin size={13} />
+          </span>
+        )}
         <div className="qa-head-actions">
           <button
             className="btn icon"
@@ -1091,7 +1261,9 @@ export function QuickAskCard({
               <div className="qa-pending">
                 <span className="qa-pending-head">
                   <IcSpark size={14} />
-                  <span className="qa-shimmer">{thinking ? `${name} is thinking` : `${name} is responding`}</span>
+                  <span className="qa-shimmer">
+                    {waiting ? messages.quickWaiting : thinking ? `${name} is thinking` : `${name} is responding`}
+                  </span>
                 </span>
                 {thinking && (
                   <div className="qa-pending-thoughts">
@@ -1175,5 +1347,6 @@ export function QuickAskCard({
         )}
       </form>
     </div>
+    </>
   );
 }

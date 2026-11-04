@@ -87,6 +87,8 @@ export async function askInBackground(opts: {
   notePaths?: string[];
   /** Extra files (e.g. Analyze PNGs) attached with the question. */
   filePaths?: string[];
+  /** The chat to continue in, when the view may show another card's chat now. */
+  resume?: string | null;
   onText: (soFar: string) => void;
   /** The model's visible reasoning so far, when the site shows it. */
   onThinking?: (soFar: string) => void;
@@ -122,7 +124,7 @@ export async function askInBackground(opts: {
     }).then((unlisten) => {
       off = unlisten;
       opts.signal?.addEventListener("abort", () => void api.quickStop());
-      api.quickAsk(id, opts.host, opts.text, opts.fresh, privateChats(), notePaths, filePaths).catch((e) => {
+      api.quickAsk(id, opts.host, opts.text, opts.fresh, privateChats(), notePaths, filePaths, opts.resume).catch((e) => {
         unlisten();
         const raw = e instanceof Error ? e.message : String(e);
         // Invoke failures (e.g. webview race) should use the same friendly copy as ChatError.
