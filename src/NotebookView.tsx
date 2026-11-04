@@ -159,11 +159,7 @@ const RIBBON_ORDER: Ribbon[] = ["File", "Edit", "Draw", "View"];
 const TITLE_AUTOHIDE_Y = 48;
 /** Stay hidden until the view is this close to the top, so the row does not flicker. */
 const TITLE_AUTOSHOW_Y = 24;
-/** Note-space X: past this, the note list can auto-hide (mirrors TITLE_AUTOHIDE_Y). */
-const SIDE_AUTOHIDE_X = 36;
-const SIDE_AUTOSHOW_X = 18;
-
-/** Shared title/sidebar hysteresis: hide past hideAt, stay hidden until back under showAt. */
+/** Shared title hysteresis: hide past hideAt, stay hidden until back under showAt. */
 function axisAway(prev: boolean, pos: number, hideAt: number, showAt: number) {
   return prev ? pos > showAt : pos > hideAt;
 }
@@ -731,33 +727,27 @@ export function NotebookView({
   const sideHideOn = noteOpen && sideAuto;
   const sideAutoHideRef = useRef(sideHideOn);
   sideAutoHideRef.current = sideHideOn;
-  /** Away when note ink sits under the list strip, or the view has panned past the left margin. */
+  /** Away only when note elements sit under the list's on-screen footprint (no extra margin). */
   const checkSideAway = useCallback(() => {
     if (!sideAutoHideRef.current) return;
     const cam = camRef.current;
     const n = noteRef.current;
     if (!cam || cam.z <= 0 || !n) return;
     const left = -cam.x / cam.z;
-    const strip = sideWidthRef.current / cam.z;
-    const right = left + strip;
+    // Footprint = the list width in note units. Tiny hysteresis so the edge does not flicker.
+    const prev = sideAwayRef.current;
+    const pad = (prev ? -6 : 2) / cam.z;
+    const right = left + sideWidthRef.current / cam.z + pad;
     let under = false;
     const editingSide = !!document.activeElement?.closest(".sidebar");
     for (const o of n.doc.canvas.objects) {
-      let x = o.x;
-      let w = 40;
-      if (o.type === "text" || o.type === "image" || o.type === "file" || o.type === "group") w = Math.max(24, o.width);
-      else if (o.type === "pdf") w = Math.max(24, o.pageWidth || 400);
-      else if (o.type === "drawing") {
-        x = o.x - 16;
-        w = 64;
-      }
-      if (x + w > left && x < right) {
+      const b = objectBBox(o, heightsRef.current);
+      if (b.x + b.w > left && b.x < right) {
         under = true;
         break;
       }
     }
-    const prev = sideAwayRef.current;
-    const away = !editingSide && (under || axisAway(prev, left, SIDE_AUTOHIDE_X, SIDE_AUTOSHOW_X));
+    const away = !editingSide && under;
     if (away !== prev) {
       sideAwayRef.current = away;
       setSideScrolledAway(away);

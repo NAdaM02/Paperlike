@@ -1301,32 +1301,47 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   width: 3px;
   background: var(--accent);
 }
-/* Note list slot — same collapse timing as .note-title-slot. */
+/* Note list overlays the editor — open/collapse never nudges the canvas. */
 .sidebar-slot {
-  flex: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 25;
   display: flex;
   min-height: 0;
-  overflow: hidden;
-  interpolate-size: allow-keywords;
   width: var(--sidebar-w, 224px);
-  transition: width 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
+  overflow: hidden;
+  transform: translateX(0);
+  transition: transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1), opacity 220ms ease;
+  box-shadow: 6px 0 24px color-mix(in srgb, var(--ink) 14%, transparent);
+  border-right: 1px solid var(--border);
+  background: var(--surface);
 }
 .sidebar-slot.is-collapsed {
-  width: 0;
+  transform: translateX(-100%);
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: none;
 }
 .sidebar-slot .sidebar {
   flex: none;
   min-height: 0;
   height: 100%;
-  transition: opacity 220ms ease;
+  background: transparent;
+  border-right: none;
 }
-.sidebar-slot.is-collapsed .sidebar {
-  opacity: 0;
-  pointer-events: none;
+.sidebar-slot .sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -5px;
+  margin: 0;
+  z-index: 1;
 }
 /* Title collapsed: keep the rounded meeting corner in every open/collapsed combo. */
-.sidebar-slot.with-title-collapsed .sidebar,
-.sidebar-slot.with-title-collapsed {
+.sidebar-slot.with-title-collapsed,
+.sidebar-slot.with-title-collapsed .sidebar {
   border-top-right-radius: 12px;
 }
 .sidebar-head .btn.icon {
@@ -1349,15 +1364,16 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
 }
 .sidebar-head .btn.icon.title-autohide.is-on:hover { color: var(--ink); }
 .sidebar-reveal-slot {
-  flex: 0 0 auto;
-  align-self: stretch;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: 0;
   overflow: visible;
-  position: relative;
-  z-index: 6;
-  transition: width 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
+  z-index: 26;
+  pointer-events: none;
 }
-.sidebar-reveal-slot.is-open { width: 14px; }
+.sidebar-reveal-slot.is-open { width: 14px; pointer-events: auto; }
 .sidebar-reveal {
   position: absolute;
   top: 0;
