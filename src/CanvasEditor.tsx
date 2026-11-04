@@ -63,10 +63,6 @@ import { arrowHeadKind, arrowHeadPoints, scaleDrawing, shaftIsStraight, smoothFr
 /** How long a lifted pen still counts as "in use" for palm rejection. */
 const PEN_PALM_MS = 500;
 
-/** A worn mouse switch reports several press/release pairs within a few ms of one
- *  press, and can drop out for ~70 ms mid-drag. A press this soon after the release\n *  continues the same stroke; a deliberate re-click takes longer. */
-const MOUSE_BOUNCE_MS = 90;
-
 type PenSettings = {
   pen_enabled: boolean;
   pen_always_draws: boolean;
@@ -278,8 +274,6 @@ type Drag =
       pointerId: number;
       /** Set when the stroke should commit. A pen pointerup alone does not. */
       closing?: boolean;
-      /** Mouse button let go, held open for MOUSE_BOUNCE_MS in case the switch bounced. */
-      released?: boolean;
       /** Last pen/marker ink, when the pen draws while another tool is selected. */
       color?: string;
       width?: number;
@@ -662,7 +656,6 @@ export function CanvasEditor({
   const bumpRef = useRef<() => void>(() => {});
   const endStrokeRef = useRef<(e: PointerEvent) => void>(() => {});
   const penLiftRef = useRef(0);
-  const mouseBounceRef = useRef(0);
   const [, forceRender] = useState(0);
   const pendingTextRef = useRef<string | null>(null);
   /** After a deselect-click on empty canvas, typing creates a text box here. */
@@ -1684,13 +1677,6 @@ export function CanvasEditor({
     }
 
     if (tool === "pen" || tool === "highlighter" || tool === "smart" || (penSettingsRef.current.pen_enabled && e.pointerType === "pen" && penSettingsRef.current.pen_always_draws)) {
-      const held = dragRef.current;
-      if (held?.mode === "draw" && held.released && e.pointerType === "mouse") {
-        // The switch bounced: keep drawing the same stroke instead of saving a dot.
-        window.clearTimeout(mouseBounceRef.current);
-        held.released = false;
-        return;
-      }
       const open = dragRef.current;
       if (open?.mode === "draw" && open.pen && !open.closing) {
         window.clearTimeout(penLiftRef.current);
@@ -2429,14 +2415,6 @@ export function CanvasEditor({
     const d = dragRef.current;
     // A pen pointerup is not the end of the stroke. Windows continues it as mouse input.
     if (d?.mode === "draw" && d.pen && !d.closing && e.pointerType === "pen") return;
-    if (d?.mode === "draw" && !d.pen && !d.released && e.pointerType === "mouse" && e.pointerId === d.pointerId) {
-      d.released = true;
-      window.clearTimeout(mouseBounceRef.current);
-      mouseBounceRef.current = window.setTimeout(() => {
-        if (dragRef.current === d && d.released) onPointerUpRef.current(e as React.PointerEvent<HTMLDivElement>);
-      }, MOUSE_BOUNCE_MS);
-      return;
-    }
     if (d?.mode === "draw" && d.pointerId >= 0 && e.pointerId !== d.pointerId) return;
     if (d?.mode === "erase" && e.pointerId !== d.pointerId) return;
     dragRef.current = null;
