@@ -1632,6 +1632,8 @@ export function CanvasEditor({
       color: lastInk.current.color,
       width: lastInk.current.width,
     };
+    // Put the first dot down now instead of waiting for the pen to move.
+    paintLiveInk(dragRef.current);
     // Do not capture the pen. WebView2 freezes clientX/clientY after capture.
   };
 
