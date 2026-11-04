@@ -697,6 +697,24 @@ export function CanvasEditor({
     return { byId, member, kidsOf };
   }, [objects]);
   const selSet = useMemo(() => new Set(selected), [selected]);
+  // Only strokes near the view are mounted. A long note holds thousands, and
+  // mounting all of them made every render, layout and repaint pay for the whole note.
+  // The region moves in whole steps, so panning remounts only now and then.
+  const zq = Math.pow(2, Math.round(Math.log2(cam.z || 1) * 2) / 2);
+  const cullCell = Math.max(wrapBox.w, wrapBox.h, 400) / zq;
+  const cullX = Math.floor(-cam.x / (cam.z || 1) / cullCell);
+  const cullY = Math.floor(-cam.y / (cam.z || 1) / cullCell);
+  const nearView = useMemo(() => {
+    const x1 = (cullX - 1) * cullCell, y1 = (cullY - 1) * cullCell;
+    const x2 = (cullX + 3) * cullCell, y2 = (cullY + 3) * cullCell;
+    const ids = new Set<string>();
+    for (const o of sorted) {
+      if (o.type !== "drawing") continue;
+      const b = objectBBox(o, heightsRef.current);
+      if (b.x <= x2 && b.x + b.w >= x1 && b.y <= y2 && b.y + b.h >= y1) ids.add(o.id);
+    }
+    return ids;
+  }, [sorted, cullX, cullY, cullCell, heightsRef]);
   /** Extent of everything on the note, for the minimap. */
   const contentBox = useMemo(() => {
     if (!objects.length) return null;
@@ -3682,6 +3700,7 @@ export function CanvasEditor({
           if (o.type === "pdf") return paintPdf(o, sel);
           if (o.type === "file") return paintFile(o, sel);
           if (o.type !== "drawing") return null;
+          if (!sel && !nearView.has(o.id)) return null;
           return (
             <DrawingViewStable
               key={o.id}
@@ -3721,6 +3740,7 @@ export function CanvasEditor({
               {!g.collapsed &&
                 kids.map((o) => {
                   const sel = selSet.has(o.id);
+                  if (o.type === "drawing" && !sel && !nearView.has(o.id)) return null;
                   const showAdjust = tool === "select" ? sel && soloSelected : adjustId === o.id;
                   if (o.type === "text") {
                     const hasMatch = !!q && blocksPlainText(o.blocks).toLowerCase().includes(q);

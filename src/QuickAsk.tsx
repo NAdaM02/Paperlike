@@ -1101,7 +1101,17 @@ export function QuickAskCard({
       ref={cardRef}
       className="qa-card"
       data-qid={seed.id}
-      onPointerDownCapture={toFront}
+      onPointerDownCapture={() => {
+        toFront();
+        // Clicking into a card (to type, select or read) frees it: it stays put on the screen
+        // instead of travelling with the note while it is being used.
+        const card = cardRef.current;
+        if (!pinnedRef.current || !card) return;
+        const r = card.getBoundingClientRect();
+        unpin();
+        setPos({ x: r.left, y: r.top });
+        rememberFree();
+      }}
       style={{
         ...(pos ? { left: pos.x, top: pos.y, right: "auto" } : null),
         ...(size ? { width: size.w, height: size.h } : null),
