@@ -1604,25 +1604,49 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   outline: none;
 }
 /*
-  Open list: keep the canvas sized and still (no margin/resize → no camera bump).
-  A chrome overlay covers the strip under/beside the list; its rounded right edge
-  is the paper's left corners, with the same 14px lip as the closed view between
-  list edge (local x = sidebar-w - 14px) and paper start (local x = sidebar-w).
+  Open list: canvas stays still. Chrome overlay covers the strip under the list;
+  radial scoops at the paper edge make the PAPER's TL/BL corners convex (chrome
+  fills the concave pockets) — same polarity as the closed paper. Motion matches
+  .sidebar-slot: same translate distance, duration, and easing, toggled in the
+  same frame via .side-open / .is-collapsed.
 */
-.editor-pane.side-open .canvas-wrap:not(.locked)::before {
+.canvas-wrap:not(.locked)::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
-  width: var(--sidebar-w, 224px);
+  /* Strip + corner pocket so the scoops are not clipped. */
+  width: calc(var(--sidebar-w, 224px) + var(--r-lg));
   z-index: 40;
   pointer-events: none;
-  background: var(--bg);
-  border-top-right-radius: var(--r-lg);
-  border-bottom-right-radius: var(--r-lg);
+  background:
+    radial-gradient(
+      circle at 100% 100%,
+      transparent calc(var(--r-lg) - 0.5px),
+      var(--bg) var(--r-lg)
+    )
+      var(--sidebar-w, 224px) 0 / var(--r-lg) var(--r-lg) no-repeat,
+    radial-gradient(
+      circle at 100% 0%,
+      transparent calc(var(--r-lg) - 0.5px),
+      var(--bg) var(--r-lg)
+    )
+      var(--sidebar-w, 224px) 100% / var(--r-lg) var(--r-lg) no-repeat,
+    linear-gradient(var(--bg), var(--bg))
+      0 0 / var(--sidebar-w, 224px) 100% no-repeat;
+  transform: translateX(calc(-1 * var(--sidebar-w, 224px)));
+  opacity: 0;
+  transition:
+    transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
+    opacity 220ms ease;
+}
+.editor-pane.side-open .canvas-wrap:not(.locked)::before {
+  transform: translateX(0);
   opacity: 1;
-  transition: opacity 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+.editor-pane.side-resizing .canvas-wrap:not(.locked)::before {
+  transition: opacity 220ms ease;
 }
 .canvas-wrap.locked {
   margin: 0;
