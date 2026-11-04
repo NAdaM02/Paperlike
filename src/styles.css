@@ -5590,8 +5590,9 @@ svg.hl .hl-ink {
   align-items: center;
   color: var(--muted);
   margin-right: 2px;
-  cursor: help;
+  cursor: pointer;
 }
+.qa-pin.is-on { color: var(--accent); }
 /* While an area is being selected, cards and outlines step aside so they stay out of the capture. */
 body.analyzing .qa-card,
 body.analyzing .analyze-mark { visibility: hidden !important; }

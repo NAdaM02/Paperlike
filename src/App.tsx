@@ -522,6 +522,9 @@ export default function App() {
       if (promptingRef.current) return;
       await new Promise<void>((r) => window.setTimeout(r, 0));
       if ((window as Window & { __plCloseForDirty?: boolean }).__plCloseForDirty) return;
+      // Gone from the screen at once: checking for an update, the last sync and the install
+      // all happen with the window hidden, and then the app exits.
+      await win.hide().catch(() => {});
       let update: FetchedUpdate | null = null;
       if (updateOnExitRef.current) {
         update = pendingUpdate.current;

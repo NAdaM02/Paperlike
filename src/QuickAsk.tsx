@@ -675,27 +675,34 @@ export function QuickAskCard({
       }
       const r = at.rect;
       const z = r.w / area.w;
-      const w = Math.max(MIN_W, rel.w * z);
+      // Laid out once at the zoom it was pinned at, then scaled as a whole like a picture on the
+      // note: width, height, wrapping and text keep their proportions at every zoom.
+      const base = zBaseRef.current || z;
+      const k = z / base;
+      const lw = Math.max(MIN_W, rel.w * base);
+      const w = lw * k;
       const x = rel.side === "right" ? r.x + r.w + rel.gap * z : r.x - rel.gap * z - w;
       const y = r.y + rel.oy * z;
       card.style.display = "";
       card.style.left = `${x}px`;
       card.style.top = `${y}px`;
       card.style.right = "auto";
-      card.style.width = `${w}px`;
-      if (rel.h != null) card.style.height = `${Math.max(MIN_H, rel.h * z)}px`;
-      // The text grows and shrinks with the note too, so the answer wraps the same at any zoom.
-      const base = zBaseRef.current;
-      if (base) card.style.setProperty("--qa-z", String(Math.min(4, Math.max(0.3, z / base))));
+      card.style.width = `${lw}px`;
+      card.style.maxWidth = "none";
+      card.style.maxHeight = "none";
+      if (rel.h != null) card.style.height = `${Math.max(MIN_H, rel.h * base)}px`;
+      card.style.transformOrigin = "0 0";
+      card.style.transform = `scale(${k})`;
       const c = at.clip;
-      const h = card.offsetHeight;
+      const h = card.offsetHeight * k;
       const it = Math.max(0, c.top - y);
       const il = Math.max(0, c.left - x);
       const ib = Math.max(0, y + h - c.bottom);
       const ir = Math.max(0, x + w - c.right);
       const gone = it + ib >= h || il + ir >= w;
       card.style.visibility = gone ? "hidden" : "";
-      card.style.clipPath = !gone && (it || il || ib || ir) ? `inset(${it}px ${ir}px ${ib}px ${il}px)` : "";
+      // inset() is measured on the unscaled card.
+      card.style.clipPath = !gone && (it || il || ib || ir) ? `inset(${it / k}px ${ir / k}px ${ib / k}px ${il / k}px)` : "";
     };
     place();
     // The answer grows while it streams in; keep the cut at the view's edge.
@@ -715,9 +722,34 @@ export function QuickAskCard({
     setPinned(false);
     const card = cardRef.current;
     if (card) {
+      const c = card.getBoundingClientRect();
+      const fixedH = !!card.style.height;
       card.style.clipPath = "";
       card.style.visibility = "";
+      card.style.transform = "";
+      card.style.transformOrigin = "";
+      card.style.maxWidth = "";
+      card.style.maxHeight = "";
+      card.style.width = `${c.width}px`;
+      if (fixedH) card.style.height = `${c.height}px`;
+      card.style.left = `${c.left}px`;
+      card.style.top = `${c.top}px`;
+      setPos({ x: c.left, y: c.top });
+      freeRef.current = { pinned: false, x: c.left, y: c.top, w: c.width, h: fixedH ? c.height : null };
     }
+  };
+
+  /** Pin a free card back onto the note, where it is now and at the current zoom. */
+  const pinAgain = () => {
+    const card = cardRef.current;
+    const area = seed.area;
+    const at = area && screenOf(area);
+    if (pinnedRef.current || !card || !area || !at || !area.w) return;
+    const c = card.getBoundingClientRect();
+    zBaseRef.current = null;
+    pin({ x: c.left, y: c.top, w: c.width, h: c.height }, at.rect, at.rect.w / area.w, !!card.style.height);
+    pinnedRef.current = true;
+    setPinned(true);
   };
 
   /** Remember where a free card is, for reopening it from history. */
@@ -1004,11 +1036,18 @@ export function QuickAskCard({
     const move = (ev: PointerEvent) => {
       const x = Math.max(4, Math.min(ev.clientX - dx, window.innerWidth - askW - r.width - 4));
       const y = Math.max(4, Math.min(ev.clientY - dy, window.innerHeight - 60));
-      unpin();
+      if (pinnedRef.current) {
+        // A pinned card moves to a new spot on the note and stays pinned there.
+        card.style.left = `${x}px`;
+        card.style.top = `${y}px`;
+        const c = card.getBoundingClientRect();
+        repin({ x: c.left, y: c.top, w: c.width, h: c.height }, !!card.style.height);
+        return;
+      }
       setPos({ x, y });
     };
     const up = () => {
-      rememberFree();
+      if (!pinnedRef.current) rememberFree();
       head.removeEventListener("pointermove", move);
       head.removeEventListener("pointerup", up);
       head.removeEventListener("pointercancel", up);
@@ -1035,13 +1074,15 @@ export function QuickAskCard({
     const handle = e.currentTarget;
     handle.setPointerCapture(e.pointerId);
     card.classList.add("resizing");
+    // A pinned card is scaled with the note; its layout size is the screen size over that scale.
+    const k = pinnedRef.current && r.width ? r.width / card.offsetWidth : 1;
     // Written straight to the element while dragging: re-rendering the answer at 240 Hz stutters.
     const apply = () => {
       card.style.left = `${next.x}px`;
       card.style.top = `${next.y}px`;
       card.style.right = "auto";
-      card.style.width = `${next.w}px`;
-      card.style.height = `${next.h}px`;
+      card.style.width = `${next.w / k}px`;
+      card.style.height = `${next.h / k}px`;
     };
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - sx;
@@ -1052,7 +1093,6 @@ export function QuickAskCard({
       if (edge.includes("s")) bottom = Math.min(maxB, Math.max(top + MIN_H, r.bottom + dy));
       if (edge.startsWith("n")) top = Math.max(4, Math.min(bottom - MIN_H, r.top + dy));
       next = { x: left, y: top, w: right - left, h: bottom - top };
-      unpin();
       apply();
     };
     const up = () => {
@@ -1060,6 +1100,10 @@ export function QuickAskCard({
       handle.removeEventListener("pointerup", up);
       handle.removeEventListener("pointercancel", up);
       card.classList.remove("resizing");
+      if (pinnedRef.current) {
+        repin({ x: next.x, y: next.y, w: next.w, h: next.h }, true);
+        return;
+      }
       const sz = { w: Math.round(next.w), h: Math.round(next.h) };
       setPos({ x: next.x, y: next.y });
       setSize(sz);
@@ -1101,17 +1145,7 @@ export function QuickAskCard({
       ref={cardRef}
       className="qa-card"
       data-qid={seed.id}
-      onPointerDownCapture={() => {
-        toFront();
-        // Clicking into a card (to type, select or read) frees it: it stays put on the screen
-        // instead of travelling with the note while it is being used.
-        const card = cardRef.current;
-        if (!pinnedRef.current || !card) return;
-        const r = card.getBoundingClientRect();
-        unpin();
-        setPos({ x: r.left, y: r.top });
-        rememberFree();
-      }}
+      onPointerDownCapture={toFront}
       style={{
         ...(pos ? { left: pos.x, top: pos.y, right: "auto" } : null),
         ...(size ? { width: size.w, height: size.h } : null),
@@ -1155,10 +1189,15 @@ export function QuickAskCard({
           ))}
         </div>
         <div className="spacer" />
-        {pinned && (
-          <span className="qa-pin" title={messages.quickPinned}>
+        {!!seed.area?.w && (
+          <button
+            className={`btn icon qa-pin${pinned ? " is-on" : ""}`}
+            title={pinned ? `${messages.quickPinned} Click to unpin.` : "Pin to the note"}
+            aria-pressed={pinned}
+            onClick={() => (pinned ? unpin() : pinAgain())}
+          >
             <IcPin size={13} />
-          </span>
+          </button>
         )}
         <div className="qa-head-actions">
           <button
