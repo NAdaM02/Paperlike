@@ -1,10 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, AssistantEvent } from "./api";
 import { ASK_DEFAULT_W, clampAskWidth } from "./AskPane";
 import { IcBack, IcClose, IcReload, IcWide } from "./icons";
 
 const HOST = "calendar";
+
+let available = true;
+const subs = new Set<() => void>();
+/** Mirrors the Google Calendar setting so the toolbar can hide its button. */
+export function setCalendarAvailable(on: boolean) {
+  if (on === available) return;
+  available = on;
+  subs.forEach((f) => f());
+}
+export function useCalendarAvailable() {
+  return useSyncExternalStore(
+    (f) => {
+      subs.add(f);
+      return () => subs.delete(f);
+    },
+    () => available,
+  );
+}
 
 /** Opens or closes the Google Calendar pane from anywhere in the app. */
 export function toggleCalendar() {

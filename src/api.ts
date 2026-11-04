@@ -49,6 +49,8 @@ export type Settings = {
   study_preset?: string | null;
   study_root?: string | null;
   moodle_enabled?: boolean;
+  /** Calendar button in the top-right tools. Missing means on. */
+  calendar_enabled?: boolean;
   /** Sync github. Off by default. */
   git_sync?: boolean;
   git_sync_dir?: string | null;

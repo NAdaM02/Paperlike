@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { api, HomeTile, RecoveryItem, SearchHit, Settings } from "./api";
 import { ASK_DEFAULT_W, AskHost, AskNote, AskPane, clampAskWidth } from "./AskPane";
-import { CalendarPane } from "./CalendarPane";
+import { CalendarPane, setCalendarAvailable } from "./CalendarPane";
 import { AnalyzeMark, AnalyzeOverlay, AnalyzeRect, AnalyzeResult } from "./Analyze";
 import { NoteArea, noteAreaAt } from "./canvasAnchor";
 import { Calculator } from "./Calculator";
@@ -202,6 +202,11 @@ export default function App() {
   useEffect(() => {
     if (ask) setCalOpen(false);
   }, [ask]);
+  const calendarOn = settings?.calendar_enabled !== false;
+  useEffect(() => {
+    setCalendarAvailable(calendarOn);
+    if (!calendarOn) setCalOpen(false);
+  }, [calendarOn]);
   const [askWidth, setAskWidth] = useState(() =>
     clampAskWidth(Number(localStorage.getItem("pl.ask.width")) || ASK_DEFAULT_W),
   );

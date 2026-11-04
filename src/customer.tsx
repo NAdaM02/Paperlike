@@ -224,6 +224,18 @@ export function SettingsDialog({
                   <label className="switch">
                     <input
                       type="checkbox"
+                      checked={settings.calendar_enabled !== false}
+                      onChange={(e) => void save({ ...settings, calendar_enabled: e.target.checked })}
+                    />
+                    <span className="track" />
+                    <span>
+                      {messages.calendarSwitch}
+                      <span className="settings-hint">{messages.calendarHint}</span>
+                    </span>
+                  </label>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
                       checked={!!settings.autostart}
                       onChange={(e) => void save({ ...settings, autostart: e.target.checked })}
                     />

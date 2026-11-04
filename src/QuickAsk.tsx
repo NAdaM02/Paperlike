@@ -5,7 +5,7 @@ import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { noteText, summaryHtml } from "./brief";
 import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
 import { ChecklistPanel } from "./Checklist";
-import { toggleCalendar } from "./CalendarPane";
+import { toggleCalendar, useCalendarAvailable } from "./CalendarPane";
 import { messages } from "./copy/messages";
 import { HostLogo, IcCalc, IcCalendar, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
@@ -144,6 +144,7 @@ export function QuickAskField({
   const [host, setHost] = useState<ChatHost>(defaultHost);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [listOpen, setListOpen] = useState(false);
+  const calendarOn = useCalendarAvailable();
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
@@ -253,15 +254,17 @@ export function QuickAskField({
         >
           <IcCheck size={15} />
         </button>
-        <button
-          type="button"
-          className="btn icon qa-tool"
-          title="Google Calendar"
-          aria-label="Google Calendar"
-          onClick={toggleCalendar}
-        >
-          <IcCalendar size={15} />
-        </button>
+        {calendarOn && (
+          <button
+            type="button"
+            className="btn icon qa-tool"
+            title="Google Calendar"
+            aria-label="Google Calendar"
+            onClick={toggleCalendar}
+          >
+            <IcCalendar size={15} />
+          </button>
+        )}
         {onAnalyze && (
           <button
             type="button"

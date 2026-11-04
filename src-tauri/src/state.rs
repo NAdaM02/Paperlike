@@ -98,6 +98,9 @@ pub struct Settings {
     /// Ignore touch pointer-downs while a pen is down, hovering, or was just used.
     #[serde(default = "default_true")]
     pub palm_rejection: bool,
+    /// Calendar button in the top-right tools. Missing means on.
+    #[serde(default = "default_true")]
+    pub calendar_enabled: bool,
     /// Hide the note title once the canvas is scrolled below the top. Missing means on.
     #[serde(default = "default_true")]
     pub title_auto_hide: bool,
@@ -151,6 +154,7 @@ impl Default for Settings {
             pen_always_draws: true,
             pen_pressure: true,
             palm_rejection: true,
+            calendar_enabled: true,
             title_auto_hide: true,
             title_collapsed: false,
             sidebar_auto_hide: false,
