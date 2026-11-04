@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { messages } from "./copy/messages";
 import { IcClose } from "./icons";
@@ -46,16 +46,37 @@ const Grip = () => (
   </svg>
 );
 
+/** A quick scribble across a row, drawn right to left with random ups and downs. */
+function scribblePath(w: number, h: number): string {
+  const mid = h / 2;
+  const amp = Math.max(4, h * 0.3);
+  let x = w - 6;
+  let up = Math.random() < 0.5;
+  const pts = [`M${x.toFixed(1)} ${(mid + (Math.random() - 0.5) * amp).toFixed(1)}`];
+  while (x > 30) {
+    const step = 5 + Math.random() * 7;
+    const nx = x - step;
+    const y = mid + (up ? -1 : 1) * amp * (0.55 + Math.random() * 0.45) + (Math.random() - 0.5) * 3;
+    const cx = x - step / 2 + (Math.random() - 0.5) * 3;
+    pts.push(`Q${cx.toFixed(1)} ${(y + (up ? -2 : 2)).toFixed(1)} ${nx.toFixed(1)} ${y.toFixed(1)}`);
+    x = nx;
+    up = !up;
+  }
+  return pts.join(" ");
+}
+
+const ERASE_MS = 460;
+
 /** App-wide checklist under the top-right tools. Saved to %APPDATA%\Paperlike\checklist.json. */
 export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   const [items, setItems] = useState<Item[] | null>(null);
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
+  const [erasing, setErasing] = useState<Record<string, { d: string; w: number; h: number }>>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLInputElement>(null);
   const rowEls = useRef(new Map<string, HTMLDivElement>());
-  const tops = useRef(new Map<string, number>());
   const latest = useRef<Item[] | null>(null);
   const saveTimer = useRef(0);
 
@@ -92,30 +113,7 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
     if (saveTimer.current) flushRef.current();
   }, []);
 
-  /* Rows glide to their new place when the order changes. */
-  const remember = () => {
-    tops.current.clear();
-    rowEls.current.forEach((el, id) => tops.current.set(id, el.getBoundingClientRect().top));
-  };
-  useLayoutEffect(() => {
-    if (!tops.current.size) return;
-    rowEls.current.forEach((el, id) => {
-      const before = tops.current.get(id);
-      if (before === undefined || id === dragId) return;
-      const dy = before - el.getBoundingClientRect().top;
-      if (!dy) return;
-      el.style.transition = "none";
-      el.style.transform = `translateY(${dy}px)`;
-      requestAnimationFrame(() => {
-        el.style.transition = "";
-        el.style.transform = "";
-      });
-    });
-    tops.current.clear();
-  }, [items, dragId]);
-
-  const change = (next: Item[], animate = false) => {
-    if (animate) remember();
+  const change = (next: Item[]) => {
     setItems(next);
     latest.current = next;
     window.clearTimeout(saveTimer.current);
@@ -147,58 +145,83 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
     setDraft("");
   };
   const update = (id: string, patch: Partial<Item>) => change(current().map((x) => (x.id === id ? { ...x, ...patch } : x)));
-  const remove = (id: string) => change(current().filter((x) => x.id !== id), true);
+  const drop = (id: string) => change(current().filter((x) => x.id !== id));
+  /* Deleting scribbles the row out, then folds it away. */
+  const remove = (id: string) => {
+    const el = rowEls.current.get(id);
+    if (!el || erasing[id] || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return drop(id);
+    const { width: w, height: h } = el.getBoundingClientRect();
+    setErasing((m) => ({ ...m, [id]: { d: scribblePath(w, h), w, h } }));
+    window.setTimeout(() => {
+      el.style.height = `${h}px`;
+      el.classList.add("folding");
+      requestAnimationFrame(() => (el.style.height = "0px"));
+    }, ERASE_MS);
+    window.setTimeout(() => {
+      drop(id);
+      setErasing((m) => {
+        const { [id]: _gone, ...rest } = m;
+        return rest;
+      });
+    }, ERASE_MS + 200);
+  };
   const shift = (id: string, by: number) => {
     const list = current();
     const i = list.findIndex((x) => x.id === id);
-    change(moveItem(list, i, i + by), true);
+    change(moveItem(list, i, i + by));
   };
 
-  /* Drag the grip to reorder; the list follows the pointer live. */
+  /* Drag the grip to reorder: the row follows the pointer, the others make room, the order is saved on drop. */
   const startDrag = (id: string, e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    const list = current();
+    const from = list.findIndex((x) => x.id === id);
+    const dragged = rowEls.current.get(id);
+    if (from < 0 || !dragged) return;
     const handle = e.currentTarget;
     handle.setPointerCapture(e.pointerId);
-    setDragId(id);
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const slots = list.map((x) => {
+      const r = rowEls.current.get(x.id)?.getBoundingClientRect();
+      return { id: x.id, mid: r ? r.top + r.height / 2 : 0 };
+    });
+    const start = dragged.getBoundingClientRect();
+    const h = start.height;
     const startY = e.clientY;
-    let base = rowEls.current.get(id)?.getBoundingClientRect().top ?? 0;
+    let to = from;
+    setDragId(id);
     const move = (ev: PointerEvent) => {
-      const el = rowEls.current.get(id);
-      if (!el) return;
-      const list = current();
-      const from = list.findIndex((x) => x.id === id);
-      let to = from;
-      list.forEach((x, i) => {
-        if (x.id === id) return;
-        const r = rowEls.current.get(x.id)?.getBoundingClientRect();
-        if (!r) return;
-        const mid = r.top + r.height / 2;
-        if (i < from && ev.clientY < mid) to = Math.min(to, i);
-        if (i > from && ev.clientY > mid) to = Math.max(to, i);
+      const dy = ev.clientY - startY;
+      dragged.style.transform = `translateY(${dy}px)`;
+      const center = start.top + h / 2 + dy;
+      to = 0;
+      slots.forEach((sl, i) => {
+        if (i !== from && sl.mid < center) to++;
       });
-      if (to !== from) {
-        change(moveItem(list, from, to), true);
-      }
-      // keep the lifted row under the pointer after the list moves
-      requestAnimationFrame(() => {
-        const node = rowEls.current.get(id);
-        if (!node) return;
-        node.style.transform = "";
-        const natural = node.getBoundingClientRect().top;
-        node.style.transform = `translateY(${base + (ev.clientY - startY) - natural}px)`;
+      slots.forEach((sl, i) => {
+        if (i === from) return;
+        const el = rowEls.current.get(sl.id);
+        if (!el) return;
+        const off = i > from && i <= to ? -h : i < from && i >= to ? h : 0;
+        el.style.transform = off ? `translateY(${off}px)` : "";
       });
     };
     const up = () => {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", up);
       handle.removeEventListener("pointercancel", up);
-      const node = rowEls.current.get(id);
-      if (node) node.style.transform = "";
+      rowEls.current.forEach((el) => {
+        el.style.transition = "none";
+        el.style.transform = "";
+      });
+      if (to !== from) change(moveItem(current(), from, to));
       setDragId(null);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => rowEls.current.forEach((el) => (el.style.transition = ""))),
+      );
       flushRef.current();
     };
-    base = rowEls.current.get(id)?.getBoundingClientRect().top ?? base;
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", up);
     handle.addEventListener("pointercancel", up);
@@ -215,6 +238,14 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
           <feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="4" seed="4" result="t" />
           <feDisplacementMap in="SourceGraphic" in2="t" scale="5" xChannelSelector="R" yChannelSelector="G" />
         </filter>
+        <filter id="cl-ink" x="-2%" y="-10%" width="104%" height="120%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="11" result="g" />
+          <feDisplacementMap in="SourceGraphic" in2="g" scale="1.1" xChannelSelector="R" yChannelSelector="G" result="d" />
+          <feComponentTransfer in="g" result="speck">
+            <feFuncA type="discrete" tableValues="1 1 1 0.55 1 1 1 1" />
+          </feComponentTransfer>
+          <feComposite in="d" in2="speck" operator="in" />
+        </filter>
       </svg>
       <div className="checklist-head">
         <div className="checklist-titles">
@@ -225,7 +256,7 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             className="checklist-clear"
-            onClick={() => change(current().filter((i) => !(i.done && !i.note)), true)}
+            onClick={() => change(current().filter((i) => !(i.done && !i.note)))}
           >
             {messages.checklistClearDone(doneCount)}
           </button>
@@ -243,8 +274,13 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
               if (el) rowEls.current.set(it.id, el);
               else rowEls.current.delete(it.id);
             }}
-            className={`checklist-row${it.note ? " note" : ""}${it.done ? " done" : ""}${dragId === it.id ? " lifted" : ""}`}
+            className={`checklist-row${it.note ? " note" : ""}${it.done ? " done" : ""}${dragId === it.id ? " lifted" : ""}${erasing[it.id] ? " erasing" : ""}`}
           >
+            {erasing[it.id] && (
+              <svg className="checklist-erase" viewBox={`0 0 ${erasing[it.id].w} ${erasing[it.id].h}`} preserveAspectRatio="none" aria-hidden>
+                <path d={erasing[it.id].d} pathLength={1} />
+              </svg>
+            )}
             <button
               type="button"
               className="checklist-grip"
@@ -287,7 +323,7 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
                 }
               }}
               onBlur={(e) => {
-                if (!e.currentTarget.value.trim()) remove(it.id);
+                if (!e.currentTarget.value.trim()) drop(it.id);
               }}
             />
             <button type="button" className="checklist-del" title="Delete" aria-label="Delete" onClick={() => remove(it.id)}>
