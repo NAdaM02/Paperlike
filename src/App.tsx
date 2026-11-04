@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { api, HomeTile, RecoveryItem, SearchHit, Settings } from "./api";
 import { ASK_DEFAULT_W, AskHost, AskNote, AskPane, clampAskWidth } from "./AskPane";
-import { CalendarPane, setCalendarAvailable } from "./CalendarPane";
+import { CalendarPane, calendarStartsFloating, setCalendarAvailable } from "./CalendarPane";
 import { AnalyzeMark, AnalyzeOverlay, AnalyzeRect, AnalyzeResult } from "./Analyze";
 import { NoteArea, noteAreaAt } from "./canvasAnchor";
 import { Calculator } from "./Calculator";
@@ -190,6 +190,7 @@ export default function App() {
     url?: string | null;
   } | null>(null);
   const [calOpen, setCalOpen] = useState(false);
+  const [calFloating, setCalFloating] = useState(() => calendarStartsFloating());
   /* Calendar and Ask share the right side; opening one closes the other. */
   useEffect(() => {
     const onToggle = () =>
@@ -781,7 +782,8 @@ export default function App() {
     setAsk({ id: Date.now(), host, briefPaths: notePaths, question, send: true });
   };
 
-  const sidePane = !!ask || calOpen;
+  // Floating calendar is an overlay; only the docked pane reserves the right side.
+  const sidePane = !!ask || (calOpen && !calFloating);
 
   return (
     <>
@@ -1000,6 +1002,8 @@ export default function App() {
       {calOpen && !ask && (
         <CalendarPane
           width={askWidth}
+          floating={calFloating}
+          onFloating={setCalFloating}
           onWidth={(w, done) => {
             setAskWidth(w);
             if (done) localStorage.setItem("pl.ask.width", String(w));

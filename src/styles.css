@@ -3561,6 +3561,38 @@ svg.hl .hl-ink {
 }
 .app-frame.with-ask { margin-right: var(--ask-w); }
 .app-frame.with-ask .brief-desk { right: var(--ask-w); }
+
+.calendar-pane.is-floating {
+  top: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 85;
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--ink) 22%, transparent);
+  overflow: hidden;
+  background: var(--surface);
+}
+.calendar-pane.is-floating .ask-head { cursor: grab; }
+.calendar-pane.is-floating .ask-head:active { cursor: grabbing; }
+.cal-float-grip {
+  position: absolute;
+  z-index: 2;
+  /* Thin hit targets around the floating frame. */
+}
+.cal-float-grip.n, .cal-float-grip.s { left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.cal-float-grip.e, .cal-float-grip.w { top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.cal-float-grip.n { top: 0; }
+.cal-float-grip.s { bottom: 0; }
+.cal-float-grip.e { right: 0; }
+.cal-float-grip.w { left: 0; }
+.cal-float-grip.ne, .cal-float-grip.nw, .cal-float-grip.se, .cal-float-grip.sw {
+  width: 12px; height: 12px;
+}
+.cal-float-grip.ne { top: 0; right: 0; cursor: nesw-resize; }
+.cal-float-grip.nw { top: 0; left: 0; cursor: nwse-resize; }
+.cal-float-grip.se { bottom: 0; right: 0; cursor: nwse-resize; }
+.cal-float-grip.sw { bottom: 0; left: 0; cursor: nesw-resize; }
 .ask-pane {
   position: fixed;
   top: 0;
