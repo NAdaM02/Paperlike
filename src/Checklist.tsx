@@ -210,6 +210,12 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className={`checklist${dragId ? " is-dragging" : ""}`} ref={panelRef} role="dialog" aria-label={messages.checklistTitle}>
+      <svg className="checklist-mottle" aria-hidden>
+        <filter id="cl-rough" x="-4%" y="-4%" width="108%" height="108%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="4" seed="4" result="t" />
+          <feDisplacementMap in="SourceGraphic" in2="t" scale="5" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </svg>
       <div className="checklist-head">
         <div className="checklist-titles">
           <span className="checklist-title">{messages.checklistTitle}</span>
@@ -297,9 +303,18 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
           add(false);
         }}
       >
-        <span className="checklist-plus" aria-hidden>
+        <button
+          type="button"
+          className="checklist-plus"
+          title={messages.checklistAdd}
+          aria-label={messages.checklistAdd}
+          onClick={() => {
+            if (draft.trim()) add(false);
+            addRef.current?.focus();
+          }}
+        >
           +
-        </span>
+        </button>
         <input
           ref={addRef}
           value={draft}

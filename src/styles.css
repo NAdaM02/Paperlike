@@ -5328,23 +5328,33 @@ svg.hl .hl-ink {
   --ink: #3b342a;
   --ink-2: #6a6153;
   --ink-3: #9b907f;
-  background-color: var(--paper);
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.42 0 0 0 0 0.35 0 0 0 0 0.24 0 0 0 0.11 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.012 0.09' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.42 0 0 0 0 0.3 0 0 0 0.16 -0.04'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>"),
-    radial-gradient(120% 90% at 50% 40%, transparent 60%, rgba(150, 120, 80, 0.08));
-  color: var(--ink);
-  border: 1px solid #ddd0b8;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(60, 45, 25, 0.12), 0 6px 16px rgba(60, 45, 25, 0.14);
+  isolation: isolate;
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.005em;
   transform-origin: top right;
   animation: checklist-in 0.12s ease-out;
-  overflow: hidden;
+}
+/* the sheet itself, with torn edges from the #cl-rough filter */
+.checklist::before {
+  content: "";
+  position: absolute;
+  inset: 6px 0 0;
+  z-index: -1;
+  background-color: var(--paper);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.42 0 0 0 0 0.35 0 0 0 0 0.24 0 0 0 0.2 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.012 0.09' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.42 0 0 0 0 0.3 0 0 0 0.34 -0.06'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>"),
+    radial-gradient(120% 90% at 50% 40%, transparent 60%, rgba(150, 120, 80, 0.14));
+  border-radius: 2px;
+  filter: url(#cl-rough) drop-shadow(0 1px 1px rgba(60, 45, 25, 0.18)) drop-shadow(0 6px 12px rgba(60, 45, 25, 0.16));
+}
+.checklist-mottle {
+  position: absolute;
+  width: 0;
+  height: 0;
 }
 @keyframes checklist-in {
   from { opacity: 0; transform: translateY(-3px); }
 }
-.checklist-head { display: flex; align-items: center; gap: 4px; padding: 11px 10px 10px 26px; background: #75726d linear-gradient(rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.04)); --ink: #f5f2ec; --ink-2: rgba(245, 242, 236, 0.82); --ink-3: rgba(245, 242, 236, 0.62); color: var(--ink); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12); }
+.checklist-head { display: flex; align-items: center; gap: 4px; padding: 11px 10px 10px 26px; background: #474542 linear-gradient(rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.06)); border-radius: 4px 4px 0 0; position: relative; --ink: #f5f2ec; --ink-2: rgba(245, 242, 236, 0.82); --ink-3: rgba(245, 242, 236, 0.62); color: var(--ink); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12); }
 .checklist-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .checklist-title {
   font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
@@ -5535,6 +5545,12 @@ svg.hl .hl-ink {
 }
 .checklist-add input::placeholder { color: var(--ink-3); }
 .checklist-add input:focus::placeholder { color: var(--ink-3); }
+.checklist-add input,
+.checklist-add input:focus,
+.checklist-add input:focus-visible { outline: none !important; box-shadow: none !important; border: 0 !important; }
+.checklist-plus { cursor: pointer; padding: 0; background: transparent; font-family: inherit; transition: color 0.15s, border-color 0.15s; }
+.checklist-plus:hover { color: var(--ink); border-color: var(--ink-2); }
+.checklist-plus:focus-visible { outline: none; border-style: solid; }
 .checklist-hint { padding: 0 14px 10px 56px; font-size: 11.5px; color: var(--ink-3); }
 .checklist-hint.warn { color: #a5402f; }
 @media (prefers-reduced-motion: reduce) {
