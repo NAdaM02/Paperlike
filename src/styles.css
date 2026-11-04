@@ -2081,12 +2081,30 @@ math-field::part(placeholder) { color: var(--ink-3); }
 }
 .handle.se { right: -6px; bottom: -6px; cursor: nwse-resize; }
 .ctrl-pt {
-  fill: var(--surface);
-  stroke: var(--accent);
-  stroke-width: 1.5;
+  fill: color-mix(in srgb, var(--surface) 70%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 45%, transparent);
+  stroke-width: 1;
   pointer-events: none;
+  opacity: 0.55;
+  transition: opacity 120ms ease, stroke 120ms ease, fill 120ms ease;
 }
 .ctrl-handle { pointer-events: all; }
+.ctrl-handle:hover .ctrl-pt,
+.ctrl-handle:active .ctrl-pt,
+.draw-obj.adjusting .shape-hit:hover ~ svg .ctrl-pt,
+.draw-obj.adjusting:has(.shape-hit:hover) .ctrl-pt {
+  opacity: 1;
+  stroke: var(--accent);
+  fill: var(--surface);
+  stroke-width: 1.5;
+}
+.ctrl-handle:hover .ctrl-pt,
+.ctrl-handle:active .ctrl-pt {
+  opacity: 1;
+  stroke: var(--accent);
+  fill: var(--surface);
+  stroke-width: 1.5;
+}
 .shape-frame {
   fill: none;
   stroke: var(--accent);
@@ -2103,7 +2121,21 @@ math-field::part(placeholder) { color: var(--ink-3); }
 }
 .draw-obj.adjusting .shape-drag-bar,
 .draw-obj.selected .shape-drag-bar { opacity: 1; }
-.ctrl-line { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.5; }
+.ctrl-line {
+  stroke: color-mix(in srgb, var(--accent) 55%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.38;
+  transition: opacity 120ms ease, stroke 120ms ease;
+}
+.draw-obj.adjusting:hover .ctrl-line,
+.ctrl-handle:hover ~ .ctrl-line,
+.draw-obj.adjusting:has(.ctrl-handle:hover) .ctrl-line,
+.draw-obj.adjusting:has(.shape-hit:hover) .ctrl-line,
+.draw-obj.adjusting:has(.shape-hit:active) .ctrl-line {
+  opacity: 0.85;
+  stroke: var(--accent);
+}
 
 /* Multiply on the element that owns the stacking order. An SVG blend stays inside the
    SVG, so a solid fill was covering the page. The ink strength is also the opacity,

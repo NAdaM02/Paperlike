@@ -2654,7 +2654,8 @@ export function CanvasEditor({
         snapshot("shape");
         const obj: DrawingObject = { type: "drawing", id, x, y, z: maxZ() + 1, item };
         updateObjects((objs) => [...(d.groupId ? withChild(objs, id, d.groupId) : objs), obj]);
-        setAdjustId(id);
+        // Stay unselected after drawing; Select tool (or Last) is how the user restyles it.
+        setAdjustId(null);
         onLiveDrawRef.current?.(id);
       }
       forceRender((n) => n + 1);
@@ -2698,9 +2699,8 @@ export function CanvasEditor({
           },
         };
         updateObjects((objs) => [...(d.groupId ? withChild(objs, id, d.groupId) : objs), obj]);
-        // A free arrow is ink. Straight arrows and the other shapes keep the resize handle.
-        if (d.free) setAdjustId(null);
-        else setAdjustId(id);
+        // Stay unselected after drawing — no selection rectangle or edit chrome.
+        setAdjustId(null);
         onLiveDrawRef.current?.(id);
       }
       forceRender((n) => n + 1);
@@ -4901,7 +4901,7 @@ function CtrlHandle({
   return (
     <g className="ctrl-handle" style={{ cursor }}>
       <circle cx={cx} cy={cy} r={12} fill="transparent" onPointerDown={onDown} />
-      <circle cx={cx} cy={cy} r={6} className="ctrl-pt" />
+      <circle cx={cx} cy={cy} r={3.5} className="ctrl-pt" />
     </g>
   );
 }
@@ -5002,7 +5002,7 @@ function DrawingView({
   const vh = Math.max(12, b.maxY - b.minY + pad * 2);
   const inkW = Math.max(8, b.maxX - b.minX);
   const inkH = Math.max(8, b.maxY - b.minY);
-  const showChrome = selected || showHandles;
+  const showChrome = selected;
   return (
     <div
       data-oid={obj.id}
@@ -5015,7 +5015,7 @@ function DrawingView({
       }}
     >
       <svg className={hl ? "hl" : ""} width={vw} height={vh} style={{ display: "block", overflow: "visible" }}>
-        <g transform={`translate(${-vx} ${-vy})`} onPointerDown={onPointerDown} style={{ cursor: showChrome ? "move" : undefined }}>
+        <g transform={`translate(${-vx} ${-vy})`} onPointerDown={onPointerDown} style={{ cursor: showChrome || showHandles ? "move" : undefined }}>
       {it.kind === "stroke" && (
         <StrokeInk pts={it.points} parts={it.parts} width={it.width} color={it.color} hl={hl} opacity={it.kind === "stroke" ? it.opacity : undefined} pressure={it.pressure} hit />
       )}
@@ -5076,20 +5076,20 @@ function DrawingView({
               onDragBar(e);
             }}
           />
-          {showHandles && it.kind === "arrow" && !it.shaft?.length &&
-            (["tail", "head", "c1", "c2"] as const).map((k) => (
-              <div
-                key={k}
-                className="shape-hit"
-                style={{ left: it[k][0] - vx - 9, top: it[k][1] - vy - 9, cursor: "grab" }}
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  onCtrlPt(e, obj.id, k);
-                }}
-              />
-            ))}
         </>
       )}
+      {showHandles && it.kind === "arrow" && !it.shaft?.length &&
+        (["tail", "head", "c1", "c2"] as const).map((k) => (
+          <div
+            key={k}
+            className="shape-hit"
+            style={{ left: it[k][0] - vx - 9, top: it[k][1] - vy - 9, cursor: "grab" }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onCtrlPt(e, obj.id, k);
+            }}
+          />
+        ))}
     </div>
   );
 }
