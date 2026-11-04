@@ -64,7 +64,8 @@ import { arrowHeadKind, arrowHeadPoints, scaleDrawing, shaftIsStraight, smoothFr
 const PEN_PALM_MS = 500;
 
 /** A worn mouse switch reports several press/release pairs within a few ms of one
- *  press, and can drop out for ~70 ms mid-drag. A press this soon after the release\n *  continues the same stroke; a deliberate re-click takes longer. */
+ *  press, and can drop out for ~70 ms mid-drag. A press this soon after the release
+ *  continues the same stroke; a deliberate re-click takes longer. */
 const MOUSE_BOUNCE_MS = 90;
 
 type PenSettings = {
