@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
+import { NoteArea, noteAreaAt, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { CHAT_NAME, ChatHost, defaultHost, setDefaultHost } from "./chat";
 import { messages } from "./copy/messages";
 import { HostLogo, IcAsk, IcClose, IcExplain, IcSolve, IcVerify } from "./icons";
@@ -159,11 +159,15 @@ export function AnalyzeOverlay({
   onCapture: (result: AnalyzeResult) => void;
 }) {
   const [rect, setRect] = useState<Rect | null>(null);
+  /** Selection in note units; kept so zoom/pan move the frame with the ink. */
+  const areaRef = useRef<NoteArea | null>(null);
   const [drag, setDrag] = useState<"new" | "move" | "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se" | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const origin = useRef<{ x: number; y: number; rect: Rect } | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -275,6 +279,27 @@ export function AnalyzeOverlay({
     return { x, y, w, h };
   };
 
+  /** Screen rect plus a note-space anchor when the selection sits on a canvas. */
+  const putRect = (r: Rect, clamp = true) => {
+    const next = clamp ? clampRect(r) : r;
+    setRect(next);
+    areaRef.current = next.w >= MIN && next.h >= MIN ? noteAreaAt(next) : null;
+  };
+
+  // While idle, keep the frame glued to the note (same idea as pinned QuickAsk cards).
+  useLayoutEffect(() => {
+    const sync = () => {
+      if (dragRef.current) return;
+      const a = areaRef.current;
+      if (!a) return;
+      const at = screenOf(a);
+      if (!at) return;
+      setRect(at.rect);
+    };
+    sync();
+    return subscribeCanvas(sync);
+  }, []);
+
   const onPointerDown = (e: React.PointerEvent) => {
     if ((e.button === 1 || e.button === 2) && !busy && !drag) {
       e.preventDefault();
@@ -289,6 +314,7 @@ export function AnalyzeOverlay({
     const start = { x: e.clientX, y: e.clientY };
     origin.current = { x: start.x, y: start.y, rect: { x: start.x, y: start.y, w: 0, h: 0 } };
     setDrag("new");
+    areaRef.current = null;
     setRect({ x: start.x, y: start.y, w: 0, h: 0 });
     setErr("");
   };
@@ -297,13 +323,13 @@ export function AnalyzeOverlay({
     if (!drag || !origin.current) return;
     const o = origin.current;
     if (drag === "new") {
-      setRect(clampRect({ x: o.x, y: o.y, w: e.clientX - o.x, h: e.clientY - o.y }));
+      putRect({ x: o.x, y: o.y, w: e.clientX - o.x, h: e.clientY - o.y });
       return;
     }
     if (drag === "move") {
       const dx = e.clientX - o.x;
       const dy = e.clientY - o.y;
-      setRect(clampRect({ ...o.rect, x: o.rect.x + dx, y: o.rect.y + dy }));
+      putRect({ ...o.rect, x: o.rect.x + dx, y: o.rect.y + dy });
       return;
     }
     let { x, y, w, h } = o.rect;
@@ -319,7 +345,7 @@ export function AnalyzeOverlay({
       y = o.rect.y + dy;
       h = o.rect.h - dy;
     }
-    setRect(clampRect({ x, y, w, h }));
+    putRect({ x, y, w, h });
   };
 
   const onPointerUp = () => {
