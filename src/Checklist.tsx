@@ -69,7 +69,7 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
-  const [erasing, setErasing] = useState<Record<string, { d: string; w: number; h: number }>>({});
+  const [erasing, setErasing] = useState<Record<string, { d: string; w: number; h: number; left: number; top: number }>>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLInputElement>(null);
   const rowEls = useRef(new Map<string, HTMLDivElement>());
@@ -142,14 +142,21 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   };
   const update = (id: string, patch: Partial<Item>) => change(current().map((x) => (x.id === id ? { ...x, ...patch } : x)));
   const drop = (id: string) => change(current().filter((x) => x.id !== id));
-  /* Deleting scribbles the row out, then folds it away. */
+  /* Deleting erases only the text (zig-zag mask), then folds the row away. */
   const remove = (id: string) => {
     const el = rowEls.current.get(id);
     if (!el || erasing[id] || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return drop(id);
-    const { width: w, height: h } = el.getBoundingClientRect();
-    setErasing((m) => ({ ...m, [id]: { d: scribblePath(w, h), w, h } }));
+    const row = el.getBoundingClientRect();
+    const ta = el.querySelector("textarea");
+    const box = (ta ?? el).getBoundingClientRect();
+    const w = Math.max(1, box.width);
+    const h = Math.max(1, box.height);
+    setErasing((m) => ({
+      ...m,
+      [id]: { d: scribblePath(w, h), w, h, left: box.left - row.left, top: box.top - row.top },
+    }));
     window.setTimeout(() => {
-      el.style.height = `${h}px`;
+      el.style.height = `${row.height}px`;
       el.classList.add("folding");
       requestAnimationFrame(() => (el.style.height = "0px"));
     }, ERASE_MS);
@@ -290,8 +297,25 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
             className={`checklist-row${it.note ? " note" : ""}${it.done ? " done" : ""}${dragId === it.id ? " lifted" : ""}${erasing[it.id] ? " erasing" : ""}`}
           >
             {erasing[it.id] && (
-              <svg className="checklist-erase" viewBox={`0 0 ${erasing[it.id].w} ${erasing[it.id].h}`} preserveAspectRatio="none" aria-hidden>
-                <path d={erasing[it.id].d} pathLength={1} style={{ strokeWidth: Math.max(10, erasing[it.id].h * 0.55) }} />
+              <svg
+                className="checklist-erase"
+                viewBox={`0 0 ${erasing[it.id].w} ${erasing[it.id].h}`}
+                width={erasing[it.id].w}
+                height={erasing[it.id].h}
+                style={{ left: erasing[it.id].left, top: erasing[it.id].top }}
+                aria-hidden
+              >
+                <defs>
+                  <mask id={`cl-erase-${it.id}`} maskUnits="userSpaceOnUse" x={0} y={0} width={erasing[it.id].w} height={erasing[it.id].h}>
+                    <rect width={erasing[it.id].w} height={erasing[it.id].h} fill="#fff" />
+                    <path
+                      className="checklist-erase-stroke"
+                      d={erasing[it.id].d}
+                      pathLength={1}
+                      style={{ strokeWidth: Math.max(12, erasing[it.id].h * 0.7) }}
+                    />
+                  </mask>
+                </defs>
               </svg>
             )}
             <button
@@ -321,6 +345,11 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
               rows={1}
               value={it.text}
               spellCheck={false}
+              style={
+                erasing[it.id]
+                  ? { maskImage: `url(#cl-erase-${it.id})`, WebkitMaskImage: `url(#cl-erase-${it.id})` }
+                  : undefined
+              }
               onChange={(e) => update(it.id, { text: e.target.value })}
               onKeyDown={(e) => {
                 if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {

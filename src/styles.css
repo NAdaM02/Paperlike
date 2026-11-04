@@ -5573,14 +5573,19 @@ svg.hl .hl-ink {
 .checklist-plus { cursor: pointer; padding: 0; background: transparent; font-family: inherit; transition: color 0.15s, border-color 0.15s; }
 .checklist-plus:hover { color: var(--ink); }
 .checklist-plus:focus-visible { outline: none; color: var(--ink); background: rgba(120, 98, 66, 0.1); }
-/* delete: a quick scribble right to left, the row wipes away under it, then folds */
-.checklist-erase { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
-.checklist-erase path {
+/* delete: zig-zag mask erases only the text (paper shows through), then the row folds */
+.checklist-erase {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  /* Defs-only SVG: nothing painted; the textarea uses its mask by id. */
+}
+.checklist-erase-stroke {
   fill: none;
-  stroke: var(--paper);
+  stroke: #000;
   stroke-linecap: round;
   stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   filter: url(#cl-rough);
@@ -5589,6 +5594,11 @@ svg.hl .hl-ink {
 @keyframes cl-erase {
   to { stroke-dashoffset: 0; }
 }
+.checklist-row.erasing textarea {
+  /* Mask hides ink so .checklist::before paper shows through. */
+  transition: none;
+}
+.checklist-row.erasing .checklist-del { opacity: 0; }
 .checklist-row.erasing::after { opacity: 1; }
 .checklist-row.folding { overflow: hidden; padding-top: 0; padding-bottom: 0; opacity: 0; transition: height 0.18s ease, padding 0.18s ease, opacity 0.18s; }
 .checklist-hint { padding: 0 14px 10px 56px; font-size: 11.5px; color: var(--ink-3); }
