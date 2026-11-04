@@ -62,6 +62,29 @@ function scribblePath(w: number, h: number): string {
 }
 
 const ERASE_MS = 520;
+const POS_KEY = "pl.checklist.pos";
+
+type PanelPos = { left: number; top: number };
+
+function readPanelPos(): PanelPos | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(POS_KEY) || "") as PanelPos;
+    if (v && typeof v.left === "number" && typeof v.top === "number") return v;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function clampPanelPos(left: number, top: number, el: HTMLElement): PanelPos {
+  const margin = 8;
+  const w = el.offsetWidth || 320;
+  const h = el.offsetHeight || 200;
+  return {
+    left: Math.max(margin, Math.min(left, window.innerWidth - w - margin)),
+    top: Math.max(margin, Math.min(top, window.innerHeight - h - margin)),
+  };
+}
 
 /** App-wide checklist under the top-right tools. Saved to %APPDATA%\Paperlike\checklist.json. */
 export function ChecklistPanel({ onClose }: { onClose: () => void }) {
@@ -70,6 +93,7 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
   const [erasing, setErasing] = useState<Record<string, { d: string; w: number; h: number; left: number; top: number }>>({});
+  const [panelPos, setPanelPos] = useState<PanelPos | null>(() => readPanelPos());
   const panelRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLInputElement>(null);
   const rowEls = useRef(new Map<string, HTMLDivElement>());
@@ -234,8 +258,65 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   const doneCount = tasks.filter((i) => i.done).length;
   const left = tasks.length - doneCount;
 
+  // Keep a remembered spot on screen when the window is resized.
+  useEffect(() => {
+    const onResize = () => {
+      const el = panelRef.current;
+      if (!el || !panelPos) return;
+      const next = clampPanelPos(panelPos.left, panelPos.top, el);
+      if (next.left !== panelPos.left || next.top !== panelPos.top) {
+        setPanelPos(next);
+        localStorage.setItem(POS_KEY, JSON.stringify(next));
+      }
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [panelPos]);
+
+  /** Drag the grey header to move the panel; the spot is remembered. */
+  const startPanelDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    const el = panelRef.current;
+    if (!el) return;
+    e.preventDefault();
+    const start = el.getBoundingClientRect();
+    const origin = panelPos ?? { left: start.left, top: start.top };
+    // First drag: switch from under-the-button layout to a fixed screen spot.
+    if (!panelPos) {
+      const placed = clampPanelPos(start.left, start.top, el);
+      setPanelPos(placed);
+      localStorage.setItem(POS_KEY, JSON.stringify(placed));
+    }
+    const ox = e.clientX - origin.left;
+    const oy = e.clientY - origin.top;
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const next = clampPanelPos(ev.clientX - ox, ev.clientY - oy, el);
+      setPanelPos(next);
+    };
+    const up = (ev: PointerEvent) => {
+      el.releasePointerCapture(ev.pointerId);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      const next = clampPanelPos(ev.clientX - ox, ev.clientY - oy, el);
+      setPanelPos(next);
+      localStorage.setItem(POS_KEY, JSON.stringify(next));
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  };
+
   return (
-    <div className={`checklist${dragId ? " is-dragging" : ""}`} ref={panelRef} role="dialog" aria-label={messages.checklistTitle}>
+    <div
+      className={`checklist${dragId ? " is-dragging" : ""}${panelPos ? " is-placed" : ""}`}
+      ref={panelRef}
+      role="dialog"
+      aria-label={messages.checklistTitle}
+      style={panelPos ? { left: panelPos.left, top: panelPos.top } : undefined}
+    >
       <svg className="checklist-mottle" aria-hidden>
         <filter id="cl-rough" x="-4%" y="-4%" width="108%" height="108%">
           <feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="4" seed="4" result="t" />
@@ -263,6 +344,8 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
       </svg>
       <div
         className="checklist-head"
+        title="Drag to move"
+        onPointerDown={startPanelDrag}
         ref={(el) => {
           // The paper starts under the header; its height depends on the title's wrap.
           if (el) el.parentElement?.style.setProperty("--cl-head", `${el.offsetHeight}px`);

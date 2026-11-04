@@ -5366,7 +5366,13 @@ svg.hl .hl-ink {
 @keyframes checklist-in {
   from { opacity: 0; transform: translateY(-3px); }
 }
-.checklist-head { display: flex; align-items: center; gap: 4px; padding: 11px 10px 10px 26px; background: #3c3a37 linear-gradient(rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.06)); border-radius: 4px 4px 0 0; position: relative; --ink: #f5f2ec; --ink-2: rgba(245, 242, 236, 0.82); --ink-3: rgba(245, 242, 236, 0.62); color: var(--ink); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12); }
+/* Dragged away from the toolbar button: fixed to the screen. */
+.checklist.is-placed {
+  position: fixed;
+  right: auto;
+}
+.checklist-head { display: flex; align-items: center; gap: 4px; padding: 11px 10px 10px 26px; background: #3c3a37 linear-gradient(rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.06)); border-radius: 4px 4px 0 0; position: relative; --ink: #f5f2ec; --ink-2: rgba(245, 242, 236, 0.82); --ink-3: rgba(245, 242, 236, 0.62); color: var(--ink); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12); cursor: grab; user-select: none; }
+.checklist-head:active { cursor: grabbing; }
 .checklist-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .checklist-title {
   font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
