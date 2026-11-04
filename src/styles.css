@@ -1438,10 +1438,26 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
 .note-title-reveal-slot {
   flex: 0 0 auto;
   align-self: start;
+  box-sizing: border-box;
   width: 100%;
+  margin-left: 0;
   overflow: hidden;
   interpolate-size: allow-keywords;
   height: max-content;
+  /* Same easing as .sidebar-slot so the title clears the list in sync. */
+  transition:
+    height 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
+    margin-left 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
+    width 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+.editor-pane.side-open .note-title-slot,
+.editor-pane.side-open .note-title-reveal-slot {
+  margin-left: var(--sidebar-w, 224px);
+  width: calc(100% - var(--sidebar-w, 224px));
+}
+/* While dragging the list width, keep the title glued to the edge (no lag). */
+.editor-pane.side-resizing .note-title-slot,
+.editor-pane.side-resizing .note-title-reveal-slot {
   transition: height 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
 }
 .note-title-slot.is-collapsed,

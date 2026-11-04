@@ -3795,12 +3795,14 @@ export function NotebookView({
       </div>
 
       {/* ── body ── */}
-      <div className="nb-body" style={{ position: "relative" }}>
+      <div
+        className="nb-body"
+        style={{ position: "relative", ["--sidebar-w" as string]: `${ui.sidebar_width}px` }}
+      >
         {mode === "notebook" && (
           <>
             <div
               className={`sidebar-slot${sideHidden ? " is-collapsed" : ""}${titleHidden ? " with-title-collapsed" : ""}`}
-              style={{ ["--sidebar-w" as string]: `${ui.sidebar_width}px` }}
             >
               <div
                 className="sidebar"
@@ -4172,7 +4174,10 @@ export function NotebookView({
         )}
 
         {/* editor */}
-        <div className={`editor-pane${titleHidden ? " title-collapsed" : ""}`} data-tour="nb-canvas">
+        <div
+          className={`editor-pane${titleHidden ? " title-collapsed" : ""}${!sideHidden && mode === "notebook" ? " side-open" : ""}${sbDragging ? " side-resizing" : ""}`}
+          data-tour="nb-canvas"
+        >
           {note ? (
             <>
               <div className={`note-title-slot${titleHidden ? " is-collapsed" : ""}`}>
