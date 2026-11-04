@@ -234,13 +234,24 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
           <feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="4" seed="4" result="t" />
           <feDisplacementMap in="SourceGraphic" in2="t" scale="5" xChannelSelector="R" yChannelSelector="G" />
         </filter>
+        {/* Ink soaked into rag paper: a soft bleed around the letters and ink that is a little
+            thinner in places, instead of jagged edges. */}
         <filter id="cl-ink" x="-2%" y="-10%" width="104%" height="120%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="11" result="g" />
-          <feDisplacementMap in="SourceGraphic" in2="g" scale="1.1" xChannelSelector="R" yChannelSelector="G" result="d" />
-          <feComponentTransfer in="g" result="speck">
-            <feFuncA type="discrete" tableValues="1 1 1 0.55 1 1 1 1" />
+          <feTurbulence type="fractalNoise" baseFrequency="0.35" numOctaves="2" seed="11" result="g" />
+          <feDisplacementMap in="SourceGraphic" in2="g" scale="0.6" xChannelSelector="R" yChannelSelector="G" result="d" />
+          <feGaussianBlur in="d" stdDeviation="0.45" result="bleed" />
+          <feComponentTransfer in="bleed" result="halo">
+            <feFuncA type="linear" slope="0.35" />
           </feComponentTransfer>
-          <feComposite in="d" in2="speck" operator="in" />
+          <feMerge result="inked">
+            <feMergeNode in="halo" />
+            <feMergeNode in="d" />
+          </feMerge>
+          <feTurbulence type="fractalNoise" baseFrequency="0.06 0.12" numOctaves="2" seed="5" result="w" />
+          <feComponentTransfer in="w" result="wear">
+            <feFuncA type="linear" slope="0.5" intercept="0.68" />
+          </feComponentTransfer>
+          <feComposite in="inked" in2="wear" operator="in" />
         </filter>
       </svg>
       <div

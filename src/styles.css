@@ -5490,13 +5490,14 @@ svg.hl .hl-ink {
   font-family: "Newsreader Variable", Georgia, serif;
   font-size: 15.5px;
   font-optical-sizing: auto;
-  font-weight: 520;
+  font-weight: 490;
   letter-spacing: 0.005em;
   line-height: 20px;
   transition: color 0.25s;
   /* ink on rag paper: slightly rough edges and a little bleed */
   filter: url(#cl-ink);
-  text-shadow: 0 0 0.6px rgba(42, 36, 28, 0.6), 0.25px 0.3px 0 rgba(42, 36, 28, 0.22);
+  /* the paper's grain shows through the ink */
+  mix-blend-mode: multiply;
 }
 .checklist-row.note textarea { color: var(--ink-2); font-size: 13px; }
 .checklist-row.done textarea { color: var(--ink-3); }
