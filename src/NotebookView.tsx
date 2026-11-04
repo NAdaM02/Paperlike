@@ -1440,11 +1440,6 @@ export function NotebookView({
   const onLiveDraw = useCallback((id: string | null) => {
     liveDrawRef.current = id;
   }, []);
-  const drawTargetIds = () => {
-    const sel = canvasSelRef.current;
-    if (sel.length) return sel;
-    return liveDrawRef.current ? [liveDrawRef.current] : [];
-  };
   /** Canvas-highlight edit mode: one text box selected, ribbon edits apply to the whole box. */
   const [highlightedTextId, setHighlightedTextId] = useState<string | null>(null);
   /** True while programmatically applying format to a highlighted box (ignore transient focus). */
@@ -2010,7 +2005,7 @@ export function NotebookView({
 
   /** Pen colour / width also restyle drawings selected with the Select tool (OneNote-style). */
   const restyleSelectedDrawings = (patch: { color?: string; width?: number; opacity?: number }) => {
-    const ids = drawTargetIds();
+    const ids = canvasSelRef.current;
     const n = noteRef.current;
     if (!n || !ids.length) return;
     if (!n.doc.canvas.objects.some((o) => o.type === "drawing" && ids.includes(o.id))) return;
@@ -2046,12 +2041,13 @@ export function NotebookView({
     restyleSelectedDrawings({ color: c });
   };
 
-  /** The colour and width next to this button, painted onto the stroke just drawn. */
+  /** Paint the current toolbar style onto the stroke or shape just drawn (not an automatic restyle). */
   const applyColorToLast = () => {
     const id = liveDrawRef.current;
     const n = noteRef.current;
     if (!id || !n) return;
-    if (!n.doc.canvas.objects.some((o) => o.type === "drawing" && o.id === id)) return;
+    const target = n.doc.canvas.objects.find((o) => o.type === "drawing" && o.id === id);
+    if (!target || target.type !== "drawing") return;
     const color = tool === "highlighter" ? drawPrefs.hlColor : (drawPrefs.color ?? themeInk(settings.theme));
     const width = tool === "highlighter" ? drawPrefs.hlWidth : drawPrefs.width;
     snapshot("restyle-drawing", 400);
@@ -2061,9 +2057,20 @@ export function NotebookView({
         ...cur.doc,
         canvas: {
           ...cur.doc.canvas,
-          objects: cur.doc.canvas.objects.map((o) =>
-            o.type === "drawing" && o.id === id ? { ...o, item: { ...o.item, color, width } } : o,
-          ),
+          objects: cur.doc.canvas.objects.map((o) => {
+            if (o.type !== "drawing" || o.id !== id) return o;
+            if (o.item.kind === "arrow") {
+              const isLine = (o.item.head_style ?? "none") === "none" && (o.item.tail_style ?? "none") === "none";
+              const item = { ...o.item, color, width };
+              if (!isLine) {
+                item.head_style = drawPrefs.arrowHead;
+                if (drawPrefs.arrowBody === "double") item.body = "double";
+                else delete item.body;
+              }
+              return { ...o, item };
+            }
+            return { ...o, item: { ...o.item, color, width } };
+          }),
         },
       },
     }));
@@ -2096,7 +2103,7 @@ export function NotebookView({
   };
 
   const restyleSelectedArrows = (patch: { head_style?: string; body?: string }) => {
-    const ids = drawTargetIds();
+    const ids = canvasSelRef.current;
     const n = noteRef.current;
     if (!n || !ids.length) return;
     if (!n.doc.canvas.objects.some((o) => o.type === "drawing" && o.item.kind === "arrow" && ids.includes(o.id))) return;
@@ -3672,7 +3679,7 @@ export function NotebookView({
                     </button>
                   ))}
                 </div>
-                <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
+                <button type="button" className="btn apply-last" title="Apply the current style to the last drawn stroke or shape" onClick={applyColorToLast}>
                   <IcLast size={12} />
                   Last
                 </button>
@@ -3744,7 +3751,7 @@ export function NotebookView({
                     </button>
                   ))}
                 </div>
-                <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
+                <button type="button" className="btn apply-last" title="Apply the current style to the last drawn stroke or shape" onClick={applyColorToLast}>
                   <IcLast size={12} />
                   Last
                 </button>
@@ -4667,7 +4674,7 @@ export function NotebookView({
                     </button>
                   ))}
                 </div>
-                <button type="button" className="btn apply-last" title="Apply this colour and width to the last stroke" onClick={applyColorToLast}>
+                <button type="button" className="btn apply-last" title="Apply the current style to the last drawn stroke or shape" onClick={applyColorToLast}>
                   <IcLast size={12} />
                   Last
                 </button>
