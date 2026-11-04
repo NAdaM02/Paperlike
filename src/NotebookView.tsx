@@ -2013,6 +2013,16 @@ export function NotebookView({
     restyleSelectedDrawings({ width: w });
   };
 
+  /** Scroll up = bigger, like the colour and font-size controls. */
+  const wheelStep = <T,>(e: React.WheelEvent, values: readonly T[], current: T, apply: (v: T) => void) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const i = values.indexOf(current);
+    if (i < 0) return;
+    const next = values[Math.max(0, Math.min(values.length - 1, i + (e.deltaY < 0 ? 1 : -1)))];
+    if (next !== current) apply(next);
+  };
+
   const restyleSelectedArrows = (patch: { head_style?: string; body?: string }) => {
     const ids = drawTargetIds();
     const n = noteRef.current;
@@ -3487,7 +3497,15 @@ export function NotebookView({
                     <span className="small">Shape</span>
                   </button>
                 </div>
-                <div className="seg" title="Eraser size">
+                <div
+                  className="seg"
+                  title="Eraser size — scroll to change"
+                  onWheel={(e) =>
+                    wheelStep(e, Object.keys(ERASER_SIZES) as EraserSize[], drawPrefs.eraserSize, (v) =>
+                      updateDrawPrefs({ eraserSize: v }),
+                    )
+                  }
+                >
                   {(Object.keys(ERASER_SIZES) as EraserSize[]).map((s) => (
                     <button
                       key={s}
@@ -3567,7 +3585,11 @@ export function NotebookView({
                   onPick={pickHlColor}
                 />
                 <span className="lbl">Width</span>
-                <div className="seg" title="Marker width ([ and ] to change)">
+                <div
+                  className="seg"
+                  title="Marker width — scroll to change ([ and ] too)"
+                  onWheel={(e) => wheelStep(e, HL_WIDTHS, drawPrefs.hlWidth, (v) => updateDrawPrefs({ hlWidth: v }))}
+                >
                   {HL_WIDTHS.map((w, i) => (
                     <button
                       key={w}
@@ -3635,7 +3657,11 @@ export function NotebookView({
                   onPick={pickDrawColor}
                 />
                 <span className="lbl">Width</span>
-                <div className="seg" title="Stroke width ([ and ] to change)">
+                <div
+                  className="seg"
+                  title="Stroke width — scroll to change ([ and ] too)"
+                  onWheel={(e) => wheelStep(e, DRAW_WIDTHS, drawWidth, pickDrawWidth)}
+                >
                   {DRAW_WIDTHS.map((w) => (
                     <button
                       key={w}
