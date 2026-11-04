@@ -2012,11 +2012,14 @@ export function CanvasEditor({
         ? strokeOutline(pts, live.pressure, width)
         : [];
     if (marker.length >= 3) {
-      ctx.globalAlpha = d.opacity ?? hlOpacity;
-      ctx.fill(new Path2D(outlinePath(marker)));
+      // Paint opaque ink; strength is the canvas opacity so multiply matches the saved SVG
+      // fill-opacity path (globalAlpha on the pixels made the live stroke look darker).
       ctx.globalAlpha = 1;
+      ctx.fill(new Path2D(outlinePath(marker)));
+      cv.style.opacity = String(d.opacity ?? hlOpacity);
       return;
     }
+    cv.style.opacity = "";
     if (outlined.length >= 3) {
       ctx.fill(new Path2D(outlinePath(outlined)));
       return;
@@ -2445,7 +2448,10 @@ export function CanvasEditor({
       cancelAnimationFrame(liveInkRaf.current);
       liveInkRaf.current = 0;
     }
-    if (liveInkRef.current) liveInkRef.current.style.display = "none";
+    if (liveInkRef.current) {
+      liveInkRef.current.style.display = "none";
+      liveInkRef.current.style.opacity = "";
+    }
     if (panning) setPanning(false);
     if (!d) return;
     if (d.mode === "pan") {
