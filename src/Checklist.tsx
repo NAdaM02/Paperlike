@@ -243,7 +243,13 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
           <feComposite in="d" in2="speck" operator="in" />
         </filter>
       </svg>
-      <div className="checklist-head">
+      <div
+        className="checklist-head"
+        ref={(el) => {
+          // The paper starts under the header; its height depends on the title's wrap.
+          if (el) el.parentElement?.style.setProperty("--cl-head", `${el.offsetHeight}px`);
+        }}
+      >
         <div className="checklist-titles">
           <span className="checklist-title">{messages.checklistTitle}</span>
           {items && tasks.length > 0 && <span className="checklist-count">{messages.checklistLeft(left)}</span>}

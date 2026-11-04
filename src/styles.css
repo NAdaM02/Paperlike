@@ -5325,20 +5325,21 @@ svg.hl .hl-ink {
   /* creamy cotton rag paper with dark ink in every theme */
   --paper: #f3ebdb;
   --rule: rgba(120, 98, 66, 0.13);
-  --ink: #3b342a;
-  --ink-2: #6a6153;
-  --ink-3: #9b907f;
+  --ink: #2a241c;
+  --ink-2: #544b3e;
+  --ink-3: #847967;
   isolation: isolate;
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.005em;
   transform-origin: top right;
   animation: checklist-in 0.12s ease-out;
 }
-/* the sheet itself, with torn edges from the #cl-rough filter */
+/* the sheet itself, with torn edges from the #cl-rough filter. It starts under the grey
+   header, so the torn bits never show beside it. */
 .checklist::before {
   content: "";
   position: absolute;
-  inset: 6px 0 0;
+  inset: calc(var(--cl-head, 52px) - 4px) 0 0;
   z-index: -1;
   background-color: var(--paper);
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.42 0 0 0 0 0.35 0 0 0 0 0.24 0 0 0 0.2 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.012 0.09' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.42 0 0 0 0 0.3 0 0 0 0.34 -0.06'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>"),
@@ -5354,7 +5355,7 @@ svg.hl .hl-ink {
 @keyframes checklist-in {
   from { opacity: 0; transform: translateY(-3px); }
 }
-.checklist-head { display: flex; align-items: center; gap: 4px; padding: 11px 10px 10px 26px; background: #474542 linear-gradient(rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.06)); border-radius: 4px 4px 0 0; position: relative; --ink: #f5f2ec; --ink-2: rgba(245, 242, 236, 0.82); --ink-3: rgba(245, 242, 236, 0.62); color: var(--ink); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12); }
+.checklist-head { display: flex; align-items: center; gap: 4px; padding: 11px 10px 10px 26px; background: #3c3a37 linear-gradient(rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.06)); border-radius: 4px 4px 0 0; position: relative; --ink: #f5f2ec; --ink-2: rgba(245, 242, 236, 0.82); --ink-3: rgba(245, 242, 236, 0.62); color: var(--ink); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12); }
 .checklist-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .checklist-title {
   font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
@@ -5489,13 +5490,13 @@ svg.hl .hl-ink {
   font-family: "Newsreader Variable", Georgia, serif;
   font-size: 15.5px;
   font-optical-sizing: auto;
-  font-weight: 450;
+  font-weight: 520;
   letter-spacing: 0.005em;
   line-height: 20px;
   transition: color 0.25s;
   /* ink on rag paper: slightly rough edges and a little bleed */
   filter: url(#cl-ink);
-  text-shadow: 0 0 0.7px rgba(59, 52, 42, 0.55), 0.25px 0.3px 0 rgba(59, 52, 42, 0.2);
+  text-shadow: 0 0 0.6px rgba(42, 36, 28, 0.6), 0.25px 0.3px 0 rgba(42, 36, 28, 0.22);
 }
 .checklist-row.note textarea { color: var(--ink-2); font-size: 13px; }
 .checklist-row.done textarea { color: var(--ink-3); }
