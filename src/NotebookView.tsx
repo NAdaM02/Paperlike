@@ -645,6 +645,25 @@ export function NotebookView({
   };
 
   const noteOpen = !!note;
+  // Note list auto-hide: a thin rail; the list slides out over the editor on hover.
+  const sideAuto = settings.sidebar_auto_hide === true;
+  const [sidePeek, setSidePeek] = useState(false);
+  const peekTimer = useRef(0);
+  const peekOpen = () => {
+    window.clearTimeout(peekTimer.current);
+    setSidePeek(true);
+  };
+  const peekClose = () => {
+    window.clearTimeout(peekTimer.current);
+    const check = () => {
+      const el = document.querySelector(".sidebar.peek");
+      const a = document.activeElement;
+      const busy = !!el && (el.matches(":hover") || (!!a && el.contains(a) && a.matches("input, textarea, select")));
+      if (busy) peekTimer.current = window.setTimeout(check, 400);
+      else setSidePeek(false);
+    };
+    peekTimer.current = window.setTimeout(check, 350);
+  };
   const titleHideOn = noteOpen && settings.title_auto_hide !== false;
   const titleAutoHideRef = useRef(titleHideOn);
   titleAutoHideRef.current = titleHideOn;
@@ -3605,10 +3624,20 @@ export function NotebookView({
             </div>
           ) : (
             <>
+              {sideAuto && (
+                <div className="sidebar-rail" onMouseEnter={peekOpen} onClick={peekOpen}>
+                  <button className="btn icon" title={messages.showNoteList} aria-label={messages.showNoteList} onClick={peekOpen}>
+                    <IcExpand size={15} />
+                  </button>
+                </div>
+              )}
+              {(!sideAuto || sidePeek) && (
               <div
-                className="sidebar"
+                className={`sidebar${sideAuto ? " peek" : ""}`}
                 data-tour="nb-sidebar"
                 style={{ width: ui.sidebar_width }}
+                onMouseEnter={sideAuto ? peekOpen : undefined}
+                onMouseLeave={sideAuto ? peekClose : undefined}
                 onContextMenu={(e) => {
                   const t = e.target as HTMLElement;
                   if (t.closest(".note-item, .sep-line, .sidebar-head, .sidebar-new, .sidebar-filter, button, input, select")) return;
@@ -3636,6 +3665,18 @@ export function NotebookView({
                     <option value="created">Created ↑</option>
                     <option value="created_desc">Created ↓</option>
                   </select>
+                  <button
+                    className={`btn icon title-autohide${sideAuto ? " is-on" : ""}`}
+                    title={messages.sidebarAutoHide}
+                    aria-label={messages.sidebarAutoHide}
+                    aria-pressed={sideAuto}
+                    onClick={() => {
+                      patchSettings({ sidebar_auto_hide: !sideAuto });
+                      setSidePeek(true);
+                    }}
+                  >
+                    <IcAutoHide size={15} />
+                  </button>
                   <button
                     className="btn icon"
                     title="Collapse"
@@ -3939,10 +3980,13 @@ export function NotebookView({
                   </div>
                 )}
               </div>
-              <div
-                className={`sidebar-resizer ${sbDragging ? "drag" : ""}`}
-                onMouseDown={() => setSbDragging(true)}
-              />
+              )}
+              {!sideAuto && (
+                <div
+                  className={`sidebar-resizer ${sbDragging ? "drag" : ""}`}
+                  onMouseDown={() => setSbDragging(true)}
+                />
+              )}
             </>
           ))}
 

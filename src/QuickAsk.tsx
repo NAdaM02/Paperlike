@@ -4,6 +4,8 @@ import { AnalyzeAction, AnalyzeIcon, analyzeLabel, analyzePrompt, AnalyzeRect, a
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { noteText, summaryHtml } from "./brief";
 import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
+import { ChecklistPanel } from "./Checklist";
+import { messages } from "./copy/messages";
 import { HostLogo, IcCalc, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
@@ -108,6 +110,7 @@ export function QuickAskField({
   const [hist, setHist] = useState(sessionHistory);
   const [host, setHost] = useState<ChatHost>(defaultHost);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
@@ -193,6 +196,7 @@ export function QuickAskField({
 
   return (
     <div className="qa-wrap" ref={wrapRef}>
+      {listOpen && <ChecklistPanel onClose={() => setListOpen(false)} />}
       <div className="qa-tools" data-tour="quick-tools">
         {onCalc && (
           <button
@@ -206,6 +210,16 @@ export function QuickAskField({
             <IcCalc size={15} />
           </button>
         )}
+        <button
+          type="button"
+          className={`btn icon qa-tool qa-checklist-btn${listOpen ? " is-on" : ""}`}
+          title={messages.checklistTitle}
+          aria-label={messages.checklistTitle}
+          aria-expanded={listOpen}
+          onClick={() => setListOpen((o) => !o)}
+        >
+          <IcCheck size={15} />
+        </button>
         {onAnalyze && (
           <button
             type="button"

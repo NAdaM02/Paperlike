@@ -103,6 +103,10 @@ function readPressure(ev: PointerEvent): number {
   return p > 1 ? 1 : p;
 }
 
+/** Largest minimap size in CSS pixels; the box takes the note's proportions. */
+const MINIMAP_W = 150;
+const MINIMAP_H = 100;
+
 function coalescedEvents(e: PointerEvent): PointerEvent[] {
   const fn = e.getCoalescedEvents?.bind(e);
   if (typeof fn !== "function") return [e];
@@ -618,6 +622,7 @@ export function CanvasEditor({
   const dragMoveRaf = useRef(0);
   /** When pointerrawupdate is flowing, pointermove coordinates are ignored so a frozen event cannot yank the stroke back. */
   const followDrawRef = useRef<(e: PointerEvent) => void>(() => {});
+  const sampleClock = useRef<{ d: object | null; t: number }>({ d: null, t: -1 });
   const followLassoRef = useRef<(e: PointerEvent) => void>(() => {});
   const bumpRef = useRef<() => void>(() => {});
   const endStrokeRef = useRef<(e: PointerEvent) => void>(() => {});
@@ -663,6 +668,30 @@ export function CanvasEditor({
     return { byId, member, kidsOf };
   }, [objects]);
   const selSet = useMemo(() => new Set(selected), [selected]);
+  /** Extent of everything on the note, for the minimap. */
+  const contentBox = useMemo(() => {
+    if (!objects.length) return null;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const o of objects) {
+      const b = objectBBox(o, heightsRef.current);
+      x1 = Math.min(x1, b.x);
+      y1 = Math.min(y1, b.y);
+      x2 = Math.max(x2, b.x + b.w);
+      y2 = Math.max(y2, b.y + b.h);
+    }
+    return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  }, [objects, heightsRef]);
+  /** While dragging in the minimap its scale stays put, so the view follows the pointer. */
+  const mmDrag = useRef<{ ux: number; uy: number; s: number; w: number; h: number } | null>(null);
+  const moveMinimap = (e: React.PointerEvent<HTMLDivElement>) => {
+    const m = mmDrag.current;
+    if (!m) return;
+    const b = e.currentTarget.getBoundingClientRect();
+    const wx = m.ux + (e.clientX - b.left) / m.s;
+    const wy = m.uy + (e.clientY - b.top) / m.s;
+    const W = wrapBox.w, H = wrapBox.h;
+    setCam((c) => ({ ...c, x: W / 2 - wx * c.z, y: H / 2 - wy * c.z }));
+  };
   const maxZ = useCallback(() => objects.reduce((m, o) => Math.max(m, o.z), 0), [objects]);
 
   const updateObjects = useCallback(
@@ -1037,7 +1066,7 @@ export function CanvasEditor({
     };
 
     const onDown = (e: PointerEvent) => {
-      if ((e.target as Element | null)?.closest?.(".menu")) return;
+      if ((e.target as Element | null)?.closest?.(".menu, .canvas-minimap, .zoom-chip")) return;
       if (e.pointerType === "pen" && penSettingsRef.current.pen_enabled) {
         penDownRef.current = true;
         penHoverRef.current = true;
@@ -1858,7 +1887,15 @@ export function CanvasEditor({
     if (!cv || !wrap || !ctx) return;
     const width = d.width ?? drawWidth;
     const color = d.color ?? drawColor;
-    const pts = d.smart ? smoothPoints(d.pts, 1) : d.pts;
+    // The same smoothing the saved stroke gets, so nothing shifts on release.
+    const live = d.smart
+      ? { pts: smoothPoints(d.pts, 1), pressure: d.pressure }
+      : d.pen
+        ? d.pts.length > 2
+          ? smoothInk(d.pts, d.pressure)
+          : { pts: d.pts, pressure: d.pressure }
+        : { pts: d.pts.length > 2 ? smoothPoints(d.pts) : d.pts, pressure: d.pressure };
+    const pts = live.pts;
     // One canvas pixel per device pixel, lined up with the screen's pixel grid,
     // so the live line is as sharp as the saved one. The canvas covers only the
     // stroke plus a margin and grows in steps, so each frame touches few pixels.
@@ -1912,8 +1949,8 @@ export function CanvasEditor({
     ctx.strokeStyle = color;
     const marker = d.hl && pts.length >= 2 ? strokeOutline(pts, undefined, width, false) : [];
     const outlined =
-      !d.hl && d.pressure && d.pressure.length === pts.length && pts.length >= 2
-        ? strokeOutline(pts, d.pressure, width)
+      !d.hl && live.pressure && live.pressure.length === pts.length && pts.length >= 2
+        ? strokeOutline(pts, live.pressure, width)
         : [];
     if (marker.length >= 3) {
       ctx.globalAlpha = d.opacity ?? hlOpacity;
@@ -1943,6 +1980,19 @@ export function CanvasEditor({
     });
   };
 
+  /** Coalesced samples newer than the last one taken. pointerrawupdate and pointermove
+   *  both carry them, and taking a sample twice steps the line backwards. */
+  const freshSamples = (d: object, e: PointerEvent): PointerEvent[] => {
+    const clock = sampleClock.current;
+    if (clock.d !== d) {
+      clock.d = d;
+      clock.t = -1;
+    }
+    const list = coalescedEvents(e).filter((ev) => ev.timeStamp > clock.t);
+    if (list.length) clock.t = list[list.length - 1].timeStamp;
+    return list;
+  };
+
   /** Add samples to the stroke in progress. Used by pointermove and by pointerrawupdate. */
   const followDraw = (e: PointerEvent) => {
     const d = dragRef.current;
@@ -1955,7 +2005,7 @@ export function CanvasEditor({
     } else if (e.pointerId !== d.pointerId) return;
     if (d.pen && !e.shiftKey) {
       let grew = false;
-      for (const ev of coalescedEvents(e)) {
+      for (const ev of freshSamples(d, e)) {
         const c = toCanvas(ev.clientX, ev.clientY);
         const x = c.x - d.sx;
         const y = c.y - d.sy;
@@ -1980,11 +2030,18 @@ export function CanvasEditor({
       queueLiveInk(d);
       return;
     }
-    const prev = d.pts[d.pts.length - 1];
-    if (Math.hypot(p[0] - prev[0], p[1] - prev[1]) * camRef.current.z < 0.45) return;
-    d.pts.push(p);
-    if (d.times) d.times.push(performance.now());
-    queueLiveInk(d);
+    // Every sample since the last event, not just the latest, so fast strokes stay round.
+    let grew = false;
+    for (const ev of freshSamples(d, e)) {
+      const c = toCanvas(ev.clientX, ev.clientY);
+      const q: [number, number] = [c.x - d.sx, c.y - d.sy];
+      const prev = d.pts[d.pts.length - 1];
+      if (Math.hypot(q[0] - prev[0], q[1] - prev[1]) * camRef.current.z < 0.45) continue;
+      d.pts.push(q);
+      if (d.times) d.times.push(performance.now());
+      grew = true;
+    }
+    if (grew) queueLiveInk(d);
   };
   followDrawRef.current = followDraw;
 
@@ -3409,6 +3466,54 @@ export function CanvasEditor({
       >
         {Math.round(cam.z * 100)}%
       </button>}
+      {!lockedView && contentBox && wrapBox.w > 0 && (() => {
+        const view = { x: -cam.x / cam.z, y: -cam.y / cam.z, w: wrapBox.w / cam.z, h: wrapBox.h / cam.z };
+        const ux = Math.min(contentBox.x, view.x);
+        const uy = Math.min(contentBox.y, view.y);
+        const uw = Math.max(contentBox.x + contentBox.w, view.x + view.w) - ux;
+        const uh = Math.max(contentBox.y + contentBox.h, view.y + view.h) - uy;
+        const s = Math.min(MINIMAP_W / Math.max(1, uw), MINIMAP_H / Math.max(1, uh));
+        const m = mmDrag.current ?? { ux, uy, s, w: uw * s, h: uh * s };
+        const place = (b: { x: number; y: number; w: number; h: number }) => ({
+          left: (b.x - m.ux) * m.s,
+          top: (b.y - m.uy) * m.s,
+          width: b.w * m.s,
+          height: b.h * m.s,
+        });
+        const release = () => {
+          mmDrag.current = null;
+          forceRender((n) => n + 1);
+        };
+        return (
+          <div
+            className="canvas-minimap"
+            style={{ width: Math.max(18, m.w), height: Math.max(18, m.h) }}
+            title="Click or drag to move the view"
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              e.preventDefault();
+              mmDrag.current = m;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              moveMinimap(e);
+            }}
+            onPointerMove={(e) => {
+              if (!mmDrag.current) return;
+              e.stopPropagation();
+              moveMinimap(e);
+            }}
+            onPointerUp={(e) => {
+              if (!mmDrag.current) return;
+              e.stopPropagation();
+              release();
+            }}
+            onPointerCancel={release}
+          >
+            <div className="minimap-content" style={place(contentBox)} />
+            <div className="minimap-view" style={place(view)} />
+          </div>
+        );
+      })()}
       {shiftHeld && !lockedView && (
         <div className="shift-hint">Ctrl-click pages to select them across PDFs · Shift: pick images, move locked items, reorder pages</div>
       )}

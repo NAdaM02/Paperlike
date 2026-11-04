@@ -15,6 +15,7 @@ Owner decision: per-user config directory at `%APPDATA%\Paperlike`.
 ├── home.json          ← Home grid content, order, groups
 ├── ignored.json       ← "Detect" ignore list
 ├── ui-state.json      ← window geometry, per-notebook sidebar state (volatile-ish)
+├── checklist.json     ← app-wide checklist (top-right tools)
 ├── icons\             ← generated .ico files for notebook folder covers (<hash>.ico)
 ├── recovery\          ← crash-recovery journals (§4)
 └── index\             ← search index cache (see search.md)
@@ -44,13 +45,25 @@ state files).
   "study_root": null,                 // folder the preset was written into
   "moodle_enabled": false,            // Moodle course browser switch
   "git_sync": false,                  // Sync github (§6), off by default
-  "git_sync_dir": null                // the repository folder it syncs
+  "git_sync_dir": null,               // the repository folder it syncs
+  "sidebar_auto_hide": false          // note list hides to a rail, slides out on hover
 }
 ```
 
 `study_prompted`, `study_preset`, `study_root`, `moodle_enabled`, `git_sync` and
 `git_sync_dir` are optional on read. A settings file from before those fields existed still loads; the missing
 ones default to false / empty. Saving writes them back.
+
+### `checklist.json`
+
+```jsonc
+{ "version": 1, "items": [ { "id": "k3f9a2", "text": "Buy paper", "done": false },
+                           { "id": "p0c1d7", "text": "Exam on Friday", "done": false, "note": true } ] }
+```
+
+Written whole (atomic, no `.bak`) 400 ms after the last change and when the panel
+closes. `note: true` rows are plain text without a checkbox. Missing or unreadable
+file: an empty list.
 
 ### `home.json`
 

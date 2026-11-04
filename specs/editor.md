@@ -23,6 +23,10 @@ Golden rules (from the project owner — never violate):
   to 100%. Zoom centers on the cursor position. The round button above the zoom %
   chip shows the whole note: it zooms out (never in past 100%) until every object
   fits with a 40 DIP margin, centered; hidden on an empty note.
+- **Minimap** (bottom-left, not on an empty note): a box in the proportions of the
+  note's extent plus the current view (at most 150×100 px), with the content's
+  extent shaded and the view outlined. Click or drag in it to center the view
+  there at the current zoom; its scale holds still while dragging.
 - **Click on empty canvas** with Select active, and no modifier, drag, or menu
   just dismissed: if something was selected (or a text box was being edited),
   the click only clears that selection. If nothing was selected, it creates an

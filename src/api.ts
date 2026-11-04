@@ -64,6 +64,7 @@ export type Settings = {
   title_auto_hide?: boolean;
   /** Note title row manually collapsed. */
   title_collapsed?: boolean;
+  sidebar_auto_hide?: boolean;
   /** Hide the ribbon tool row under the tabs. */
   ribbon_actions_collapsed?: boolean;
   /** Home grid tile min width in px. Missing means 168. */
@@ -369,6 +370,8 @@ export const api = {
   gitSyncNoteClosed: (path: string) => invoke("git_sync_note_closed", { path }),
   gitSyncOnExit: () => invoke<GitSyncStatus>("git_sync_on_exit"),
   gitSyncRun: () => invoke<GitSyncStatus>("git_sync_run"),
+  checklistLoad: () => invoke<string>("checklist_load"),
+  checklistSave: (json: string) => invoke<void>("checklist_save", { json }),
   gitSyncCheck: (folder: string) => invoke<GitSyncCheck>("git_sync_check", { folder }),
   gitSyncResolve: (path: string, keep: "mine" | "theirs") =>
     invoke<GitSyncStatus>("git_sync_resolve", { path, keep }),

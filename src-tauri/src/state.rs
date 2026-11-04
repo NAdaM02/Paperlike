@@ -104,6 +104,9 @@ pub struct Settings {
     /// Note title row manually collapsed.
     #[serde(default)]
     pub title_collapsed: bool,
+    /// Note list slides away to a thin rail and back out on hover.
+    #[serde(default)]
+    pub sidebar_auto_hide: bool,
     /// Hide the ribbon tool row under the tabs.
     #[serde(default)]
     pub ribbon_actions_collapsed: bool,
@@ -150,6 +153,7 @@ impl Default for Settings {
             palm_rejection: true,
             title_auto_hide: true,
             title_collapsed: false,
+            sidebar_auto_hide: false,
             ribbon_actions_collapsed: false,
             home_tile_size: default_home_tile_size(),
         }

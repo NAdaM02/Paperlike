@@ -16,6 +16,7 @@ mod feedback;
 mod attachments;
 mod gif;
 mod gitsync;
+mod checklist;
 mod google_account;
 mod moodle;
 pub mod cli;
@@ -132,6 +133,8 @@ pub fn run() {
             gitsync::git_sync_note_closed,
             gitsync::git_sync_on_exit,
             gitsync::git_sync_run,
+            checklist::checklist_load,
+            checklist::checklist_save,
             gitsync::git_sync_check,
             gitsync::git_sync_resolve,
             attachments::read_local_file,

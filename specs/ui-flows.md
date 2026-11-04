@@ -255,3 +255,17 @@ card beside it with the preset prompt already sent. **Custom** opens the card wi
 the capture and an empty field ("Ask {model} about this area…"); the image goes with
 the first question typed. **Recapture** in the card footer captures the same area
 again and re-asks the preset prompt, or for Custom the first question.
+
+## 8. Checklist and note-list auto-hide
+
+**Checklist.** The check-mark button among the top-right tools (beside the
+calculator) opens an app-wide checklist under it, the same in every notebook.
+Enter in the bottom field adds a task, Shift+Enter a plain note line. Tasks have a
+checkbox (done ones are struck through); any row's text is edited in place, and
+clearing it or the hover × deletes it. "Clear N done" removes finished tasks. Esc,
+the button, or a click outside closes it. Saved to `checklist.json` (app-state.md).
+
+**Note-list auto-hide.** The button left of Collapse in the note list's header turns
+auto-hide on (setting `sidebar_auto_hide`). The list then shrinks to the 6 px rail;
+moving onto the rail slides the list out over the editor (no layout shift), and it
+slides away 350 ms after the mouse leaves, unless a field in it has focus.
