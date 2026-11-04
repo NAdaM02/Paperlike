@@ -368,6 +368,7 @@ export const api = {
   gitSyncNoteOpened: (path: string) => invoke("git_sync_note_opened", { path }),
   gitSyncNoteClosed: (path: string) => invoke("git_sync_note_closed", { path }),
   gitSyncOnExit: () => invoke<GitSyncStatus>("git_sync_on_exit"),
+  gitSyncRun: () => invoke<GitSyncStatus>("git_sync_run"),
   gitSyncCheck: (folder: string) => invoke<GitSyncCheck>("git_sync_check", { folder }),
   gitSyncResolve: (path: string, keep: "mine" | "theirs") =>
     invoke<GitSyncStatus>("git_sync_resolve", { path, keep }),

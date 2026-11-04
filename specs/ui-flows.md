@@ -244,3 +244,14 @@ come from the example setup's artwork; confirm the rights before a customer buil
 In a notebook, a **Moodle** button sits beside Ask when Settings → Study has the course browser on (`moodle_enabled`). If that value is missing from settings, the button also shows when the notebook path contains a `Lectures` folder, a `Material` folder is next to the notes, or `localStorage` `paperlike-moodle` is `1`.
 
 The pane docks on the right, about 46% of the notebook. Sign in inside the pane, including two-factor prompts on `tum.de` and `aai.dfn.de`. Other links open in the system browser. A saved course opens directly; otherwise a confident name match (notebook "Mechanics 1" with "Engineering Mechanics I – Statics") opens and is stored on the notebook. The current week section is expanded. PDFs save into `Material` without overwriting, and **Insert into note** places the file on the canvas.
+
+## 7. Analyze (screen area)
+
+Drag a rectangle over the note; a toolbar sits under it (or above/inside when there
+is no room). From left: the model logo (click or wheel cycles Claude → ChatGPT →
+Gemini and sets the app-wide default model), **Explain**, **Solve**, **Verify**,
+**Custom**, close. The preset actions capture the area and open the quick-question
+card beside it with the preset prompt already sent. **Custom** opens the card with
+the capture and an empty field ("Ask {model} about this area…"); the image goes with
+the first question typed. **Recapture** in the card footer captures the same area
+again and re-asks the preset prompt, or for Custom the first question.

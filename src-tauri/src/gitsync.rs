@@ -536,6 +536,12 @@ pub fn git_sync_status() -> SyncStatus {
     s
 }
 
+/// Settings › Sync now.
+#[tauri::command]
+pub async fn git_sync_run() -> SyncStatus {
+    tauri::async_runtime::spawn_blocking(sync_now).await.unwrap_or_default()
+}
+
 /// Shutdown: one last sync before the window goes away.
 #[tauri::command]
 pub async fn git_sync_on_exit() -> SyncStatus {

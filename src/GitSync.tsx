@@ -152,12 +152,22 @@ export function GitSyncSettings({ settings, onSave }: { settings: Settings; onSa
             </button>
           </div>
           {check?.remote && !check.code && <span className="settings-hint">{messages.gitSyncRemote(check.remote)}</span>}
-          <span
-            className={`settings-hint ${problem ? "git-sync-problem" : ""}`}
-            title={(check?.code ? check.detail : status.detail) || undefined}
-          >
-            {problem || statusLine(status)}
-          </span>
+          <div className="git-sync-status">
+            <span
+              className={`settings-hint ${problem ? "git-sync-problem" : ""}`}
+              title={(check?.code ? check.detail : status.detail) || undefined}
+            >
+              {problem || statusLine(status)}
+            </span>
+            <button
+              className="btn outline"
+              type="button"
+              disabled={!dir || !!check?.code || status.state === "syncing"}
+              onClick={() => void api.gitSyncRun().catch(() => {})}
+            >
+              {messages.gitSyncNow}
+            </button>
+          </div>
           <span className="settings-hint">{messages.gitSyncWhen}</span>
         </div>
       )}

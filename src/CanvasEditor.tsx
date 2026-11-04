@@ -56,6 +56,7 @@ import { isGifBase64, StillImage } from "./stillImage";
 import { ArrowInk } from "./ArrowInk";
 import { FileChip, IMAGE_EXTS, fileExt } from "./fileChip";
 import { messages } from "./copy/messages";
+import { IcExpand } from "./icons";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { arrowHeadKind, arrowHeadPoints, scaleDrawing, shaftIsStraight, smoothFreeShaft, type Pt } from "./drawGeom";
 
@@ -967,7 +968,7 @@ export function CanvasEditor({
         const mx = e.clientX - r.left;
         const my = e.clientY - r.top;
         setCam((c) => {
-          const nz = Math.min(5, Math.max(0.15, c.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015))));
+          const nz = Math.min(30, Math.max(0.15, c.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015))));
           return {
             z: nz,
             x: mx - ((mx - c.x) / c.z) * nz,
@@ -3077,6 +3078,24 @@ export function CanvasEditor({
   const paintFile = (o: FileObject, sel: boolean) => (
     <FileChip key={o.id} obj={o} selected={sel} onPointerDown={(e) => fileChipDown(e, o)} />
   );
+  /** Overview: zoom out (never in past 100%) until every object fits, centered. */
+  const fitAll = () => {
+    const el = wrapRef.current;
+    if (!el || !objects.length) return;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const o of objects) {
+      const b = objectBBox(o, heightsRef.current);
+      x1 = Math.min(x1, b.x);
+      y1 = Math.min(y1, b.y);
+      x2 = Math.max(x2, b.x + b.w);
+      y2 = Math.max(y2, b.y + b.h);
+    }
+    const pad = 40;
+    const W = el.clientWidth, H = el.clientHeight;
+    const z = Math.max(0.15, Math.min(1, (W - pad * 2) / Math.max(1, x2 - x1), (H - pad * 2) / Math.max(1, y2 - y1)));
+    setCam({ z, x: (W - (x2 - x1) * z) / 2 - x1 * z, y: (H - (y2 - y1) * z) / 2 - y1 * z });
+  };
+
   const paintPdf = (o: PdfObject, sel: boolean) => (
     <PdfView
       key={o.id}
@@ -3369,6 +3388,18 @@ export function CanvasEditor({
       style={{ cursor, ...paperBackground(paper, cam) }}
     >
       <div ref={ringRef} className={`eraser-ring ${eraserMode}`} style={{ display: "none" }} />
+      {!lockedView && objects.length > 0 && (
+        <button
+          type="button"
+          className="zoom-chip zoom-fit"
+          title="Show the whole note"
+          aria-label="Show the whole note"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={fitAll}
+        >
+          <IcExpand size={13} />
+        </button>
+      )}
       {!lockedView && <button
         type="button"
         className="zoom-chip"

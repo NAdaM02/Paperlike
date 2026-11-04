@@ -4,7 +4,7 @@ import { AnalyzeAction, AnalyzeIcon, analyzeLabel, analyzePrompt, AnalyzeRect, a
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { noteText, summaryHtml } from "./brief";
 import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
-import { HostLogo, IcCalc, IcCheck, IcChevron, IcClose, IcCopy, IcDoc, IcHistory, IcIncognito, IcReload, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
+import { HostLogo, IcCalc, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
 const BRIEFLY =
@@ -39,6 +39,8 @@ export type QuickSeed = {
   imagePath?: string;
   imagePreview?: string;
   analyze?: AnalyzeAction;
+  /** Analyze › Custom: the capture is attached to the first question the user types. */
+  custom?: boolean;
   /** Screen area the capture came from: the card opens beside it, and Rescan captures it again. */
   anchor?: AnalyzeRect;
   /** The same area in note coordinates, when it was over a canvas: Rescan follows it there. */
@@ -368,16 +370,8 @@ const EDGE = 8;
  * Where a card of width `w` goes beside the area: right of it, else left of it. When neither side
  * fits the card, it narrows to the roomier side (down to MIN_W) instead of covering the area.
  */
-function besideArea(a: AnalyzeRect, w: number, askW: number): { side: "right" | "left"; x: number; w: number } {
-  const right = window.innerWidth - askW - EDGE;
-  const roomR = right - (a.x + a.w + GAP);
-  const roomL = a.x - GAP - EDGE;
-  if (w <= roomR) return { side: "right", x: a.x + a.w + GAP, w };
-  if (w <= roomL) return { side: "left", x: a.x - GAP - w, w };
-  const side = roomR >= roomL ? "right" : "left";
-  const room = Math.floor(Math.max(roomR, roomL));
-  if (room >= MIN_W) return { side, x: side === "right" ? a.x + a.w + GAP : a.x - GAP - room, w: room };
-  return { side, x: side === "right" ? Math.max(EDGE, right - w) : EDGE, w };
+function besideArea(a: AnalyzeRect, w: number, _askW: number): { side: "right"; x: number; w: number } {
+  return { side: "right", x: a.x + a.w + GAP, w };
 }
 
 /** The size the card was last resized to; every new card opens at it. */
@@ -451,7 +445,8 @@ export function QuickAskCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; signin: boolean } | null>(null);
   const [follow, setFollow] = useState("");
-  const [useNote, setUseNote] = useState(() => localStorage.getItem("pl.quick.note") === "on");
+  // The note toggle gave way to Recapture; a stored "on" must not keep sending the note unseen.
+  const useNote = false;
   const [priv, setPriv] = useState(privateChats);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState<CardSize | null>(savedCardSize);
@@ -705,6 +700,8 @@ export function QuickAskCard({
     // Strict Mode mounts twice in development; a second ask would race the first one.
     if (seed.prior || startedRef.current) return;
     startedRef.current = true;
+    // Custom: the capture waits for the question the user types.
+    if (seed.custom) return;
     const q = seed.analyze ? analyzePrompt(seed.analyze) : seed.question;
     const files = seed.imagePath ? [seed.imagePath] : undefined;
     void ask(q, seed.selection, host, files);
@@ -712,9 +709,18 @@ export function QuickAskCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** The typed question. A Custom capture goes along with the first one. */
+  const sendFollow = () => {
+    const q = follow.trim();
+    if (!q || busyRef.current) return;
+    setFollow("");
+    const first = !!seed.custom && !turns.some((t) => t.role === "user");
+    void ask(q, "", host, first && imageRef.current ? [imageRef.current] : undefined);
+  };
+
   /** Capture the same area again (after an edit) and ask about the new image in this chat. */
   const rescan = async () => {
-    if (!seed.anchor || !seed.analyze || busyRef.current || rescanning) return;
+    if (!seed.anchor || !(seed.analyze || seed.custom) || busyRef.current || rescanning) return;
     setRescanErr("");
     const at = areaOnScreen(seed.anchor, seed.area);
     const a = at && visiblePart(at.rect, at.clip);
@@ -730,7 +736,8 @@ export function QuickAskCard({
       const next = await captureArea(a, over ? [cardRef.current] : []);
       setShot(next.previewUrl);
       imageRef.current = next.filePath;
-      const q = `I changed the area; this is a new capture of it. ${analyzePrompt(seed.analyze)}`;
+      const asked = seed.analyze ? analyzePrompt(seed.analyze) : (turns.find((t) => t.role === "user")?.text ?? "");
+      const q = `I changed the area; this is a new capture of it. ${asked}`.trim();
       void ask(q, "", host, [next.filePath]);
     } catch (e) {
       setRescanErr(e instanceof Error ? e.message : String(e));
@@ -946,37 +953,39 @@ export function QuickAskCard({
           ))}
         </div>
         <div className="spacer" />
-        <button
-          className="btn icon"
-          type="button"
-          title={copied ? "Copied" : "Copy the answer"}
-          disabled={!lastAnswer}
-          onClick={() =>
-            void navigator.clipboard.writeText(lastAnswer).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1200);
-            })
-          }
-        >
-          {copied ? <span className="qa-ok"><IcCheck size={14} /></span> : <IcCopy size={14} />}
-        </button>
-        <button
-          className="btn icon"
-          type="button"
-          title={
-            url
-              ? "Continue this chat in the Ask panel"
-              : turns.length > 1
-                ? "Continue in the Ask panel (a new chat that starts with this conversation)"
-                : "Ask in the Ask panel"
-          }
-          onClick={() => onOpenPanel(host, url ? firstQuestion : carried, url)}
-        >
-          <IcWide size={14} />
-        </button>
-        <button className="btn icon" type="button" title="Close (Esc)" onClick={onClose}>
-          <IcClose size={14} />
-        </button>
+        <div className="qa-head-actions">
+          <button
+            className="btn icon"
+            type="button"
+            title={copied ? "Copied" : "Copy the answer"}
+            disabled={!lastAnswer}
+            onClick={() =>
+              void navigator.clipboard.writeText(lastAnswer).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1200);
+              })
+            }
+          >
+            {copied ? <span className="qa-ok"><IcCheck size={14} /></span> : <IcCopy size={14} />}
+          </button>
+          <button
+            className="btn icon"
+            type="button"
+            title={
+              url
+                ? "Continue this chat in the Ask panel"
+                : turns.length > 1
+                  ? "Continue in the Ask panel (a new chat that starts with this conversation)"
+                  : "Ask in the Ask panel"
+            }
+            onClick={() => onOpenPanel(host, url ? firstQuestion : carried, url)}
+          >
+            <IcWide size={14} />
+          </button>
+          <button className="btn icon" type="button" title="Close (Esc)" onClick={onClose}>
+            <IcClose size={14} />
+          </button>
+        </div>
       </header>
 
       <div
@@ -1000,18 +1009,6 @@ export function QuickAskCard({
                 <AnalyzeIcon action={seed.analyze} size={12} />
                 {analyzeLabel(seed.analyze)}
               </span>
-            )}
-            {seed.analyze && seed.anchor && (
-              <button
-                type="button"
-                className="btn qa-shot-rescan"
-                disabled={busy || rescanning}
-                title={busy ? "Wait for the answer to finish" : "Capture the marked area again and ask about the new version"}
-                onClick={() => void rescan()}
-              >
-                <IcReload size={13} />
-                {rescanning ? "Capturing…" : "Rescan"}
-              </button>
             )}
           </div>
         )}
@@ -1105,33 +1102,23 @@ export function QuickAskCard({
         className="qa-foot"
         onSubmit={(e) => {
           e.preventDefault();
-          const q = follow;
-          setFollow("");
-          void ask(q);
+          sendFollow();
         }}
       >
         <button
           type="button"
-          className={`qa-note ${useNote && notePath ? "on" : ""}`}
-          disabled={!notePath || !!seed.imagePath}
+          className="qa-note"
+          disabled={!seed.anchor || !(seed.analyze || seed.custom) || busy || rescanning}
           title={
-            seed.imagePath
-              ? "This question already includes a screen capture"
-              : notePath
-                ? useNote
-                  ? `“${noteTitle || "Untitled"}” goes along with the next question. Click to leave it out.`
-                  : "Include the open note's text with the next question"
-                : "No note open"
+            !seed.anchor
+              ? "No screen area associated with this question"
+              : busy
+                ? "Wait for the answer to finish"
+                : "Recapture the marked area again and ask about the new version"
           }
-          onClick={() =>
-            setUseNote((v) => {
-              localStorage.setItem("pl.quick.note", v ? "off" : "on");
-              if (v) noteSent.current = false;
-              return !v;
-            })
-          }
+          onClick={() => void rescan()}
         >
-          <IcDoc size={13} /> Note
+          <IcScan size={13} /> {rescanning ? "Capturing…" : "Recapture"}
         </button>
         <button
           type="button"
@@ -1150,11 +1137,18 @@ export function QuickAskCard({
         >
           <IcIncognito size={13} /> Private
         </button>
-        <input
+        <textarea
+          rows={1}
           value={follow}
           autoFocus
-          placeholder={turns.length ? "Follow up…" : `Ask ${name}…`}
+          placeholder={turns.length ? "Follow up…" : seed.custom ? `Ask ${name} about this area…` : `Ask ${name}…`}
           onChange={(e) => setFollow(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              sendFollow();
+            }
+          }}
         />
         {busy ? (
           <button className="btn icon" type="button" title="Stop" onClick={() => abortRef.current?.abort()}>

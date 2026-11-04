@@ -19,8 +19,10 @@ Golden rules (from the project owner — never violate):
   (0,0) top-left for a new note.
 - **Pan**: middle-mouse drag, or Space+left-drag, or scroll wheel (vertical) /
   Shift+wheel (horizontal). Touchpad two-finger scroll pans.
-- **Zoom**: Ctrl+wheel, 10%–500%, steps of ~10% (multiplicative 1.1). Ctrl+0 resets
-  to 100%. Zoom centers on the cursor position.
+- **Zoom**: Ctrl+wheel, 10%–3000%, steps of ~10% (multiplicative 1.1). Ctrl+0 resets
+  to 100%. Zoom centers on the cursor position. The round button above the zoom %
+  chip shows the whole note: it zooms out (never in past 100%) until every object
+  fits with a 40 DIP margin, centered; hidden on an empty note.
 - **Click on empty canvas** with Select active, and no modifier, drag, or menu
   just dismissed: if something was selected (or a text box was being edited),
   the click only clears that selection. If nothing was selected, it creates an
@@ -186,8 +188,10 @@ over only the styles that were actually set, never the plain default font or col
   A drag-selection over that icon selects the fold. Click the icon to expand,
   drag it to move the collapsed fold. Deleting the fold deletes what is inside.
 - Ribbon "Insert image": file dialog (filter: png/jpg/jpeg/gif/bmp/webp), multiple
-  selection allowed. Images are inserted at the viewport center, cascading +24,+24
-  for each additional image, at natural size capped to 60% of viewport.
+  selection allowed. Images are inserted at the viewport center, at natural size
+  capped to 60% of viewport. Several images stack like PDF pages: all take the
+  first image's width (keeping their aspect) and sit one under the other, 14 DIP
+  apart. Dropped or attached picture files stack the same way.
 - **Ctrl+V** with image data on the clipboard inserts it the same way (single
   image, at cursor position if over canvas). Clipboard files (copied image files)
   also work.

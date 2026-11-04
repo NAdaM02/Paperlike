@@ -162,7 +162,7 @@ const TITLE_AUTOSHOW_Y = 24;
 
 const A4 = { w: 794, h: 1123, margin: 40 };
 const PDF_ZOOM_MIN = 0.4;
-const PDF_ZOOM_MAX = 3;
+const PDF_ZOOM_MAX = 10;
 
 /** Which sheet point sits under the cursor, so a zoom keeps that point still. */
 function pdfZoomAnchor(sc: HTMLElement, clientX: number, clientY: number) {
@@ -1966,16 +1966,22 @@ export function NotebookView({
     const media = { ...n.media_b64 };
     let placed = [...n.doc.canvas.objects];
     const box = (o: (typeof placed)[number]) => objectBBox(o, heightsRef.current);
-    imgs.forEach((img, i) => {
+    // Several pictures stack like PDF pages: one width, one under the other.
+    const first = fitImage(imgs[0].width, imgs[0].height);
+    let top = center.y - first.height / 2;
+    imgs.forEach((img) => {
       const ext = img.name.split(".").pop() || "png";
       const mp = `media/${newId("m").slice(2)}.${ext}`;
       media[mp] = img.b64;
-      const { width, height } = fitImage(img.width, img.height);
+      const width = first.width;
+      const height = Math.max(1, Math.round((width * img.height) / Math.max(1, img.width)));
+      const y = Math.round(top);
+      top += height + 14;
       const obj: ImageObject = {
         type: "image",
         id: newId("i"),
-        x: Math.round(center.x - width / 2 + i * 24),
-        y: Math.round(center.y - height / 2 + i * 24),
+        x: Math.round(center.x - width / 2),
+        y,
         z: ++z,
         media: mp,
         width,
@@ -2276,7 +2282,8 @@ export function NotebookView({
     const origin = at ?? insertAt();
     const pdfs: { b64: string; aspects: number[] }[] = [];
     const made: { obj: ImageObject | FileObject; b64: string; cx: number; cy: number }[] = [];
-    let pics = 0;
+    let picW = 0;
+    let picY = 0;
     let chipY = origin.y - FILE_CHIP_H / 2;
     for (const f of picked) {
       const ext = fileExt(f.name);
@@ -2291,10 +2298,17 @@ export function NotebookView({
       if (IMAGE_EXTS.includes(ext)) {
         try {
           const natural = await imageSize(f.b64);
-          const { width, height } = fitImage(natural.width, natural.height);
-          const x = Math.round(origin.x - width / 2 + pics * 24);
-          const y = Math.round(origin.y - height / 2 + pics * 24);
-          pics++;
+          // Several pictures stack like PDF pages: the first one's width, one under the other.
+          const fit = fitImage(natural.width, natural.height);
+          if (!picW) {
+            picW = fit.width;
+            picY = origin.y - fit.height / 2;
+          }
+          const width = picW;
+          const height = Math.max(1, Math.round((width * natural.height) / Math.max(1, natural.width)));
+          const x = Math.round(origin.x - width / 2);
+          const y = Math.round(picY);
+          picY += height + 14;
           const obj: ImageObject = {
             type: "image",
             id: newId("i"),
@@ -3580,7 +3594,7 @@ export function NotebookView({
       <div className="nb-body" style={{ position: "relative" }}>
         {mode === "notebook" &&
           (ui.sidebar_collapsed ? (
-            <div className="sidebar-rail">
+            <div className="sidebar-rail" onClick={() => persistUi({ ...ui, sidebar_collapsed: false })}>
               <button
                 className="btn icon"
                 title="Expand note list"

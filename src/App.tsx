@@ -266,11 +266,12 @@ export default function App() {
     setAnalyzeOpen(false);
     openQuick({
       id: Date.now(),
-      question: result.action,
+      question: result.action === "custom" ? "" : result.action,
       selection: "",
       imagePath: result.filePath,
       imagePreview: result.previewUrl,
-      analyze: result.action,
+      analyze: result.action === "custom" ? undefined : result.action,
+      custom: result.action === "custom",
       anchor: result.rect,
       area: noteAreaAt(result.rect),
     });

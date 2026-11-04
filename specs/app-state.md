@@ -157,7 +157,9 @@ is shown under it. Code: `src-tauri/src/gitsync.rs`, `src/GitSync.tsx`.
   Hiding to the tray is not a shutdown;
 - about 2 minutes after a note that was saved while open is closed (switching
   notes, leaving the notebook) and not reopened. The wait is per note; reopening
-  cancels it. A deleted note counts as closed. Notes outside the folder are ignored.
+  cancels it. A deleted note counts as closed. Notes outside the folder are ignored;
+- when **Sync now** is pressed in Settings › Files (disabled while a sync runs or
+  the folder can't be synced).
 
 One sync runs at a time; a trigger during a run queues one more run.
 

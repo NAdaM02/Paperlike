@@ -131,6 +131,7 @@ pub fn run() {
             gitsync::git_sync_note_opened,
             gitsync::git_sync_note_closed,
             gitsync::git_sync_on_exit,
+            gitsync::git_sync_run,
             gitsync::git_sync_check,
             gitsync::git_sync_resolve,
             attachments::read_local_file,

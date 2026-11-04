@@ -1300,7 +1300,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   background: var(--accent);
 }
 .sidebar-rail {
-  width: 34px;
+  width: 6px;
   background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;
@@ -1308,6 +1308,28 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   align-items: center;
   padding-top: 8px;
   flex: none;
+  cursor: pointer;
+  transition: width 140ms ease, background 140ms ease;
+  overflow: hidden;
+  position: relative;
+}
+.sidebar-rail:hover {
+  width: 28px;
+  background: var(--surface-2, var(--surface));
+}
+.sidebar-rail .btn.icon {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.sidebar-rail:hover .btn.icon {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Export-select bar — sits under the note list, not over the canvas */
@@ -1528,6 +1550,9 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   transition: opacity 120ms;
 }
 .zoom-chip:hover { opacity: 1; color: var(--ink); }
+.zoom-chip.zoom-fit { bottom: 40px; padding: 4px 6px; display: grid; place-items: center; }
+.git-sync-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.analyze-host { width: 32px; padding: 0; display: grid; place-items: center; }
 /* while a drawing tool is active the objects must not swallow the pointer */
 .canvas-world.drawing > * { pointer-events: none; user-select: none; }
 .canvas-world.drawing .draw-obj * { pointer-events: none; }
@@ -3038,6 +3063,8 @@ svg.hl .hl-ink {
 }
 .qa-shot {
   position: relative;
+  width: fit-content;
+  max-width: 100%;
   margin: 0 0 10px;
   border-radius: 8px;
   overflow: hidden;
@@ -3046,7 +3073,7 @@ svg.hl .hl-ink {
 }
 .qa-shot img {
   display: block;
-  width: 100%;
+  max-width: 100%;
   max-height: calc(160px * var(--qa-z, 1));
   object-fit: contain;
 }
@@ -3063,20 +3090,6 @@ svg.hl .hl-ink {
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   border: 1px solid var(--border);
   color: var(--ink-2);
-}
-.qa-shot-rescan {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 9px 0 7px;
-  font-size: 11.5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  border: 1px solid var(--border);
 }
 .qa-field {
   display: flex;
@@ -3236,7 +3249,15 @@ svg.hl .hl-ink {
 .qa-card:hover .qa-rz-se::after { opacity: 1; }
 .qa-card.resizing, .qa-card.resizing * { user-select: none; }
 .qa-card.resizing .qa-body { pointer-events: none; }
-.qa-hosts { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 999px; }
+.qa-hosts {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  min-width: 0;
+  flex-shrink: 1;
+}
 .qa-hosts button {
   display: inline-flex;
   align-items: center;
@@ -3248,10 +3269,26 @@ svg.hl .hl-ink {
   padding: 2px 9px;
   border-radius: 999px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .qa-hosts button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--ink); font-weight: 600; }
 .qa-hosts button:disabled { opacity: 0.5; cursor: default; }
-.qa-head .btn.icon { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; color: var(--ink-2); }
+.qa-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.qa-head .btn.icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  flex-shrink: 0;
+}
 .qa-ok { font-size: 13px; color: var(--accent); }
 .qa-body {
   flex: 1;
@@ -3402,15 +3439,24 @@ svg.hl .hl-ink {
   padding: 6px 6px 6px 8px;
   border-top: 1px solid var(--border);
 }
+.qa-foot textarea,
 .qa-foot input {
   flex: 1;
   min-width: 0;
   border: 0;
   background: transparent;
   outline: none;
+  font-family: inherit;
   font-size: 13px;
   color: var(--ink);
   padding: 4px 2px;
+  resize: none;
+  field-sizing: content;
+  line-height: 1.4;
+  min-height: 24px;
+  max-height: calc(5lh + 8px);
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 .qa-foot .btn.icon { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
 .qa-note {
@@ -5183,6 +5229,14 @@ svg.hl .hl-ink {
   box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 14%, transparent);
   cursor: default;
   white-space: nowrap;
+}
+.analyze-actions.above {
+  bottom: auto;
+  top: -44px;
+}
+.analyze-actions.inside {
+  bottom: 12px;
+  top: auto;
 }
 .analyze-actions .btn { height: 28px; padding: 0 10px; font-size: 12.5px; }
 .analyze-actions .analyze-act { display: inline-flex; align-items: center; gap: 6px; padding: 0 11px 0 9px; }

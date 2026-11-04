@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
-import { IcClose, IcExplain, IcSolve, IcVerify } from "./icons";
+import { CHAT_NAME, ChatHost, defaultHost, setDefaultHost } from "./chat";
+import { HostLogo, IcAsk, IcClose, IcExplain, IcSolve, IcVerify } from "./icons";
 
 export type AnalyzeAction = "explain" | "solve" | "factcheck";
 
 export type AnalyzeResult = {
-  action: AnalyzeAction;
+  /** "custom": no preset prompt; the user writes the question. */
+  action: AnalyzeAction | "custom";
   pngB64: string;
   filePath: string;
   previewUrl: string;
@@ -248,7 +250,17 @@ export function AnalyzeOverlay({
     setDrag(mode);
   };
 
-  const run = async (action: AnalyzeAction) => {
+  // The model that answers; click or scroll the logo to switch. It is the app-wide default.
+  const [host, setHost] = useState<ChatHost>(defaultHost);
+  const wheelAt = useRef(0);
+  const stepHost = (d: number) => {
+    const order: ChatHost[] = ["claude", "chatgpt", "gemini"];
+    const next = order[(order.indexOf(host) + d + order.length) % order.length];
+    setHost(next);
+    setDefaultHost(next);
+  };
+
+  const run = async (action: AnalyzeAction | "custom") => {
     if (!rect || rect.w < MIN || rect.h < MIN || busy) return;
     setBusy(true);
     setErr("");
@@ -296,13 +308,42 @@ export function AnalyzeOverlay({
             <div key={g} className={`analyze-grip ${g}`} onPointerDown={(e) => beginAdjust(e, g)} />
           ))}
           {ready && (
-            <div className="analyze-actions" onPointerDown={(e) => e.stopPropagation()}>
+            <div
+              className={`analyze-actions${rect.y + rect.h + 54 > window.innerHeight ? (rect.y < 54 ? " inside" : " above") : ""}`}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="btn analyze-host"
+                disabled={busy}
+                title={`${CHAT_NAME[host]} answers. Click or scroll to switch.`}
+                aria-label={`Model: ${CHAT_NAME[host]}`}
+                onClick={() => stepHost(1)}
+                onWheel={(e) => {
+                  const now = performance.now();
+                  if (now - wheelAt.current < 140 || !e.deltaY) return;
+                  wheelAt.current = now;
+                  stepHost(e.deltaY > 0 ? 1 : -1);
+                }}
+              >
+                <HostLogo host={host} size={15} />
+              </button>
               {(["explain", "solve", "factcheck"] as const).map((a) => (
                 <button key={a} type="button" className="btn analyze-act" disabled={busy} onClick={() => void run(a)}>
                   <AnalyzeIcon action={a} />
                   {analyzeLabel(a)}
                 </button>
               ))}
+              <button
+                type="button"
+                className="btn analyze-act"
+                disabled={busy}
+                title="Attach this area and write your own question"
+                onClick={() => void run("custom")}
+              >
+                <IcAsk size={14} />
+                Custom
+              </button>
               <span className="analyze-sep" aria-hidden="true" />
               <button
                 type="button"

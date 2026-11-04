@@ -102,6 +102,7 @@ export const messages = {
   settingsSync: "Sync",
   gitSync: "Sync github",
   gitSyncHint: "Synchronize with the repository where you keep your notes",
+  gitSyncNow: "Sync now",
   gitSyncWhen: "Syncs when Paperlike starts and closes, and two minutes after you close a note you changed.",
   gitSyncPickTitle: "Folder of your notes repository",
   gitSyncNoFolder: "No folder chosen",
