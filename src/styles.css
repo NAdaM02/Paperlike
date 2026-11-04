@@ -5651,11 +5651,32 @@ svg.hl .hl-ink {
 .qa-pin {
   display: inline-flex;
   align-items: center;
-  color: var(--muted);
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   margin-right: 2px;
+  border-radius: 8px;
+  color: var(--ink-3);
   cursor: pointer;
+  /* Unpinned: outlined, muted, tipped ~45°. */
+  transform: rotate(45deg);
+  transition: color 0.12s, background 0.12s, transform 0.12s;
 }
-.qa-pin.is-on { color: var(--accent); }
+.qa-pin svg { opacity: 0.85; }
+.qa-pin.is-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+  transform: rotate(0deg);
+}
+.qa-pin.is-on svg {
+  opacity: 1;
+  /* Filled look: thicken the stroke on the pin glyph. */
+  stroke-width: 2.25;
+}
+.qa-card.is-pinned {
+  /* Subtle cue on the card itself while it stays on the note. */
+  box-shadow: inset 0 2px 0 0 var(--accent), var(--shadow-md, 0 8px 28px color-mix(in srgb, var(--ink) 14%, transparent));
+}
 /* While an area is being selected, cards and outlines step aside so they stay out of the capture. */
 body.analyzing .qa-card,
 body.analyzing .analyze-mark { visibility: hidden !important; }

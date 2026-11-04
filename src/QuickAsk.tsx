@@ -1283,7 +1283,7 @@ export function QuickAskCard({
     {seed.anchor && <AnalyzeMark rect={seed.anchor} area={seed.area} />}
     <div
       ref={cardRef}
-      className="qa-card"
+      className={`qa-card${pinned ? " is-pinned" : ""}`}
       data-qid={seed.id}
       onPointerDownCapture={toFront}
       style={{
@@ -1332,7 +1332,7 @@ export function QuickAskCard({
         {!!seed.area?.w && (
           <button
             className={`btn icon qa-pin${pinned ? " is-on" : ""}`}
-            title={pinned ? `${messages.quickPinned} Click to unpin.` : "Pin to the note"}
+            title={pinned ? "Pinned to the note. Click to unpin." : "Not pinned. Click to pin to the note."}
             aria-pressed={pinned}
             onClick={() => (pinned ? unpin() : pinAgain())}
           >
