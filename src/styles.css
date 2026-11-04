@@ -1314,7 +1314,8 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   min-height: 0;
   width: var(--sidebar-w, 224px);
   overflow: hidden;
-  transform: translateX(0);
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
   transition: transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1), opacity 220ms ease;
   /* No soft right glow — it bled onto the shifted title bar as a light smear. */
   box-shadow: none;
@@ -1322,7 +1323,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   background: var(--surface);
 }
 .sidebar-slot.is-collapsed {
-  transform: translateX(-100%);
+  transform: translate3d(-100%, 0, 0);
   opacity: 0;
   pointer-events: none;
 }
@@ -1435,29 +1436,36 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
 
 /* ─── Editor ─────────────────────────────────────────────────────────── */
 
-.editor-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; touch-action: none; }
+.editor-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  touch-action: none;
+  /* Clip the title while it translates with the list (compositor-only shift). */
+  overflow-x: clip;
+}
 .note-title-slot,
 .note-title-reveal-slot {
   flex: 0 0 auto;
   align-self: start;
   box-sizing: border-box;
   width: 100%;
-  margin-left: 0;
   overflow: hidden;
   interpolate-size: allow-keywords;
   height: max-content;
-  /* Same easing as .sidebar-slot so the title clears the list in sync. */
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  /* height = title collapse; transform = list open — never margin/width. */
   transition:
     height 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
-    margin-left 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
-    width 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
+    transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
 }
 .editor-pane.side-open .note-title-slot,
 .editor-pane.side-open .note-title-reveal-slot {
-  margin-left: var(--sidebar-w, 224px);
-  width: calc(100% - var(--sidebar-w, 224px));
+  transform: translate3d(var(--sidebar-w, 224px), 0, 0);
 }
-/* While dragging the list width, keep the title glued to the edge (no lag). */
 .editor-pane.side-resizing .note-title-slot,
 .editor-pane.side-resizing .note-title-reveal-slot {
   transition: height 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
@@ -1635,14 +1643,15 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
       var(--sidebar-w, 224px) 100% / var(--r-lg) var(--r-lg) no-repeat,
     linear-gradient(var(--bg), var(--bg))
       0 0 / var(--sidebar-w, 224px) 100% no-repeat;
-  transform: translateX(calc(-1 * var(--sidebar-w, 224px)));
+  transform: translate3d(calc(-1 * var(--sidebar-w, 224px)), 0, 0);
   opacity: 0;
+  will-change: transform;
   transition:
     transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
     opacity 220ms ease;
 }
 .editor-pane.side-open .canvas-wrap:not(.locked)::before {
-  transform: translateX(0);
+  transform: translate3d(0, 0, 0);
   opacity: 1;
 }
 .editor-pane.side-resizing .canvas-wrap:not(.locked)::before {
@@ -5496,6 +5505,16 @@ svg.hl .hl-ink {
   background: color-mix(in srgb, var(--surface) 85%, transparent);
   cursor: pointer;
   opacity: 0.75;
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  transition:
+    transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
+    opacity 120ms;
+}
+.editor-pane.side-open .canvas-minimap {
+  transform: translate3d(var(--sidebar-w, 224px), 0, 0);
+}
+.editor-pane.side-resizing .canvas-minimap {
   transition: opacity 120ms;
 }
 .canvas-minimap:hover { opacity: 1; }
