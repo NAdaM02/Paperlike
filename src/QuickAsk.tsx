@@ -143,12 +143,31 @@ export function QuickAskField({
   const [hist, setHist] = useState(sessionHistory);
   const [host, setHost] = useState<ChatHost>(defaultHost);
   const [modelsOpen, setModelsOpen] = useState(false);
+  // Wide while focused or the model menu is open; a short delay on blur stops the
+  // width from jumping when focus moves between the input and the model button.
+  const [fieldWide, setFieldWide] = useState(false);
   const [listOpen, setListOpen] = useState(false);
   const calendarOn = useCalendarAvailable();
   const wrapRef = useRef<HTMLDivElement>(null);
+  const fieldRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const modelsOpenRef = useRef(modelsOpen);
+  modelsOpenRef.current = modelsOpen;
+  const wideCloseTimer = useRef(0);
+  const keepFieldWide = () => {
+    window.clearTimeout(wideCloseTimer.current);
+    setFieldWide(true);
+  };
+  const releaseFieldWide = () => {
+    window.clearTimeout(wideCloseTimer.current);
+    wideCloseTimer.current = window.setTimeout(() => {
+      if (modelsOpenRef.current) return;
+      if (fieldRef.current?.contains(document.activeElement)) return;
+      setFieldWide(false);
+    }, 30);
+  };
 
   useEffect(() => {
     return subscribeQuickHistory(() => setHist([...sessionHistory]));
@@ -171,8 +190,16 @@ export function QuickAskField({
   // Keyboard users land on the current model when the menu opens.
   useEffect(() => {
     if (!modelsOpen) return;
+    keepFieldWide();
     menuRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
   }, [modelsOpen]);
+
+  useEffect(() => {
+    if (modelsOpen) return;
+    releaseFieldWide();
+  }, [modelsOpen]);
+
+  useEffect(() => () => window.clearTimeout(wideCloseTimer.current), []);
 
   // Scrolling over the model button steps through the models (no request is sent from here).
   const disabledRef = useRef(disabled);
@@ -279,8 +306,11 @@ export function QuickAskField({
         )}
       </div>
       <form data-tour="quick-ask"
-        className={`qa-field ${modelsOpen ? "open" : ""}`}
+        ref={fieldRef}
+        className={`qa-field ${fieldWide || modelsOpen ? "open" : ""}`}
         title={disabled ? "Ask stays off after the trial. You can still view and export notes." : "Quick answer in a card (Ctrl+K). Text selected in the note goes along."}
+        onFocus={keepFieldWide}
+        onBlur={releaseFieldWide}
         onSubmit={(e) => {
           e.preventDefault();
           if (disabled || !q.trim()) return;
