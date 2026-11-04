@@ -141,21 +141,13 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   };
   const current = () => latest.current ?? items ?? [];
 
+  // Stay open while panning or clicking the note; only Esc / the close control / the toolbar toggle dismiss it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Element | null;
-      if (!t || panelRef.current?.contains(t) || t.closest?.(".qa-checklist-btn")) return;
-      onClose();
-    };
     window.addEventListener("keydown", onKey);
-    window.addEventListener("pointerdown", onDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onDown, true);
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   const add = (note: boolean) => {
