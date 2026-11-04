@@ -33,7 +33,7 @@ export function ArrowInk({
           x2={seg[1][0]}
           y2={seg[1][1]}
           stroke={item.color}
-          strokeWidth={Math.max(1.25, item.width * 0.95)}
+          strokeWidth={Math.max(1.1, item.width * 0.8)}
           strokeLinecap="round"
         />
       ))}

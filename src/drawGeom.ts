@@ -20,8 +20,8 @@ export function arrowHeadKind(style?: string): ArrowHeadKind {
  */
 export function arrowReach(len: number, width: number): number {
   if (!(len > 1)) return Math.max(3, width * 1.6);
-  const ideal = Math.max(18, 18 + width * 2.25, width * 4.5);
-  return Math.min(ideal, len * 0.42);
+  const ideal = Math.max(14, 13 + width * 1.8, width * 3.6);
+  return Math.min(ideal, len * 0.36);
 }
 
 function unit(from: Pt, to: Pt): { ux: number; uy: number; len: number } {
@@ -151,10 +151,11 @@ export function arrowHeadPoints(from: Pt, to: Pt, width: number, kind: ArrowHead
     return sketch.map(([along, side], i) => {
       const ja = (wobble(s + i * 2.2) - 0.5) * 0.08;
       const js = (wobble(s + i * 2.2 + 9.1) - 0.5) * 0.08;
-      return at(along + ja, (side + js) * 0.7);
+      return at(along + ja, (side + js) * 0.55);
     });
   }
-  const wing = reach * (kind === "open" ? 0.48 : 0.44);
+  // Slim tips: a narrow head reads lighter than the old wide one at every size.
+  const wing = reach * (kind === "open" ? 0.36 : 0.32);
   const baseX = to[0] - ux * reach;
   const baseY = to[1] - uy * reach;
   return [to, [baseX + px * wing, baseY + py * wing], [baseX - px * wing, baseY - py * wing]];
