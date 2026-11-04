@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import "@fontsource-variable/newsreader/opsz.css";
 import { api } from "./api";
 import { messages } from "./copy/messages";
 import { IcClose } from "./icons";
@@ -46,26 +47,21 @@ const Grip = () => (
   </svg>
 );
 
-/** A quick scribble across a row, drawn right to left with random ups and downs. */
+/** An eraser pass across a row: slanted up-down strokes from right to left, a little different each time. */
 function scribblePath(w: number, h: number): string {
-  const mid = h / 2;
-  const amp = Math.max(4, h * 0.3);
-  let x = w - 6;
-  let up = Math.random() < 0.5;
-  const pts = [`M${x.toFixed(1)} ${(mid + (Math.random() - 0.5) * amp).toFixed(1)}`];
-  while (x > 30) {
-    const step = 5 + Math.random() * 7;
-    const nx = x - step;
-    const y = mid + (up ? -1 : 1) * amp * (0.55 + Math.random() * 0.45) + (Math.random() - 0.5) * 3;
-    const cx = x - step / 2 + (Math.random() - 0.5) * 3;
-    pts.push(`Q${cx.toFixed(1)} ${(y + (up ? -2 : 2)).toFixed(1)} ${nx.toFixed(1)} ${y.toFixed(1)}`);
-    x = nx;
-    up = !up;
+  let x = w - 4;
+  let top = Math.random() < 0.5;
+  const pts = [`M${x.toFixed(1)} ${(h * (top ? 0.8 : 0.2)).toFixed(1)}`];
+  while (x > -4) {
+    x -= 8 + Math.random() * 6;
+    const y = h * (top ? 0.12 + Math.random() * 0.1 : 0.78 + Math.random() * 0.1);
+    pts.push(`L${x.toFixed(1)} ${y.toFixed(1)}`);
+    top = !top;
   }
   return pts.join(" ");
 }
 
-const ERASE_MS = 460;
+const ERASE_MS = 520;
 
 /** App-wide checklist under the top-right tools. Saved to %APPDATA%\Paperlike\checklist.json. */
 export function ChecklistPanel({ onClose }: { onClose: () => void }) {
@@ -278,7 +274,7 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
           >
             {erasing[it.id] && (
               <svg className="checklist-erase" viewBox={`0 0 ${erasing[it.id].w} ${erasing[it.id].h}`} preserveAspectRatio="none" aria-hidden>
-                <path d={erasing[it.id].d} pathLength={1} />
+                <path d={erasing[it.id].d} pathLength={1} style={{ strokeWidth: Math.max(10, erasing[it.id].h * 0.55) }} />
               </svg>
             )}
             <button
