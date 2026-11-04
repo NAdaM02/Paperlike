@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { api, HomeTile, RecoveryItem, SearchHit, Settings } from "./api";
 import { ASK_DEFAULT_W, AskHost, AskNote, AskPane, clampAskWidth } from "./AskPane";
+import { CalendarPane } from "./CalendarPane";
 import { AnalyzeMark, AnalyzeOverlay, AnalyzeRect, AnalyzeResult } from "./Analyze";
 import { NoteArea, noteAreaAt } from "./canvasAnchor";
 import { Calculator } from "./Calculator";
@@ -187,6 +188,20 @@ export default function App() {
     /** A conversation to open, e.g. one started as a quick question. */
     url?: string | null;
   } | null>(null);
+  const [calOpen, setCalOpen] = useState(false);
+  /* Calendar and Ask share the right side; opening one closes the other. */
+  useEffect(() => {
+    const onToggle = () =>
+      setCalOpen((open) => {
+        if (!open) setAsk(null);
+        return !open;
+      });
+    window.addEventListener("pl:calendar", onToggle);
+    return () => window.removeEventListener("pl:calendar", onToggle);
+  }, []);
+  useEffect(() => {
+    if (ask) setCalOpen(false);
+  }, [ask]);
   const [askWidth, setAskWidth] = useState(() =>
     clampAskWidth(Number(localStorage.getItem("pl.ask.width")) || ASK_DEFAULT_W),
   );
@@ -739,11 +754,13 @@ export default function App() {
     setAsk({ id: Date.now(), host, briefPaths: notePaths, question, send: true });
   };
 
+  const sidePane = !!ask || calOpen;
+
   return (
     <>
       <div
-        className={`app-frame ${ask ? "with-ask" : ""}`}
-        style={{ ["--ask-w" as string]: ask ? `${askWidth}px` : "0px" }}
+        className={`app-frame ${sidePane ? "with-ask" : ""}`}
+        style={{ ["--ask-w" as string]: sidePane ? `${askWidth}px` : "0px" }}
       >
       {route.view === "home" && announcement && announcement.notes.trim() && Number(String(announcement.version).split(".")[0]) >= 1 && (
         <aside className="update-card" role="status">
@@ -945,6 +962,16 @@ export default function App() {
             setAsk({ ...ask, host });
           }}
           onClose={() => setAsk(null)}
+        />
+      )}
+      {calOpen && !ask && (
+        <CalendarPane
+          width={askWidth}
+          onWidth={(w, done) => {
+            setAskWidth(w);
+            if (done) localStorage.setItem("pl.ask.width", String(w));
+          }}
+          onClose={() => setCalOpen(false)}
         />
       )}
       {recovery.length > 0 && (

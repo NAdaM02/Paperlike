@@ -1168,6 +1168,7 @@ fn assistant_label(host: &str) -> String {
     match host {
         "chatgpt" => "ask-chatgpt".into(),
         "gemini" => "ask-gemini".into(),
+        "calendar" => "ask-calendar".into(),
         _ => "ask-claude".into(),
     }
 }
@@ -1176,13 +1177,14 @@ fn assistant_url(host: &str) -> &'static str {
     match host {
         "chatgpt" => "https://chatgpt.com/",
         "gemini" => "https://gemini.google.com/app",
+        "calendar" => "https://calendar.google.com/calendar/r",
         _ => "https://claude.ai/new",
     }
 }
 
 fn hide_assistant(app: &tauri::AppHandle, except: &str) {
     use tauri::{LogicalPosition, LogicalSize};
-    for host in ["claude", "gemini", "chatgpt"] {
+    for host in ["claude", "gemini", "chatgpt", "calendar"] {
         let label = assistant_label(host);
         if label == except {
             continue;
@@ -1219,6 +1221,7 @@ fn chat_profile(state: &State<'_, AppState>, host: &str) -> std::path::PathBuf {
     state.paths.root.join("browser").join(match host {
         "chatgpt" => "chatgpt",
         "gemini" => "gemini",
+        "calendar" => "calendar",
         _ => "claude",
     })
 }

@@ -5,8 +5,9 @@ import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { noteText, summaryHtml } from "./brief";
 import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
 import { ChecklistPanel } from "./Checklist";
+import { toggleCalendar } from "./CalendarPane";
 import { messages } from "./copy/messages";
-import { HostLogo, IcCalc, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
+import { HostLogo, IcCalc, IcCalendar, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
 const BRIEFLY =
@@ -251,6 +252,15 @@ export function QuickAskField({
           onClick={() => setListOpen((o) => !o)}
         >
           <IcCheck size={15} />
+        </button>
+        <button
+          type="button"
+          className="btn icon qa-tool"
+          title="Google Calendar"
+          aria-label="Google Calendar"
+          onClick={toggleCalendar}
+        >
+          <IcCalendar size={15} />
         </button>
         {onAnalyze && (
           <button
