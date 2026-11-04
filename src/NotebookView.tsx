@@ -1069,7 +1069,7 @@ export function NotebookView({
         if (settings.autosave) void flushSave();
         else api.writeRecovery(note.path, note).catch(() => {});
       },
-      settings.autosave ? 400 : 1500,
+      settings.autosave ? 900 : 1500,
     );
     return () => window.clearTimeout(id);
   }, [dirty, note, settings.autosave, flushSave, expired]);

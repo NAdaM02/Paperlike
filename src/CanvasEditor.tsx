@@ -4,6 +4,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -505,6 +506,11 @@ export function CanvasEditor({
   dragGhost = null,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement>(null);
+  const zoomChipRef = useRef<HTMLButtonElement>(null);
+  const minimapViewRef = useRef<HTMLDivElement>(null);
+  /** Last minimap layout so pan can move the view rect without a React render. */
+  const mmLayoutRef = useRef<{ ux: number; uy: number; s: number; wrapW: number; wrapH: number } | null>(null);
   const onPointerDownRef = useRef<(e: React.PointerEvent<HTMLDivElement>) => void>(() => {});
   const onPointerMoveRef = useRef<(e: React.PointerEvent<HTMLDivElement>) => void>(() => {});
   const onPointerUpRef = useRef<(e: React.PointerEvent<HTMLDivElement>) => void>(() => {});
@@ -544,6 +550,10 @@ export function CanvasEditor({
   }, []);
   const [cam, setCam] = useState<Camera>(lockedView ?? initialCam ?? { x: 60, y: 40, z: 1 });
   const [wrapBox, setWrapBox] = useState({ w: 0, h: 0 });
+  const wrapBoxRef = useRef(wrapBox);
+  wrapBoxRef.current = wrapBox;
+  const paperRef = useRef(paper);
+  paperRef.current = paper;
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -553,23 +563,81 @@ export function CanvasEditor({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  useEffect(() => {
-    if (!liveCamRef || lockedView) return;
-    const el = wrapRef.current;
-    liveCamRef.current = { ...cam, w: el?.clientWidth ?? 0, h: el?.clientHeight ?? 0 };
-    onLiveCamRef.current?.();
-  }, [cam, liveCamRef, lockedView]);
   const onLiveCamRef = useRef(onLiveCam);
   onLiveCamRef.current = onLiveCam;
   const lockedRef = useRef(lockedView);
   lockedRef.current = lockedView;
-  useEffect(() => {
-    if (lockedView) setCam(lockedView);
-  }, [lockedView]);
   const camRef = useRef(cam);
-  camRef.current = cam;
-  // Lets overlays (the Analyze outline) follow a spot in this note while the view moves.
-  useEffect(() => canvasMoved(), [cam]);
+  const camCullKey = useRef("");
+  const wheelCamFlush = useRef(0);
+  /** Apply camera to the world/paper/chrome without React. Pan and zoom stay smooth on big notes. */
+  const paintCam = (c: Camera) => {
+    camRef.current = c;
+    const world = worldRef.current;
+    if (world) world.style.transform = `translate(${c.x}px, ${c.y}px) scale(${c.z})`;
+    const wrap = wrapRef.current;
+    if (wrap) {
+      const bg = paperBackground(paperRef.current, c);
+      wrap.style.backgroundImage = typeof bg.backgroundImage === "string" ? bg.backgroundImage : "";
+      wrap.style.backgroundSize = typeof bg.backgroundSize === "string" ? bg.backgroundSize : "";
+      wrap.style.backgroundPosition = typeof bg.backgroundPosition === "string" ? bg.backgroundPosition : "";
+    }
+    if (zoomChipRef.current) zoomChipRef.current.textContent = `${Math.round(c.z * 100)}%`;
+    const mm = mmLayoutRef.current;
+    const viewEl = minimapViewRef.current;
+    if (mm && viewEl && c.z > 0) {
+      const view = { x: -c.x / c.z, y: -c.y / c.z, w: mm.wrapW / c.z, h: mm.wrapH / c.z };
+      viewEl.style.left = `${(view.x - mm.ux) * mm.s}px`;
+      viewEl.style.top = `${(view.y - mm.uy) * mm.s}px`;
+      viewEl.style.width = `${view.w * mm.s}px`;
+      viewEl.style.height = `${view.h * mm.s}px`;
+    }
+  };
+  const cullKeyOf = (c: Camera) => {
+    const wb = wrapBoxRef.current;
+    const zq = Math.pow(2, Math.round(Math.log2(c.z || 1) * 2) / 2);
+    const cell = Math.max(wb.w, wb.h, 400) / zq;
+    const cx = Math.floor(-c.x / (c.z || 1) / cell);
+    const cy = Math.floor(-c.y / (c.z || 1) / cell);
+    return `${cx}|${cy}|${cell}`;
+  };
+  const publishLiveCam = (c: Camera) => {
+    if (!liveCamRef || lockedRef.current) return;
+    const el = wrapRef.current;
+    liveCamRef.current = { ...c, w: el?.clientWidth ?? 0, h: el?.clientHeight ?? 0 };
+    onLiveCamRef.current?.();
+  };
+  /** Live pan/zoom: DOM only, React only when the stroke cull cell changes. */
+  const nudgeCam = (next: Camera | ((c: Camera) => Camera)) => {
+    const c = typeof next === "function" ? next(camRef.current) : next;
+    paintCam(c);
+    publishLiveCam(c);
+    canvasMoved();
+    const key = cullKeyOf(c);
+    if (key !== camCullKey.current) {
+      camCullKey.current = key;
+      setCam(c);
+    }
+  };
+  /** Commit camera to React (fit, reset, pan end, cull). */
+  const flushCam = (next?: Camera | ((c: Camera) => Camera)) => {
+    const c = next === undefined ? camRef.current : typeof next === "function" ? next(camRef.current) : next;
+    paintCam(c);
+    camCullKey.current = cullKeyOf(c);
+    publishLiveCam(c);
+    canvasMoved();
+    setCam(c);
+  };
+  useEffect(() => {
+    if (lockedView) flushCam(lockedView);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync locked preview camera only
+  }, [lockedView]);
+  useLayoutEffect(() => {
+    paintCam(camRef.current);
+    camCullKey.current = cullKeyOf(camRef.current);
+    publishLiveCam(camRef.current);
+  }, [paper, cam]);
+  useEffect(() => () => window.clearTimeout(wheelCamFlush.current), []);
   const notePathForAnchor = note.path;
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -737,7 +805,7 @@ export function CanvasEditor({
     const wx = m.ux + (e.clientX - b.left) / m.s;
     const wy = m.uy + (e.clientY - b.top) / m.s;
     const W = wrapBox.w, H = wrapBox.h;
-    setCam((c) => ({ ...c, x: W / 2 - wx * c.z, y: H / 2 - wy * c.z }));
+    nudgeCam((c) => ({ ...c, x: W / 2 - wx * c.z, y: H / 2 - wy * c.z }));
   };
   const maxZ = useCallback(() => objects.reduce((m, o) => Math.max(m, o.z), 0), [objects]);
 
@@ -853,7 +921,7 @@ export function CanvasEditor({
     if (left >= 8 && top >= 8 && right <= view.width - 8 && bottom <= view.height - 8) return;
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    setCam((cam) => ({ ...cam, x: view.width / 2 - cx * cam.z, y: view.height / 2 - cy * cam.z }));
+    flushCam((cam) => ({ ...cam, x: view.width / 2 - cx * cam.z, y: view.height / 2 - cy * cam.z }));
   }, [onUpdate, snapshot]);
 
   const restack = useCallback(
@@ -978,7 +1046,7 @@ export function CanvasEditor({
         if (t.left >= w.left + m && t.right <= w.right - m && t.top >= w.top + m && t.bottom <= w.bottom - m) return;
         const dx = w.left + w.width / 2 - (t.left + t.width / 2);
         const dy = w.top + w.height / 2 - (t.top + t.height / 2);
-        setCam((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
+        nudgeCam((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
       },
     };
   }
@@ -1050,7 +1118,7 @@ export function CanvasEditor({
         const r = el.getBoundingClientRect();
         const mx = e.clientX - r.left;
         const my = e.clientY - r.top;
-        setCam((c) => {
+        nudgeCam((c) => {
           const nz = Math.min(30, Math.max(0.15, c.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015))));
           return {
             z: nz,
@@ -1061,11 +1129,13 @@ export function CanvasEditor({
       } else if (e.shiftKey) {
         // The canvas takes the wheel; nothing around it should scroll too.
         e.preventDefault();
-        setCam((c) => ({ ...c, x: c.x - e.deltaY }));
+        nudgeCam((c) => ({ ...c, x: c.x - e.deltaY }));
       } else {
         e.preventDefault();
-        setCam((c) => ({ x: c.x - e.deltaX, y: c.y - e.deltaY, z: c.z }));
+        nudgeCam((c) => ({ x: c.x - e.deltaX, y: c.y - e.deltaY, z: c.z }));
       }
+      window.clearTimeout(wheelCamFlush.current);
+      wheelCamFlush.current = window.setTimeout(() => flushCam(), 120);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -1468,7 +1538,7 @@ export function CanvasEditor({
         pendingTypeAt.current = null;
       }
       if (e.ctrlKey && e.key === "0" && !lockedRef.current) {
-        setCam({ x: 60, y: 40, z: 1 });
+        flushCam({ x: 60, y: 40, z: 1 });
       }
       // Ctrl+A: when not editing text, select every object on the canvas
       if (e.ctrlKey && (e.key === "a" || e.key === "A") && !inEditable()) {
@@ -2130,9 +2200,9 @@ export function CanvasEditor({
     const d = dragRef.current;
     if (tool === "eraser" || d?.mode === "erase") moveRing(e.clientX, e.clientY, true);
     if (!d) {
-      // Padlock badge on a locked object under the pointer.
+      // Padlock badge on a locked object under the pointer (select tool only).
       let hit: string | null = null;
-      if (!shiftRef.current && objects.some((o) => o.locked)) {
+      if (tool === "select" && !shiftRef.current && objects.some((o) => o.locked)) {
         const p = toCanvas(e.clientX, e.clientY);
         for (const o of sorted) {
           if (!o.locked) continue;
@@ -2146,7 +2216,7 @@ export function CanvasEditor({
       const dx = e.clientX - d.sx;
       const dy = e.clientY - d.sy;
       d.moved += Math.hypot(dx, dy);
-      setCam((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
+      nudgeCam((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
       d.sx = e.clientX;
       d.sy = e.clientY;
       return;
@@ -2457,6 +2527,7 @@ export function CanvasEditor({
     if (d.mode === "pan") {
       // Right-drag that actually moved → eat the following contextmenu event.
       if (d.via === "right" && d.moved > 4) suppressCtxMenu.current = true;
+      flushCam();
       return;
     }
     if (d.mode === "erase") {
@@ -3248,7 +3319,7 @@ export function CanvasEditor({
     const pad = 40;
     const W = el.clientWidth, H = el.clientHeight;
     const z = Math.max(0.15, Math.min(1, (W - pad * 2) / Math.max(1, x2 - x1), (H - pad * 2) / Math.max(1, y2 - y1)));
-    setCam({ z, x: (W - (x2 - x1) * z) / 2 - x1 * z, y: (H - (y2 - y1) * z) / 2 - y1 * z });
+    flushCam({ z, x: (W - (x2 - x1) * z) / 2 - x1 * z, y: (H - (y2 - y1) * z) / 2 - y1 * z });
   };
 
   const paintPdf = (o: PdfObject, sel: boolean) => (
@@ -3553,7 +3624,7 @@ export function CanvasEditor({
         if (dragRef.current?.mode !== "erase") moveRing(0, 0, false);
       }}
       tabIndex={-1}
-      style={{ cursor, ...paperBackground(paper, cam) }}
+      style={{ cursor }}
     >
       <div ref={ringRef} className={`eraser-ring ${eraserMode}`} style={{ display: "none" }} />
       {!lockedView && objects.length > 0 && (
@@ -3569,11 +3640,12 @@ export function CanvasEditor({
         </button>
       )}
       {!lockedView && <button
+        ref={zoomChipRef}
         type="button"
         className="zoom-chip"
         title="Zoom (Ctrl+scroll) — click to reset to 100% (Ctrl+0)"
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={() => setCam({ x: 60, y: 40, z: 1 })}
+        onClick={() => flushCam({ x: 60, y: 40, z: 1 })}
       >
         {Math.round(cam.z * 100)}%
       </button>}
@@ -3585,6 +3657,7 @@ export function CanvasEditor({
         const uh = Math.max(contentBox.y + contentBox.h, view.y + view.h) - uy;
         const s = Math.min(MINIMAP_W / Math.max(1, uw), MINIMAP_H / Math.max(1, uh));
         const m = mmDrag.current ?? { ux, uy, s, w: uw * s, h: uh * s };
+        mmLayoutRef.current = { ux: m.ux, uy: m.uy, s: m.s, wrapW: wrapBox.w, wrapH: wrapBox.h };
         const place = (b: { x: number; y: number; w: number; h: number }) => ({
           left: (b.x - m.ux) * m.s,
           top: (b.y - m.uy) * m.s,
@@ -3593,6 +3666,7 @@ export function CanvasEditor({
         });
         const release = () => {
           mmDrag.current = null;
+          flushCam();
           forceRender((n) => n + 1);
         };
         return (
@@ -3621,7 +3695,7 @@ export function CanvasEditor({
             onPointerCancel={release}
           >
             <div className="minimap-content" style={place(contentBox)} />
-            <div className="minimap-view" style={place(view)} />
+            <div ref={minimapViewRef} className="minimap-view" style={place(view)} />
           </div>
         );
       })()}
@@ -3629,8 +3703,8 @@ export function CanvasEditor({
         <div className="shift-hint">Ctrl-click pages to select them across PDFs · Shift: pick images, move locked items, reorder pages</div>
       )}
       <div
+        ref={worldRef}
         className={`canvas-world ${tool === "select" ? "" : "drawing"} ${tool === "lasso" ? "lasso" : ""} ${selected.length > 1 ? "multi" : ""}`}
-        style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})` }}
       >
         {dragGhost && (
           <div className="pdf-drag-ghost" style={{ left: dragGhost.x, top: dragGhost.y, width: dragGhost.pageWidth }}>

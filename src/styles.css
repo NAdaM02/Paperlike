@@ -5555,6 +5555,7 @@ svg.hl .hl-ink {
   --ink-2: #544b3e;
   --ink-3: #847967;
   isolation: isolate;
+  contain: layout paint style;
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.005em;
   transform-origin: top right;
@@ -5571,7 +5572,9 @@ svg.hl .hl-ink {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.42 0 0 0 0 0.35 0 0 0 0 0.24 0 0 0 0.2 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.012 0.09' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.42 0 0 0 0 0.3 0 0 0 0.34 -0.06'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>"),
     radial-gradient(120% 90% at 50% 40%, transparent 60%, rgba(150, 120, 80, 0.14));
   border-radius: 2px;
-  filter: url(#cl-rough) drop-shadow(0 1px 1px rgba(60, 45, 25, 0.18)) drop-shadow(0 6px 12px rgba(60, 45, 25, 0.16));
+  /* Torn edge only — drop-shadow filters over the note forced extra paints while drawing. */
+  filter: url(#cl-rough);
+  box-shadow: 0 1px 1px rgba(60, 45, 25, 0.18), 0 6px 12px rgba(60, 45, 25, 0.16);
 }
 .checklist-mottle {
   position: absolute;
