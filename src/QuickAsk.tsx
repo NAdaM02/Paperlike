@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type SavedQuickCard } from "./api";
 import { AnalyzeAction, AnalyzeIcon, analyzeLabel, AnalyzeMark, analyzePrompt, AnalyzeRect, areaOnScreen, captureArea, promptAction, visiblePart } from "./Analyze";
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
@@ -561,7 +561,7 @@ function readTextK(): number {
 }
 
 /** The model's reasoning, folded above its answer like the chat sites do; click to read it. */
-function ThoughtProcess({ text }: { text: string }) {
+const ThoughtProcess = memo(function ThoughtProcess({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={`qa-thought ${open ? "open" : ""}`}>
@@ -572,13 +572,13 @@ function ThoughtProcess({ text }: { text: string }) {
       {open && <p className="qa-thought-text">{text}</p>}
     </div>
   );
-}
+});
 
 /**
  * Floating card with the answer and a follow-up line. The question goes to a supported chat site
  * through the web login, in a view kept out of sight; the reply is read back as it is written.
  */
-export function QuickAskCard({
+export const QuickAskCard = memo(function QuickAskCard({
   seed,
   initialHost,
   notePath,
@@ -763,6 +763,9 @@ export function QuickAskCard({
 
   // A pinned card travels and scales with its area like something drawn on the note. It is
   // hidden while that note isn't shown, and the edges of the note's view cut it like the page.
+  // Layout height is cached from ResizeObserver — never read offsetHeight on the pan/zoom path
+  // (that forced a reflow for every card on every camera tick).
+  const layoutHRef = useRef(0);
   useLayoutEffect(() => {
     const area = seed.area;
     const card = cardRef.current;
@@ -796,7 +799,12 @@ export function QuickAskCard({
       card.style.transformOrigin = "0 0";
       card.style.transform = `scale(${k})`;
       const c = at.clip;
-      const h = card.offsetHeight * k;
+      let layoutH = layoutHRef.current;
+      if (!(layoutH > 0)) {
+        layoutH = card.offsetHeight;
+        layoutHRef.current = layoutH;
+      }
+      const h = layoutH * k;
       const it = Math.max(0, c.top - y);
       const il = Math.max(0, c.left - x);
       const ib = Math.max(0, y + h - c.bottom);
@@ -808,7 +816,12 @@ export function QuickAskCard({
     };
     place();
     // The answer grows while it streams in; keep the cut at the view's edge.
-    const ro = new ResizeObserver(() => place());
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const box = entry?.borderBoxSize?.[0];
+      layoutHRef.current = box?.blockSize ?? entry?.contentRect.height ?? card.offsetHeight;
+      place();
+    });
     ro.observe(card);
     const off = subscribeCanvas(place);
     return () => {
@@ -1551,4 +1564,4 @@ export function QuickAskCard({
     </div>
     </>
   );
-}
+});

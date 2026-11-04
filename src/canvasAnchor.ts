@@ -19,7 +19,25 @@ export type NoteArea = { key: string; x: number; y: number; w: number; h: number
 const entries = new Set<Entry>();
 const listeners = new Set<() => void>();
 
-const notify = () => listeners.forEach((fn) => fn());
+/** One paint's worth of wrap/cam/clip reads, shared by every pinned card's place(). */
+type ViewSnap = { b: DOMRect; c: Cam; clip: DOMRect };
+let viewSnapGen = 0;
+let viewSnap = new Map<string, ViewSnap>();
+let notifyRaf = 0;
+
+const flushListeners = () => {
+  notifyRaf = 0;
+  viewSnapGen++;
+  viewSnap.clear();
+  listeners.forEach((fn) => fn());
+};
+
+/** Coalesce bursty pan/zoom notifies into one listener pass per frame. */
+const notify = () => {
+  if (!listeners.size) return;
+  if (notifyRaf) return;
+  notifyRaf = requestAnimationFrame(flushListeners);
+};
 
 export function registerCanvas(entry: Entry): () => void {
   entries.add(entry);
@@ -47,6 +65,10 @@ export function subscribeCanvas(fn: () => void): () => void {
     if (!listeners.size) {
       window.removeEventListener("scroll", notify, true);
       window.removeEventListener("resize", notify);
+      if (notifyRaf) {
+        cancelAnimationFrame(notifyRaf);
+        notifyRaf = 0;
+      }
     }
   };
 }
@@ -86,15 +108,22 @@ function clipBox(wrap: HTMLElement): DOMRect {
   return wrap.getBoundingClientRect();
 }
 
+function snapOf(e: Entry): ViewSnap {
+  let s = viewSnap.get(e.key);
+  if (s) return s;
+  s = { b: e.wrap.getBoundingClientRect(), c: e.cam(), clip: clipBox(e.wrap) };
+  viewSnap.set(e.key, s);
+  return s;
+}
+
 /** Where a note area is on screen now, and the visible box it is clipped to; null when its note isn't shown. */
 export function screenOf(area: NoteArea): { rect: AnalyzeRect; clip: DOMRect } | null {
   let best: { rect: AnalyzeRect; clip: DOMRect } | null = null;
   for (const e of entries) {
     if (e.key !== area.key) continue;
-    const b = e.wrap.getBoundingClientRect();
-    const c = e.cam();
+    const { b, c, clip } = snapOf(e);
     const rect = { x: b.left + c.x + area.x * c.z, y: b.top + c.y + area.y * c.z, w: area.w * c.z, h: area.h * c.z };
-    const hit = { rect, clip: clipBox(e.wrap) };
+    const hit = { rect, clip };
     // Several page editors can show one note; prefer the one the area sits in.
     if (inside(b, rect.x + rect.w / 2, rect.y + rect.h / 2)) return hit;
     best ??= hit;

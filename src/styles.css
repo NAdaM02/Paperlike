@@ -3392,7 +3392,11 @@ svg.hl .hl-ink {
   color: var(--ink);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.18);
+  /* One soft shadow — large dual shadows over the ink SVG forced expensive overpaint. */
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+  /* Own compositing layer, away from the note's stroke SVG. */
+  contain: layout paint style;
+  isolation: isolate;
   animation: qa-in 0.14s ease-out;
 }
 @keyframes qa-in {
@@ -5852,7 +5856,9 @@ svg.hl .hl-ink {
 }
 .qa-card.is-pinned {
   /* Subtle cue on the card itself while it stays on the note. */
-  box-shadow: inset 0 2px 0 0 var(--accent), var(--shadow-md, 0 8px 28px color-mix(in srgb, var(--ink) 14%, transparent));
+  box-shadow: inset 0 2px 0 0 var(--accent), 0 6px 18px rgba(0, 0, 0, 0.18);
+  /* scale() already promotes a layer; hint the compositor for pan/zoom. */
+  will-change: transform;
 }
 /* While an area is being selected, cards and outlines step aside so they stay out of the capture. */
 body.analyzing .qa-card,

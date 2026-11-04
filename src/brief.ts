@@ -152,11 +152,23 @@ export function buildPrompt(opts: {
   return { prompt, file: file || "(no note text)", pastedAll };
 }
 
+/** Parsed Markdown → HTML, kept so pinned cards don't re-parse on unrelated renders. */
+const summaryHtmlCache = new Map<string, string>();
+
 /**
  * The model's Markdown as readable HTML: headings, lists, bold, italics, code and
- * LaTeX in $…$, $$…$$, \(…\) and \[…\]. Text is escaped before anything is added.
+ * LaTeX in $…$, $…$, \(…\) and \[…\]. Text is escaped before anything is added.
  */
 export function summaryHtml(md: string): string {
+  const hit = summaryHtmlCache.get(md);
+  if (hit != null) return hit;
+  const html = summaryHtmlBuild(md);
+  if (summaryHtmlCache.size > 240) summaryHtmlCache.clear();
+  summaryHtmlCache.set(md, html);
+  return html;
+}
+
+function summaryHtmlBuild(md: string): string {
   const out: string[] = [];
   const lines = md.replace(/\r/g, "").split("\n");
   let para: string[] = [];

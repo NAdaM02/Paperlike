@@ -482,6 +482,10 @@ export default function App() {
   const registerQuickPersist = useCallback((fn: ((card: SavedQuickCard | null, id: number) => void) | null) => {
     persistQuickCard.current = fn;
   }, []);
+  const beforeQuickAsk = useCallback(() => saveOpenNote.current?.() ?? Promise.resolve(), []);
+  const onQuickPinnedPersist = useCallback((card: SavedQuickCard | null, id: number) => {
+    persistQuickCard.current?.(card, id);
+  }, []);
   const onQuickCardsLoaded = useCallback((_notePath: string, cards: SavedQuickCard[]) => {
     if (!cards.length) return;
     void (async () => {
@@ -953,9 +957,9 @@ export default function App() {
           initialHost={lastHost()}
           notePath={openNotePath}
           noteTitle={openNotePath ? titleFromPath(openNotePath) : undefined}
-          beforeAsk={() => saveOpenNote.current?.() ?? Promise.resolve()}
+          beforeAsk={beforeQuickAsk}
           onHost={rememberHost}
-          onPinnedPersist={(card, id) => persistQuickCard.current?.(card, id)}
+          onPinnedPersist={onQuickPinnedPersist}
           onOpenPanel={(host, question, url) => {
             const id = Date.now();
             setQuicks((cur) => cur.filter((q) => q.id !== quick.id));
