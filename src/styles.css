@@ -848,6 +848,8 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
 }
 .pen-sw:hover { transform: scale(1.12); }
 .pen-sw.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Last non-default colour for the active tool. */
+.pen-sw.last-sw { box-shadow: 0 0 0 1px var(--accent), inset 0 0 0 1px color-mix(in srgb, #fff 35%, transparent); }
 .seg .btn.eraser-size { padding: 4px 8px; min-width: 30px; justify-content: center; }
 .eraser-size .dot { display: block; border-radius: 50%; background: currentColor; opacity: 0.7; }
 .size-stepper {

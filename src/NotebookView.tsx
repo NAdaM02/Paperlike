@@ -210,12 +210,34 @@ const LOCAL_DATETIME = new Intl.DateTimeFormat(undefined, {
 /* ── drawing preferences (app-wide, survive restarts) ── */
 
 const DRAW_PREFS_KEY = "paperlike-draw-prefs";
+const LAST_TOOL_COLORS_KEY = "pl.tool.lastColors";
 const DRAW_WIDTHS = [1, 2, 4, 8];
 /** null = theme ink (dark on light paper, light on dark paper). */
 const PEN_QUICK_COLORS: (string | null)[] = [null, "#d64545", "#3f7fd6", "#2f9e5a", "#e8853d"];
 
 const HL_WIDTHS = [8, 14, 22];
 const HL_COLORS = ["#ffe066", "#9be38f", "#8ccfff", "#ffadd6", "#ffc078"];
+
+type LastToolColors = { pen?: string; highlighter?: string; text?: string };
+
+function loadLastToolColors(): LastToolColors {
+  try {
+    const p = JSON.parse(localStorage.getItem(LAST_TOOL_COLORS_KEY) ?? "{}") as LastToolColors;
+    const hex = (c: unknown) => (typeof c === "string" && /^#[0-9a-f]{3,8}$/i.test(c) ? c : undefined);
+    return { pen: hex(p.pen), highlighter: hex(p.highlighter), text: hex(p.text) };
+  } catch {
+    return {};
+  }
+}
+
+function isDefaultPenColor(c: string | null): boolean {
+  if (c == null) return true;
+  return PEN_QUICK_COLORS.some((d) => d != null && d.toLowerCase() === c.toLowerCase());
+}
+
+function isDefaultHlColor(c: string): boolean {
+  return HL_COLORS.some((d) => d.toLowerCase() === c.toLowerCase());
+}
 
 type DrawPrefs = {
   color: string | null;
@@ -520,6 +542,23 @@ export function NotebookView({
   const [drawPop, setDrawPop] = useState<{ x: number; y: number } | null>(null);
   const [gifOpen, setGifOpen] = useState(false);
   const [drawPrefs, setDrawPrefs] = useState<DrawPrefs>(loadDrawPrefs);
+  const [lastToolColors, setLastToolColors] = useState<LastToolColors>(() => loadLastToolColors());
+  const rememberToolColor = (toolKey: keyof LastToolColors, c: string | null | undefined) => {
+    if (!c || !/^#[0-9a-f]{3,8}$/i.test(c)) return;
+    if (toolKey === "pen" && isDefaultPenColor(c)) return;
+    if (toolKey === "highlighter" && isDefaultHlColor(c)) return;
+    if (toolKey === "text" && PALETTE.some((d) => d.toLowerCase() === c.toLowerCase())) return;
+    setLastToolColors((prev) => {
+      if (prev[toolKey]?.toLowerCase() === c.toLowerCase()) return prev;
+      const next = { ...prev, [toolKey]: c };
+      try {
+        localStorage.setItem(LAST_TOOL_COLORS_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
   const drawColor = drawPrefs.color ?? themeInk(settings.theme);
   const drawWidth = drawPrefs.width;
   const updateDrawPrefs = (patch: Partial<DrawPrefs>) =>
@@ -1570,6 +1609,7 @@ export function NotebookView({
       c ?? (settings.theme === "dark" ? "#ffffff" : "#000000");
     // Re-applying the shown default (the main button) keeps new text on theme ink.
     updateTextPrefs({ color: c === null || (textPrefs.color === null && c === lastColor) ? null : c });
+    if (c) rememberToolColor("text", c);
     applyLiveFormat(() => setTextColor(color));
   };
 
@@ -1921,6 +1961,7 @@ export function NotebookView({
 
   const pickDrawColor = (c: string | null) => {
     updateDrawPrefs({ color: c });
+    rememberToolColor("pen", c);
     if (!canvasSelRef.current.length) return;
     restyleSelectedDrawings({ color: c ?? themeInk(settings.theme) });
   };
@@ -1928,6 +1969,7 @@ export function NotebookView({
   const pickHlColor = (c: string | null) => {
     if (!c) return;
     updateDrawPrefs({ hlColor: c });
+    rememberToolColor("highlighter", c);
     if (!canvasSelRef.current.length) return;
     restyleSelectedDrawings({ color: c });
   };
@@ -3273,6 +3315,19 @@ export function NotebookView({
                 <IcChevron size={12} />
               </button>
             </div>
+            {lastToolColors.text && !PALETTE.some((d) => d.toLowerCase() === lastToolColors.text!.toLowerCase()) && (
+              <button
+                type="button"
+                className={`pen-sw last-sw ${(format?.color ?? lastColor).toLowerCase() === lastToolColors.text.toLowerCase() ? "on" : ""}`}
+                style={{ background: lastToolColors.text }}
+                title={`Last used ${lastToolColors.text}`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  keepTextSelection();
+                }}
+                onClick={() => changeColor(lastToolColors.text!)}
+              />
+            )}
             <ColorControl
               glyph="A"
               title="Text colour"
@@ -3494,6 +3549,14 @@ export function NotebookView({
                       onClick={() => pickHlColor(c)}
                     />
                   ))}
+                  {lastToolColors.highlighter && !isDefaultHlColor(lastToolColors.highlighter) && (
+                    <button
+                      className={`pen-sw last-sw ${drawPrefs.hlColor.toLowerCase() === lastToolColors.highlighter.toLowerCase() ? "on" : ""}`}
+                      style={{ background: lastToolColors.highlighter }}
+                      title={`Last used ${lastToolColors.highlighter}`}
+                      onClick={() => pickHlColor(lastToolColors.highlighter!)}
+                    />
+                  )}
                 </div>
                 <ColorControl
                   glyph={<IcHighlighter size={12} />}
@@ -3553,6 +3616,14 @@ export function NotebookView({
                       />
                     );
                   })}
+                  {lastToolColors.pen && !isDefaultPenColor(lastToolColors.pen) && (
+                    <button
+                      className={`pen-sw last-sw ${drawPrefs.color?.toLowerCase() === lastToolColors.pen.toLowerCase() ? "on" : ""}`}
+                      style={{ background: lastToolColors.pen }}
+                      title={`Last used ${lastToolColors.pen}`}
+                      onClick={() => pickDrawColor(lastToolColors.pen!)}
+                    />
+                  )}
                 </div>
                 <ColorControl
                   glyph={<IcPen size={12} />}
