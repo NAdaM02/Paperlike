@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, type SavedQuickCard } from "./api";
 import { AnalyzeAction, AnalyzeIcon, analyzeLabel, AnalyzeMark, analyzePrompt, AnalyzeRect, areaOnScreen, captureArea, promptAction, visiblePart } from "./Analyze";
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { noteText, summaryHtml } from "./brief";
@@ -61,6 +61,75 @@ type CardRel = { side: "right" | "left"; gap: number; oy: number; w: number; h: 
 export type CardPlace =
   | { pinned: true; rel: CardRel; zBase: number }
   | { pinned: false; x: number; y: number; w: number; h: number | null };
+
+/** Build a note-saved card from a live pinned QuickAsk, or null when it should not persist. */
+export function toSavedQuickCard(input: {
+  id: number;
+  question: string;
+  selection: string;
+  host: ChatHost;
+  turns: QuickTurn[];
+  url: string | null;
+  analyze?: AnalyzeAction;
+  custom?: boolean;
+  imagePreview?: string;
+  imagePath?: string;
+  anchor?: AnalyzeRect;
+  area?: NoteArea | null;
+  place?: CardPlace;
+}): SavedQuickCard | null {
+  const place = input.place;
+  if (!place || !place.pinned) return null;
+  const preview = input.imagePreview;
+  const imagePngB64 =
+    preview && preview.startsWith("data:image/png;base64,")
+      ? preview.slice("data:image/png;base64,".length)
+      : undefined;
+  return {
+    id: input.id,
+    question: input.question,
+    selection: input.selection,
+    host: input.host,
+    turns: input.turns,
+    url: input.url,
+    analyze: input.analyze,
+    custom: input.custom,
+    imagePreview: preview,
+    imagePngB64,
+    anchor: input.anchor,
+    area: input.area ?? null,
+    place,
+  };
+}
+
+/** Turn a note-saved card back into a QuickSeed (re-stages the PNG when possible). */
+export async function seedFromSavedQuickCard(card: SavedQuickCard): Promise<QuickSeed> {
+  let imagePath: string | undefined;
+  const b64 = card.imagePngB64 ?? (card.imagePreview?.startsWith("data:image/png;base64,")
+    ? card.imagePreview.slice("data:image/png;base64,".length)
+    : undefined);
+  if (b64) {
+    try {
+      imagePath = await api.stageAnalyzePng(b64);
+    } catch {
+      imagePath = undefined;
+    }
+  }
+  const host = (["claude", "chatgpt", "gemini"].includes(card.host) ? card.host : "chatgpt") as ChatHost;
+  return {
+    id: card.id,
+    question: card.question,
+    selection: card.selection,
+    imagePreview: card.imagePreview,
+    imagePath,
+    analyze: card.analyze as AnalyzeAction | undefined,
+    custom: card.custom,
+    anchor: card.anchor,
+    area: card.area ?? null,
+    place: card.place,
+    prior: { host, turns: card.turns, url: card.url ?? null },
+  };
+}
 
 export type QuickHistoryEntry = {
   id: number;
@@ -518,6 +587,7 @@ export function QuickAskCard({
   onHost,
   onOpenPanel,
   onClose,
+  onPinnedPersist,
   stack = 0,
 }: {
   seed: QuickSeed;
@@ -531,6 +601,8 @@ export function QuickAskCard({
   /** Continue in the Ask pane: the conversation's address when there is one, else the question. */
   onOpenPanel: (host: ChatHost, question: string, url: string | null) => void;
   onClose: () => void;
+  /** Write or clear this card on the open note while it is pinned. */
+  onPinnedPersist?: (card: SavedQuickCard | null, id: number) => void;
 }) {
   const [host, setHost] = useState<ChatHost>(seed.prior?.host ?? initialHost);
   const [turns, setTurns] = useState<Turn[]>(seed.prior?.turns ?? []);
@@ -797,6 +869,40 @@ export function QuickAskCard({
     return freeRef.current ?? undefined;
   };
 
+  const persistRef = useRef(onPinnedPersist);
+  persistRef.current = onPinnedPersist;
+  const persistPinned = () => {
+    const fn = persistRef.current;
+    if (!fn) return;
+    const saved = toSavedQuickCard({
+      id: seed.id,
+      question: seed.question,
+      selection: seed.selection,
+      host: hostRef.current,
+      turns: turnsRef.current,
+      url: urlRef.current,
+      analyze: seed.analyze,
+      custom: seed.custom,
+      imagePreview: shotRef.current,
+      imagePath: imageRef.current,
+      anchor: seed.anchor,
+      area: seed.area,
+      place: placeNow(),
+    });
+    fn(saved, seed.id);
+  };
+
+  // Keep the note's copy of a pinned card in step (place, turns, host, capture).
+  useEffect(() => {
+    if (!pinned) {
+      persistRef.current?.(null, seed.id);
+      return;
+    }
+    const t = window.setTimeout(persistPinned, 200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinned, turns, host, url, shot, seed.id]);
+
   /** The card clicked last is on top of the others. */
   const toFront = () => {
     document.querySelectorAll(".qa-card.front").forEach((el) => el.classList.remove("front"));
@@ -824,7 +930,11 @@ export function QuickAskCard({
     const x = spot.x;
     const y = Math.max(EDGE, Math.min(a.y, window.innerHeight - Math.min(r.height, 320) - EDGE));
     setPos({ x, y });
-    if (seed.area?.w) pin({ x, y, w: spot.w, h: r.height }, a, a.w / seed.area.w, !!size);
+    if (seed.area?.w) {
+      pin({ x, y, w: spot.w, h: r.height }, a, a.w / seed.area.w, !!size);
+      // Place is ready; write the pin into the note on the next tick.
+      window.setTimeout(() => persistPinned(), 0);
+    }
     // once, when the card opens
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

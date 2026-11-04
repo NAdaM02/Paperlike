@@ -9,7 +9,8 @@ import { CalendarPane, setCalendarAvailable } from "./CalendarPane";
 import { AnalyzeMark, AnalyzeOverlay, AnalyzeRect, AnalyzeResult } from "./Analyze";
 import { NoteArea, noteAreaAt } from "./canvasAnchor";
 import { Calculator } from "./Calculator";
-import { focusQuickField, QuickAskCard, QuickSeed, useNoteSelection } from "./QuickAsk";
+import { focusQuickField, QuickAskCard, QuickSeed, seedFromSavedQuickCard, useNoteSelection } from "./QuickAsk";
+import type { SavedQuickCard } from "./api";
 import { defaultHost, setDefaultHost } from "./chat";
 import { BriefView } from "./BriefView";
 import { GlobalSearchModal, HomeView } from "./HomeView";
@@ -476,6 +477,24 @@ export default function App() {
     saveOpenNote.current = fn;
   }, []);
 
+  const persistQuickCard = useRef<((card: SavedQuickCard | null, id: number) => void) | null>(null);
+  const registerQuickPersist = useCallback((fn: ((card: SavedQuickCard | null, id: number) => void) | null) => {
+    persistQuickCard.current = fn;
+  }, []);
+  const onQuickCardsLoaded = useCallback((_notePath: string, cards: SavedQuickCard[]) => {
+    if (!cards.length) return;
+    void (async () => {
+      for (const card of cards) {
+        try {
+          const seed = await seedFromSavedQuickCard(card);
+          setQuicks((cur) => (cur.some((q) => q.id === seed.id) ? cur : [...cur, seed].slice(-8)));
+        } catch {
+          // A bad saved card must not block the note from opening.
+        }
+      }
+    })();
+  }, []);
+
   /** Open the chat beside the current note with the last-used host, or close it. */
   const toggleAsk = useCallback(() => {
     if (premiumOff()) {
@@ -889,6 +908,8 @@ export default function App() {
           onCalc={openCalc}
           onAnalyze={openAnalyze}
           onRegisterSave={registerSave}
+          onQuickCardsLoaded={onQuickCardsLoaded}
+          onRegisterQuickPersist={registerQuickPersist}
           onOpenSettings={() => {
             setSettingsTab("general");
             setSettingsOpen(true);
@@ -932,6 +953,7 @@ export default function App() {
           noteTitle={openNotePath ? titleFromPath(openNotePath) : undefined}
           beforeAsk={() => saveOpenNote.current?.() ?? Promise.resolve()}
           onHost={rememberHost}
+          onPinnedPersist={(card, id) => persistQuickCard.current?.(card, id)}
           onOpenPanel={(host, question, url) => {
             const id = Date.now();
             setQuicks((cur) => cur.filter((q) => q.id !== quick.id));
@@ -939,7 +961,10 @@ export default function App() {
             setAsk({ id, host, briefPaths: null, question: url ? "" : question, send: false, url });
             setAnalyzeMark(quick.anchor ? { rect: quick.anchor, area: quick.area ?? null, askId: id } : null);
           }}
-          onClose={() => setQuicks((cur) => cur.filter((q) => q.id !== quick.id))}
+          onClose={() => {
+            persistQuickCard.current?.(null, quick.id);
+            setQuicks((cur) => cur.filter((q) => q.id !== quick.id));
+          }}
         />
       ))}
       {calcOpen && <Calculator onClose={() => setCalcOpen(false)} />}

@@ -307,11 +307,34 @@ export type FileObject = {
 
 export type CanvasObject = TextObject | ImageObject | DrawingObject | GroupObject | PdfObject | FileObject;
 
+/** A pinned Analyze/Quick answer card saved with the note (not drawn into PDF export). */
+export type SavedQuickCard = {
+  id: number;
+  question: string;
+  selection: string;
+  host: string;
+  turns: { role: "user" | "model"; text: string; thinking?: string }[];
+  url?: string | null;
+  analyze?: string;
+  custom?: boolean;
+  /** data:image/png;base64,… for the capture thumb and restore. */
+  imagePreview?: string;
+  /** Raw PNG base64 so the capture can be re-staged after a restart. */
+  imagePngB64?: string;
+  anchor?: { x: number; y: number; w: number; h: number };
+  area?: { key: string; x: number; y: number; w: number; h: number } | null;
+  place: {
+    pinned: true;
+    rel: { side: "right" | "left"; gap: number; oy: number; w: number; h: number | null };
+    zBase: number;
+  };
+};
+
 export type NoteDocument = {
   format: string;
   version: number;
   meta: { created: string; modified: string; app_version: string };
-  canvas: { objects: CanvasObject[]; paper?: PaperStyle };
+  canvas: { objects: CanvasObject[]; paper?: PaperStyle; quickCards?: SavedQuickCard[] };
 };
 
 export type PaperStyle = "blank" | "dots" | "lines" | "grid";

@@ -33,6 +33,7 @@ import {
   NotebookUiState,
   PaperStyle,
   PdfObject,
+  SavedQuickCard,
   Separators,
   Settings,
   TextObject,
@@ -386,6 +387,10 @@ type Props = {
   onAnalyze?: () => void;
   /** Hands the parent a way to save the open note right now. */
   onRegisterSave?: (save: (() => Promise<void>) | null) => void;
+  /** Pinned Analyze cards loaded with the note (restore into open cards). */
+  onQuickCardsLoaded?: (notePath: string, cards: SavedQuickCard[]) => void;
+  /** Hands the parent a way to write/clear a pinned card on the open note. */
+  onRegisterQuickPersist?: (write: ((card: SavedQuickCard | null, id: number) => void) | null) => void;
   /** A floating Moodle window is already open, so this view must not open a second one. */
   moodleHeld?: boolean;
   /** Dock the floating window back beside this notebook's note. */
@@ -430,6 +435,8 @@ export function NotebookView({
   onCalc,
   onAnalyze,
   onRegisterSave,
+  onQuickCardsLoaded,
+  onRegisterQuickPersist,
   moodleHeld = false,
   moodleDock = null,
   onFloatMoodle,
@@ -777,7 +784,9 @@ export function NotebookView({
     setTitleDraft(n.display_title);
     setDirty(false);
     setPdf(null);
-  }, []);
+    // Restore pinned Analyze cards saved with this note (missing/empty is fine).
+    onQuickCardsLoaded?.(p, Array.isArray(n.doc.canvas.quickCards) ? n.doc.canvas.quickCards : []);
+  }, [onQuickCardsLoaded]);
 
   useEffect(() => {
     (async () => {
@@ -940,6 +949,23 @@ export function NotebookView({
     });
     return () => onRegisterSave?.(null);
   }, [onRegisterSave, save]);
+
+  // Parent writes pinned Analyze cards onto the open note (or clears one).
+  useEffect(() => {
+    const write = (card: SavedQuickCard | null, id: number) => {
+      if (noteRef.current?.read_only) return;
+      updateNote((n) => {
+        const cur = Array.isArray(n.doc.canvas.quickCards) ? n.doc.canvas.quickCards : [];
+        const next = card ? [...cur.filter((c) => c.id !== card.id), card] : cur.filter((c) => c.id !== id);
+        const canvas = { ...n.doc.canvas };
+        if (next.length) canvas.quickCards = next;
+        else delete canvas.quickCards;
+        return { ...n, doc: { ...n.doc, canvas } };
+      });
+    };
+    onRegisterQuickPersist?.(write);
+    return () => onRegisterQuickPersist?.(null);
+  }, [onRegisterQuickPersist, updateNote]);
 
   /* Auto-save, or without it a recovery copy, shortly after the last edit. */
   useEffect(() => {
