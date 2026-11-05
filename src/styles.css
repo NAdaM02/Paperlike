@@ -714,6 +714,8 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
 
 .notebook { height: 100%; display: flex; flex-direction: column; }
 .nb-header {
+  position: relative;
+  z-index: 80;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -2734,7 +2736,7 @@ svg.hl .hl-ink {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 70;
+  z-index: 90;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);

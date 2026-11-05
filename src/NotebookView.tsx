@@ -727,16 +727,17 @@ export function NotebookView({
   const sideHideOn = noteOpen && sideAuto;
   const sideAutoHideRef = useRef(sideHideOn);
   sideAutoHideRef.current = sideHideOn;
-  /** Away only when note elements sit under the list's on-screen footprint (no extra margin). */
+  /** Away when note elements sit under the list, with a bit of extra pad so it
+   *  closes before content is hard under the strip. */
   const checkSideAway = useCallback(() => {
     if (!sideAutoHideRef.current) return;
     const cam = camRef.current;
     const n = noteRef.current;
     if (!cam || cam.z <= 0 || !n) return;
     const left = -cam.x / cam.z;
-    // Footprint = the list width in note units. Tiny hysteresis so the edge does not flicker.
+    // Footprint = list width + pad in note units. Hysteresis so the edge does not flicker.
     const prev = sideAwayRef.current;
-    const pad = (prev ? -6 : 2) / cam.z;
+    const pad = (prev ? -28 : 48) / cam.z;
     const right = left + sideWidthRef.current / cam.z + pad;
     let under = false;
     const editingSide = !!document.activeElement?.closest(".sidebar");
