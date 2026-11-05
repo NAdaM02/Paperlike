@@ -269,7 +269,11 @@ chosen in Settings → Files; app-state.md).
 **Note-list auto-hide.** The button left of Collapse in the note list's header turns
 auto-hide on (setting `sidebar_auto_hide`). The list then shrinks to the 6 px rail;
 moving onto the rail slides the list out over the editor (no layout shift), and it
-slides away 350 ms after the mouse leaves, unless a field in it has focus.
+slides away 350 ms after the mouse leaves, unless a field in it has focus. While open
+over the editor it also auto-closes when note content sits under the strip, with ~48 px
+of pad past the list edge (and a smaller hysteresis so the edge does not flicker). The
+Switch to… popover in the note header sits above the list (header z-index 80, popover 90;
+list slot 70).
 
 **Answer cards.** Several Quick question and Analyze cards can be open at once (up to 8); the one
 used last is on top, and plain questions fan out 28 px down and left of each other. Questions go
