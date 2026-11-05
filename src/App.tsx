@@ -546,9 +546,11 @@ export default function App() {
       if (promptingRef.current) return;
       await new Promise<void>((r) => window.setTimeout(r, 0));
       if ((window as Window & { __plCloseForDirty?: boolean }).__plCloseForDirty) return;
-      // Gone from the screen at once: checking for an update, the last sync and the install
-      // all happen with the window hidden, and then the app exits.
+      // Hide at once; show the tray while sync / update finish, then quit — or stay
+      // in the tray when that setting is on and there is no update.
       await win.hide().catch(() => {});
+      await invoke("show_exit_tray").catch(() => {});
+      const stayInTray = trayRef.current && !quitting;
       let update: FetchedUpdate | null = null;
       if (updateOnExitRef.current) {
         update = pendingUpdate.current;
@@ -558,19 +560,17 @@ export default function App() {
           update = await beginUpdateFetch();
         }
       }
-      // No update: the tray keeps the process. Rust already hid the window.
+      await syncBeforeExit(async () => {});
       if (!update) {
-        if (trayRef.current && !quitting) return;
-        await syncBeforeExit(() => win.hide());
-        await win.destroy();
+        if (stayInTray) return;
+        await invoke("exit_app").catch(() => {});
+        await win.destroy().catch(() => {});
         return;
       }
-      // An update must install and exit. Hiding to the tray leaves the old
+      // An update must install and exit. Staying in the tray would leave the old
       // process running, so the next launch is that same instance.
       promptingRef.current = true;
       try {
-        await win.hide().catch(() => {});
-        await syncBeforeExit(async () => {});
         await invoke("record_update_note", {
           version: update.version,
           notes: update.body ?? "",

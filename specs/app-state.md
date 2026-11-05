@@ -175,8 +175,10 @@ is shown under it. Code: `src-tauri/src/gitsync.rs`, `src/GitSync.tsx`.
 
 **When it runs.** Only these, never on a timer or after each save:
 - on startup (about 1.5 s after launch);
-- on shutdown: the window hides, then one sync runs (the UI waits at most 30 s).
-  Hiding to the tray is not a shutdown;
+- on window close: the window hides to the tray, one sync runs (at most 30 s), then
+  any pending update installs; afterward the app quits — unless **Keep running in
+  the tray** is on and there was no update, in which case it stays in the tray after
+  the sync. Tray Quit always exits after the same jobs;
 - about 2 minutes after a note that was saved while open is closed (switching
   notes, leaving the notebook) and not reopened. The wait is per note; reopening
   cancels it. A deleted note counts as closed. Notes outside the folder are ignored;

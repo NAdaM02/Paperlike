@@ -100,7 +100,7 @@ export const messages = {
   autostart: "Run when I sign in",
   autostartHint: "Opens Paperlike after you sign in to Windows.",
   tray: "Keep running in the tray",
-  trayHint: "Off by default. When on, closing the window leaves Paperlike in the notification area; use Quit on the tray icon to exit.",
+  trayHint: "Off by default. Closing always finishes sync and any update in the tray first. When this is on, Paperlike then stays in the notification area — use Quit on the tray icon to exit. When off, it quits once those jobs finish.",
   noteAssoc: "Make Paperlike the default app for .note files",
   noteAssocHint: "After this, double-clicking a .note file opens it in Paperlike.",
   noteAssocDone: "Paperlike will open .note files from File Explorer.",

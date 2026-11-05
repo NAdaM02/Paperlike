@@ -43,6 +43,12 @@ fn is_force_quit() -> bool {
     FORCE_QUIT.load(Ordering::SeqCst)
 }
 
+/// Show the tray icon while close jobs (sync / update) run with the window hidden.
+#[tauri::command]
+fn show_exit_tray(app: tauri::AppHandle) {
+    sync_tray_visible(&app, true);
+}
+
 /// Hide the tray icon and leave. A downloaded update must not keep the process
 /// alive behind the icon, or the next launch is the same instance.
 #[tauri::command]
@@ -125,6 +131,7 @@ pub fn run() {
             shell_open::register_file_association,
             set_update_ready,
             is_force_quit,
+            show_exit_tray,
             exit_app,
             update_needs_admin,
             commands::get_settings,
@@ -361,17 +368,12 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     sync_tray_visible(&app.handle(), tray_enabled);
     if let Some(window) = app.get_webview_window("main") {
         let win = window.clone();
-        let paths = AppPaths::resolve();
+        // Always prevent OS destroy and hide: the frontend finishes sync/update in the
+        // tray, then either stays (Keep running in the tray) or calls exit_app.
         window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if FORCE_QUIT.load(Ordering::SeqCst) || UPDATE_READY.load(Ordering::SeqCst) {
-                    return;
-                }
-                let keep = state::load_settings(&paths).map(|s| s.tray).unwrap_or(false);
-                if keep {
-                    api.prevent_close();
-                    let _ = win.hide();
-                }
+                api.prevent_close();
+                let _ = win.hide();
             }
         });
     }
