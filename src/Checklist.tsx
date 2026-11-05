@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "@fontsource-variable/newsreader/opsz.css";
-import { api } from "./api";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { api, Settings } from "./api";
 import { messages } from "./copy/messages";
 import { IcClose } from "./icons";
 
@@ -86,7 +87,7 @@ function clampPanelPos(left: number, top: number, el: HTMLElement): PanelPos {
   };
 }
 
-/** App-wide checklist under the top-right tools. Saved to %APPDATA%\Paperlike\checklist.json. */
+/** App-wide checklist under the top-right tools. Saved as Markdown (Settings → Files picks the path). */
 export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   const [items, setItems] = useState<Item[] | null>(null);
   const [draft, setDraft] = useState("");
@@ -100,22 +101,6 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   const latest = useRef<Item[] | null>(null);
   const saveTimer = useRef(0);
 
-  useEffect(() => {
-    let alive = true;
-    api
-      .checklistLoad()
-      .then((raw) => {
-        if (!alive) return;
-        const list = parseList(raw);
-        latest.current = list;
-        setItems(list);
-      })
-      .catch(() => alive && setItems([]));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const flush = () => {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = 0;
@@ -128,6 +113,46 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   };
   const flushRef = useRef(flush);
   flushRef.current = flush;
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .checklistLoad()
+      .then((raw) => {
+        if (!alive) return;
+        const list = parseList(raw);
+        latest.current = list;
+        setItems(list);
+      })
+      .catch(() => alive && setItems([]));
+    const onSettings = () => {
+      // Path may have changed. Load the new file; if it is empty and we still have
+      // items open, keep them and write them to the new path so nothing is lost.
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = 0;
+      const kept = latest.current;
+      api
+        .checklistLoad()
+        .then((raw) => {
+          if (!alive) return;
+          const list = parseList(raw);
+          if (list.length === 0 && kept && kept.length > 0) {
+            latest.current = kept;
+            setItems(kept);
+            flushRef.current();
+          } else {
+            latest.current = list;
+            setItems(list);
+          }
+        })
+        .catch(() => alive && setItems([]));
+    };
+    window.addEventListener("paperlike-settings-changed", onSettings);
+    return () => {
+      alive = false;
+      window.removeEventListener("paperlike-settings-changed", onSettings);
+    };
+  }, []);
   // Closing the panel saves what is still waiting.
   useEffect(() => () => {
     if (saveTimer.current) flushRef.current();
@@ -484,6 +509,44 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
         />
       </form>
       {(err || (draft && !items?.length)) && <div className={`checklist-hint${err ? " warn" : ""}`}>{err || messages.checklistHint}</div>}
+    </div>
+  );
+}
+
+/* ── Settings › Files ── */
+
+export function ChecklistSettings({ settings, onSave }: { settings: Settings; onSave: (next: Settings) => Promise<void> }) {
+  const path = (settings.checklist_path ?? "").trim();
+  const pick = async () => {
+    const picked = await saveDialog({
+      defaultPath: path || "checklist.md",
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+      title: messages.checklistFilePickTitle,
+    }).catch(() => null);
+    if (typeof picked !== "string" || !picked) return;
+    const next = picked.toLowerCase().endsWith(".md") ? picked : `${picked}.md`;
+    await onSave({ ...settings, checklist_path: next });
+  };
+  const useDefault = async () => {
+    if (!path) return;
+    await onSave({ ...settings, checklist_path: null });
+  };
+  return (
+    <div className="checklist-file-box">
+      <div className="git-sync-folder">
+        <span className="git-sync-path" title={path || undefined}>
+          {path || messages.checklistFileDefault}
+        </span>
+        <button className="btn outline" type="button" onClick={() => void pick()}>
+          {path ? messages.checklistFileChange : messages.checklistFilePick}
+        </button>
+        {path ? (
+          <button className="btn outline" type="button" onClick={() => void useDefault()}>
+            {messages.checklistFileUseDefault}
+          </button>
+        ) : null}
+      </div>
+      <span className="settings-hint">{messages.checklistFileHint}</span>
     </div>
   );
 }

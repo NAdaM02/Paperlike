@@ -263,7 +263,8 @@ calculator) opens an app-wide checklist under it, the same in every notebook.
 Enter in the bottom field adds a task, Shift+Enter a plain note line. Tasks have a
 checkbox (done ones are struck through); any row's text is edited in place, and
 clearing it or the hover × deletes it. "Clear N done" removes finished tasks. Esc,
-the button, or a click outside closes it. Saved to `checklist.json` (app-state.md).
+the button, or a click outside closes it. Saved as Markdown (`checklist.md`, path
+chosen in Settings → Files; app-state.md).
 
 **Note-list auto-hide.** The button left of Collapse in the note list's header turns
 auto-hide on (setting `sidebar_auto_hide`). The list then shrinks to the 6 px rail;

@@ -86,6 +86,9 @@ pub struct Settings {
     /// The folder Sync github keeps in step with its remote.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_sync_dir: Option<String>,
+    /// Absolute path of the checklist Markdown file. None → %APPDATA%\\Paperlike\\checklist.md.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checklist_path: Option<String>,
     /// Windows Ink. Off treats the pen like a mouse (no pressure, coalescing, or palm rejection).
     #[serde(default = "default_true")]
     pub pen_enabled: bool,
@@ -150,6 +153,7 @@ impl Default for Settings {
             moodle_enabled: false,
             git_sync: false,
             git_sync_dir: None,
+            checklist_path: None,
             pen_enabled: true,
             pen_always_draws: true,
             pen_pressure: true,

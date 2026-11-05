@@ -169,6 +169,15 @@ export const messages = {
   calendarSwitch: "Google Calendar",
   calendarHint: "Shows a calendar button in the top right that opens Google Calendar beside your notes.",
   checklistSaveFailed: "Couldn't save the checklist.",
+  checklistFile: "Checklist file",
+  checklistFileHint:
+    "Saved as a Markdown file you can read and edit outside Paperlike. Point it at a path in your notes repo to keep it with git.",
+  checklistFileDefault: "Default (AppData)",
+  checklistFilePick: "Choose file…",
+  checklistFileChange: "Change file…",
+  checklistFileUseDefault: "Use default",
+  checklistFilePickTitle: "Checklist Markdown file",
+  settingsChecklist: "Checklist",
   sidebarAutoHide: "Auto-hide the note list. It slides out when the mouse reaches the left edge.",
   showNoteList: "Show note list",
   titleAutoHide:

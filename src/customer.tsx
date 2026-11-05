@@ -8,6 +8,7 @@ import { messages, tourStepsFor, TourUntil } from "./copy/messages";
 import { IcClose, IcMix, IcMoon, IcSun } from "./icons";
 import { StudySetup } from "./StudySetup";
 import { GitSyncSettings } from "./GitSync";
+import { ChecklistSettings } from "./Checklist";
 import { Modal } from "./ui";
 
 export const CUSTOMER = false;
@@ -412,6 +413,13 @@ export function SettingsDialog({
                   {messages.noteAssoc}
                 </button>
                 <p className="settings-hint">{messages.noteAssocHint}</p>
+              </section>
+              <section className="settings-section" style={sectionRest}>
+                <h3>{messages.settingsChecklist}</h3>
+                <p className="settings-hint" style={{ marginTop: 0 }}>
+                  {messages.checklistFileHint}
+                </p>
+                <ChecklistSettings settings={settings} onSave={save} />
               </section>
               <section className="settings-section" style={sectionRest}>
                 <h3>{messages.settingsSync}</h3>

@@ -4062,6 +4062,7 @@ svg.hl .hl-ink {
 
 /* Sync github */
 .git-sync-box { display: grid; gap: 4px; margin: 10px 0 0 40px; }
+.checklist-file-box { display: grid; gap: 4px; margin-top: 6px; }
 .git-sync-folder { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
 .git-sync-path {
   flex: 1;

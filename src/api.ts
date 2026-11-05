@@ -54,6 +54,8 @@ export type Settings = {
   /** Sync github. Off by default. */
   git_sync?: boolean;
   git_sync_dir?: string | null;
+  /** Absolute path of the checklist .md file. Missing → AppData checklist.md. */
+  checklist_path?: string | null;
   /** Windows Ink. Off treats the pen like a mouse. Missing means on. */
   pen_enabled?: boolean;
   /** Pen draws with the last pen or marker even when another tool is selected. */
@@ -397,6 +399,7 @@ export const api = {
   gitSyncNoteClosed: (path: string) => invoke("git_sync_note_closed", { path }),
   gitSyncOnExit: () => invoke<GitSyncStatus>("git_sync_on_exit"),
   gitSyncRun: () => invoke<GitSyncStatus>("git_sync_run"),
+  /** Wire format is still JSON; Rust reads/writes the Markdown file. */
   checklistLoad: () => invoke<string>("checklist_load"),
   checklistSave: (json: string) => invoke<void>("checklist_save", { json }),
   gitSyncCheck: (folder: string) => invoke<GitSyncCheck>("git_sync_check", { folder }),
