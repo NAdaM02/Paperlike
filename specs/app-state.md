@@ -72,7 +72,7 @@ empty the file is `%APPDATA%\Paperlike\checklist.md`.
 `- [ ]` / `- [x]` lines are tasks; other `- …` lines (no checkbox) are plain notes.
 Written whole (atomic, no `.bak`) 400 ms after the last change and when the panel
 closes. Missing or unreadable file: an empty list. An older `checklist.json` in
-AppData is migrated to `checklist.md` on first load, then removed.
+AppData is migrated into the chosen path (or the AppData `checklist.md`) when that file is missing or empty, then removed.
 
 ### `home.json`
 

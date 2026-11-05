@@ -177,41 +177,33 @@ pub fn checklist_load() -> String {
     let path = resolve_path();
     if path.exists() {
         let raw = std::fs::read_to_string(&path).unwrap_or_default();
-        if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("json"))
-            == Some(true)
-        {
-            // Custom path somehow still .json — accept it.
-            return if raw.trim().is_empty() {
-                String::new()
-            } else {
-                raw
-            };
+        if !raw.trim().is_empty() {
+            if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("json"))
+                == Some(true)
+            {
+                return raw;
+            }
+            // Prefer Markdown; if the file is still legacy JSON content, pass it through.
+            if raw.trim_start().starts_with('{') {
+                return raw;
+            }
+            return md_to_json(&raw);
         }
-        if raw.trim().is_empty() {
-            return String::new();
-        }
-        // Prefer Markdown; if the file is still legacy JSON content, pass it through.
-        if raw.trim_start().starts_with('{') {
-            return raw;
-        }
-        return md_to_json(&raw);
+        // Empty file at the chosen path — fall through and try the AppData JSON.
     }
 
-    // Default location: migrate checklist.json → checklist.md once.
+    // Missing or empty target: migrate %APPDATA%\Paperlike\checklist.json once into `path`.
     let paths = AppPaths::resolve();
-    let default_md = default_md_path(&paths.root);
-    if path == default_md {
-        let legacy = legacy_json_path(&paths.root);
-        if let Some(json) = load_legacy_json(&legacy) {
-            if let Ok(md) = json_to_md(&json) {
-                let _ = atomic_write_string(&default_md, &md, false);
-                let _ = std::fs::remove_file(&legacy);
-            }
-            return json;
+    let legacy = legacy_json_path(&paths.root);
+    if let Some(json) = load_legacy_json(&legacy) {
+        if let Ok(md) = json_to_md(&json) {
+            let _ = atomic_write_string(&path, &md, false);
+            let _ = std::fs::remove_file(&legacy);
         }
+        return json;
     }
     String::new()
 }
