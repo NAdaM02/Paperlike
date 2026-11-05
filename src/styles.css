@@ -1456,15 +1456,18 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   interpolate-size: allow-keywords;
   height: max-content;
   transform: translate3d(0, 0, 0);
-  will-change: transform;
-  /* height = title collapse; transform = list open — never margin/width. */
+  will-change: transform, width;
+  /* height = title collapse; transform+width = list open so Add today and the
+     title tools stay in view instead of sliding off the clipped right edge. */
   transition:
     height 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
-    transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
+    transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
+    width 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
 }
 .editor-pane.side-open .note-title-slot,
 .editor-pane.side-open .note-title-reveal-slot {
   transform: translate3d(var(--sidebar-w, 224px), 0, 0);
+  width: calc(100% - var(--sidebar-w, 224px));
 }
 .editor-pane.side-resizing .note-title-slot,
 .editor-pane.side-resizing .note-title-reveal-slot {
@@ -1479,6 +1482,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   gap: 14px;
   padding: 8px 22px 0;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   transition: padding 340ms cubic-bezier(0.22, 0.8, 0.2, 1), opacity 220ms ease;
 }
