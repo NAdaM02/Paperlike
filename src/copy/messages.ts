@@ -179,6 +179,13 @@ export const messages = {
   checklistFilePickTitle: "Checklist Markdown file",
   settingsChecklist: "Checklist",
   sidebarAutoHide: "Auto-hide the note list. It slides out when the mouse reaches the left edge.",
+  autohideModeNone: "Pinned",
+  autohideModeNoneDesc: "Always stays open",
+  autohideModeDynamic: "Dynamic",
+  autohideModeDynamicDesc: "Adapts to scroll & content",
+  autohideModeHover: "Hover only",
+  autohideModeHoverDesc: "Reveals on mouse hover",
+  autohideTitleCurrent: (modeName: string) => `Auto-collapse: ${modeName}`,
   showNoteList: "Show note list",
   titleAutoHide:
     "Auto-hide title when you scroll the canvas down. Show the title again when you scroll back to the top.",

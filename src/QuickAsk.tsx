@@ -326,7 +326,6 @@ export function QuickAskField({
 
   return (
     <div className="qa-wrap" ref={wrapRef}>
-      {listOpen && <ChecklistPanel onClose={() => setListOpen(false)} />}
       <div className="qa-tools" data-tour="quick-tools">
         {onCalc && (
           <button
@@ -340,16 +339,19 @@ export function QuickAskField({
             <IcCalc size={15} />
           </button>
         )}
-        <button
-          type="button"
-          className={`btn icon qa-tool qa-checklist-btn${listOpen ? " is-on" : ""}`}
-          title={messages.checklistTitle}
-          aria-label={messages.checklistTitle}
-          aria-expanded={listOpen}
-          onClick={() => setListOpen((o) => !o)}
-        >
-          <IcCheck size={15} />
-        </button>
+        <div className="qa-checklist-anchor">
+          <button
+            type="button"
+            className={`btn icon qa-tool qa-checklist-btn${listOpen ? " is-on" : ""}`}
+            title={messages.checklistTitle}
+            aria-label={messages.checklistTitle}
+            aria-expanded={listOpen}
+            onClick={() => setListOpen((o) => !o)}
+          >
+            <IcCheck size={15} />
+          </button>
+          {listOpen && <ChecklistPanel onClose={() => setListOpen(false)} />}
+        </div>
         {calendarOn && (
           <button
             type="button"

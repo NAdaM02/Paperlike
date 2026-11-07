@@ -33,11 +33,13 @@ import {
   NotebookUiState,
   PaperStyle,
   PdfObject,
+  resolveAutoHideMode,
   SavedQuickCard,
   Separators,
   Settings,
   TextObject,
 } from "./api";
+import { AutoHideSelector } from "./AutoHideSelector";
 import {
   arrowHeadPolygon,
   CanvasEditor,
@@ -114,7 +116,6 @@ import {
   IcAsk,
   IcBook,
   IcCalendar,
-  IcAutoHide,
   IcCheck,
   IcChevron,
   IcChevronUp,
@@ -150,6 +151,11 @@ import {
   IcTrash,
   IcUndo,
 } from "./icons";
+import {
+  hasOpenedNotebookInSession,
+  getNotebookSession,
+  recordNotebookSession,
+} from "./session";
 import { FILE_CHIP_H, FILE_MAX_BYTES, FileChip, IMAGE_EXTS, fileExt, makeFileObject } from "./fileChip";
 
 type Ribbon = "File" | "Edit" | "Draw" | "View";
@@ -162,6 +168,63 @@ const TITLE_AUTOSHOW_Y = 24;
 /** Shared title hysteresis: hide past hideAt, stay hidden until back under showAt. */
 function axisAway(prev: boolean, pos: number, hideAt: number, showAt: number) {
   return prev ? pos > showAt : pos > hideAt;
+}
+
+/** When content comes within this pad (px) outside the sidebar, trigger auto-collapse. */
+const SIDE_AUTOHIDE_PAD = 80;
+/** Content must move past this offset border before the sidebar will unhide, eliminating jitter. */
+const SIDE_AUTOSHOW_PAD = 135;
+/** Animation cooldown (ms) so rapid flip-flops during CSS transition are prevented. */
+const SIDE_COOLDOWN_MS = 280;
+
+export function sortNotesList(notes: NoteListItem[], sort: string = "name"): NoteListItem[] {
+  const list = [...notes];
+  const byName = (a: NoteListItem, b: NoteListItem) =>
+    a.title.localeCompare(b.title, "hu", { numeric: true, sensitivity: "base" });
+  /** chrono emits ns-precision RFC3339; truncate to ms so Date.parse is reliable. */
+  const ts = (iso: string) => {
+    if (!iso) return 0;
+    const t = Date.parse(iso.replace(/(\.\d{3})\d+/, "$1"));
+    return Number.isFinite(t) ? t : 0;
+  };
+  list.sort((a, b) => {
+    if (sort.startsWith("name")) {
+      const c = byName(a, b);
+      return sort === "name_desc" ? -c : c;
+    }
+    const ta = ts(a.created);
+    const tb = ts(b.created);
+    if (ta !== tb) {
+      // created = oldest→newest (top→bottom); created_desc = newest first (later toward top)
+      return sort === "created_desc" ? tb - ta : ta - tb;
+    }
+    return byName(a, b);
+  });
+  return list;
+}
+
+export function getTopContentCam(
+  objects: CanvasObject[] | undefined,
+  heights: Record<string, number>,
+): { x: number; y: number; z: number } {
+  if (!objects || objects.length === 0) {
+    return { x: 60, y: 40, z: 1 };
+  }
+  let minY = Infinity;
+  let minX = Infinity;
+  for (const o of objects) {
+    const b = objectBBox(o, heights);
+    minY = Math.min(minY, b.y);
+    minX = Math.min(minX, b.x);
+  }
+  if (!Number.isFinite(minY)) {
+    return { x: 60, y: 40, z: 1 };
+  }
+  return {
+    x: Number.isFinite(minX) && minX < 60 ? 60 - minX : 60,
+    y: 40 - minY,
+    z: 1,
+  };
 }
 
 const A4 = { w: 794, h: 1123, margin: 40 };
@@ -694,17 +757,39 @@ export function NotebookView({
   };
 
   const noteOpen = !!note;
-  // Note list collapse mirrors the title bar: same manual collapse, auto-hide, hold-open,
-  // edge reveal, and slot animation. Auto-hide also considers note elements under the strip.
-  const sideAuto = settings.sidebar_auto_hide === true;
+  // 3-mode auto-collapse configuration
+  const titleMode = resolveAutoHideMode(settings.title_autohide_mode, settings.title_auto_hide, "dynamic");
+  const sideMode = resolveAutoHideMode(settings.sidebar_autohide_mode, settings.sidebar_auto_hide, "none");
+
+  // Mode 2 ("dynamic"): content proximity / scroll position
   const [sideScrolledAway, setSideScrolledAway] = useState(false);
+
+  // Manual hold-open state (revealed via click/tab)
   const [sideHoldOpen, setSideHoldOpen] = useState(false);
+
+  // Mode 3 ("hover"): mouse hover state with 220ms exit grace period
+  const [sideHoverActive, setSideHoverActive] = useState(false);
+  const [titleHoverActive, setTitleHoverActive] = useState(false);
+  const sideHoverTimer = useRef<number | null>(null);
+  const titleHoverTimer = useRef<number | null>(null);
+
   const sideAwayRef = useRef(false);
+  const sideHoverRef = useRef(false);
+  const titleHoverRef = useRef(false);
+  const lastSideToggleTime = useRef(0);
   const sideWidthRef = useRef(ui.sidebar_width);
   sideWidthRef.current = ui.sidebar_width;
-  const titleHideOn = noteOpen && settings.title_auto_hide !== false;
+  const titleHideOn = noteOpen && titleMode === "dynamic";
   const titleAutoHideRef = useRef(titleHideOn);
   titleAutoHideRef.current = titleHideOn;
+
+  useEffect(() => {
+    return () => {
+      if (sideHoverTimer.current) window.clearTimeout(sideHoverTimer.current);
+      if (titleHoverTimer.current) window.clearTimeout(titleHoverTimer.current);
+    };
+  }, []);
+
   // Re-evaluated when the editor commits a camera change and when focus moves,
   // instead of polling every frame.
   const checkTitleAway = useCallback(() => {
@@ -715,45 +800,115 @@ export function NotebookView({
     const top = cam && cam.z > 0 ? -cam.y / cam.z : 0;
     const prev = titleAwayRef.current;
     const editingTitle = !!document.activeElement?.closest(".note-title-row");
-    const away = !editingTitle && axisAway(prev, top, TITLE_AUTOHIDE_Y, TITLE_AUTOSHOW_Y);
+    const hoveringTitle = titleHoverRef.current;
+    if (editingTitle || hoveringTitle) {
+      return;
+    }
+    const away = axisAway(prev, top, TITLE_AUTOHIDE_Y, TITLE_AUTOSHOW_Y);
     if (away !== prev) {
       titleAwayRef.current = away;
       setTitleScrolledAway(away);
     }
   }, []);
 
-  const sideAutoRef = useRef(sideAuto);
-  sideAutoRef.current = sideAuto;
-  const sideHideOn = noteOpen && sideAuto;
+  const sideAutoRef = useRef(sideMode === "dynamic");
+  sideAutoRef.current = sideMode === "dynamic";
+  const sideHideOn = noteOpen && sideMode === "dynamic";
   const sideAutoHideRef = useRef(sideHideOn);
   sideAutoHideRef.current = sideHideOn;
-  /** Away when note elements sit under the list, with a bit of extra pad so it
-   *  closes before content is hard under the strip. */
+  /** Away when note elements sit under the list, with a slightly bigger detection range
+   *  for closing when content is close, and offset hide/unhide borders so it does not jitter. */
   const checkSideAway = useCallback(() => {
     if (!sideAutoHideRef.current) return;
     const cam = camRef.current;
     const n = noteRef.current;
     if (!cam || cam.z <= 0 || !n) return;
-    const left = -cam.x / cam.z;
-    // Footprint = list width + pad in note units. Hysteresis so the edge does not flicker.
+
+    const editingSide = !!document.activeElement?.closest(".sidebar, .sidebar-slot, .sidebar-reveal");
+    const hoveringSide = sideHoverRef.current;
+    if (editingSide || hoveringSide) {
+      return;
+    }
+
     const prev = sideAwayRef.current;
-    const pad = (prev ? -28 : 48) / cam.z;
+    const now = performance.now();
+    if (now - lastSideToggleTime.current < SIDE_COOLDOWN_MS) {
+      return;
+    }
+
+    const left = -cam.x / cam.z;
+    const viewTop = -cam.y / cam.z;
+    const viewBottom = (-cam.y + (cam.h || window.innerHeight)) / cam.z;
+
+    // Hysteresis with offset borders:
+    // Closing uses SIDE_AUTOHIDE_PAD (80px), while unhiding requires content
+    // to clear SIDE_AUTOSHOW_PAD (135px), preventing jitter around the collapse border.
+    const pad = (prev ? SIDE_AUTOSHOW_PAD : SIDE_AUTOHIDE_PAD) / cam.z;
     const right = left + sideWidthRef.current / cam.z + pad;
     let under = false;
-    const editingSide = !!document.activeElement?.closest(".sidebar");
     for (const o of n.doc.canvas.objects) {
       const b = objectBBox(o, heightsRef.current);
-      if (b.x + b.w > left && b.x < right) {
+      const inViewY = b.y + b.h > viewTop - 40 / cam.z && b.y < viewBottom + 40 / cam.z;
+      if (inViewY && b.x + b.w > left && b.x < right) {
         under = true;
         break;
       }
     }
-    const away = !editingSide && under;
+    const away = under;
     if (away !== prev) {
+      lastSideToggleTime.current = now;
       sideAwayRef.current = away;
       setSideScrolledAway(away);
     }
   }, []);
+
+  const onSideHoverEnter = useCallback(() => {
+    sideHoverRef.current = true;
+    if (sideHoverTimer.current) {
+      window.clearTimeout(sideHoverTimer.current);
+      sideHoverTimer.current = null;
+    }
+    setSideHoverActive(true);
+  }, []);
+
+  const onSideHoverLeave = useCallback(() => {
+    sideHoverRef.current = false;
+    if (sideHoverTimer.current) window.clearTimeout(sideHoverTimer.current);
+    sideHoverTimer.current = window.setTimeout(() => {
+      const editingSide = !!document.activeElement?.closest(".sidebar, .sidebar-slot, .sidebar-reveal");
+      const popoverOpen = !!document.querySelector(".sidebar-slot .autohide-popover");
+      if (!editingSide && !popoverOpen) {
+        setSideHoverActive(false);
+      }
+    }, 220);
+    if (sideMode === "dynamic") {
+      checkSideAway();
+    }
+  }, [sideMode, checkSideAway]);
+
+  const onTitleHoverEnter = useCallback(() => {
+    titleHoverRef.current = true;
+    if (titleHoverTimer.current) {
+      window.clearTimeout(titleHoverTimer.current);
+      titleHoverTimer.current = null;
+    }
+    setTitleHoverActive(true);
+  }, []);
+
+  const onTitleHoverLeave = useCallback(() => {
+    titleHoverRef.current = false;
+    if (titleHoverTimer.current) window.clearTimeout(titleHoverTimer.current);
+    titleHoverTimer.current = window.setTimeout(() => {
+      const editingTitle = !!document.activeElement?.closest(".note-title-row, .note-title-slot");
+      const popoverOpen = !!document.querySelector(".note-title-slot .autohide-popover");
+      if (!editingTitle && !popoverOpen) {
+        setTitleHoverActive(false);
+      }
+    }, 220);
+    if (titleMode === "dynamic") {
+      checkTitleAway();
+    }
+  }, [titleMode, checkTitleAway]);
 
   const checkChromeAway = useCallback(() => {
     checkTitleAway();
@@ -863,19 +1018,24 @@ export function NotebookView({
   const diskMediaRef = useRef<{ path: string; keys: Set<string> }>({ path: "", keys: new Set() });
 
   /* ── loading ── */
-  const loadNoteAt = useCallback(async (p: string) => {
-    const n = await api.loadNote(p);
-    diskMediaRef.current = { path: n.path, keys: new Set(Object.keys(n.media_b64)) };
-    past.current = [];
-    future.current = [];
-    heightsRef.current = {};
-    setNote(n);
-    setTitleDraft(n.display_title);
-    setDirty(false);
-    setPdf(null);
-    // Restore pinned Analyze cards saved with this note (missing/empty is fine).
-    onQuickCardsLoaded?.(p, Array.isArray(n.doc.canvas.quickCards) ? n.doc.canvas.quickCards : []);
-  }, [onQuickCardsLoaded]);
+  const loadNoteAt = useCallback(
+    async (p: string, cameraTarget?: { x: number; y: number; z: number } | null) => {
+      const n = await api.loadNote(p);
+      diskMediaRef.current = { path: n.path, keys: new Set(Object.keys(n.media_b64)) };
+      past.current = [];
+      future.current = [];
+      heightsRef.current = {};
+      const targetCam = cameraTarget ?? getTopContentCam(n.doc.canvas.objects, heightsRef.current);
+      restoreCamRef.current = targetCam;
+      setNote(n);
+      setTitleDraft(n.display_title);
+      setDirty(false);
+      setPdf(null);
+      // Restore pinned Analyze cards saved with this note (missing/empty is fine).
+      onQuickCardsLoaded?.(p, Array.isArray(n.doc.canvas.quickCards) ? n.doc.canvas.quickCards : []);
+    },
+    [onQuickCardsLoaded],
+  );
 
   useEffect(() => {
     (async () => {
@@ -888,19 +1048,51 @@ export function NotebookView({
         const nb = await api.openNotebook(path);
         setInfo(nb);
         const nui = await api.getNotebookUi(path);
+        const sortOrder = nui.sort || "name";
         setUi({
           ...nui,
-          sort: nui.sort || "name",
+          sort: sortOrder,
           sidebar_width: nui.sidebar_width || 224,
         });
-        const target =
-          activeNotePath ??
-          (nui.last_note ? nb.notes.find((x) => x.title === nui.last_note)?.path : undefined) ??
-          nb.notes[0]?.path;
+
+        const isFirstOpenInSession = !hasOpenedNotebookInSession(path);
+        let target: string | undefined;
+        let initialCamera: { x: number; y: number; z: number } | null = null;
+
+        if (activeNotePath) {
+          target = activeNotePath;
+          const session = getNotebookSession(path);
+          initialCamera = session?.noteCams?.[activeNotePath] ?? session?.lastCam ?? null;
+        } else if (isFirstOpenInSession) {
+          // First time this notebook is opened since starting this app instance:
+          // open the top note inside it (ordering setting considered) at the beginning (top of content actual).
+          const sorted = sortNotesList(nb.notes, sortOrder);
+          target = sorted[0]?.path;
+          initialCamera = null; // will be calculated as top-of-content in loadNoteAt
+        } else {
+          // Returning in same session: take user to the last opened note, at the last open position.
+          const session = getNotebookSession(path);
+          if (session?.lastNotePath && nb.notes.some((x) => x.path === session.lastNotePath)) {
+            target = session.lastNotePath;
+            initialCamera = session.lastCam ?? null;
+          } else {
+            const sorted = sortNotesList(nb.notes, sortOrder);
+            target = sorted[0]?.path;
+            initialCamera = null;
+          }
+        }
+
         if (target) {
-          await loadNoteAt(target);
+          await loadNoteAt(target, initialCamera);
           onNoteOpened?.(target);
-        } else setNote(null);
+          recordNotebookSession(path, {
+            lastNotePath: target,
+            lastCam: initialCamera ?? restoreCamRef.current ?? undefined,
+          });
+        } else {
+          setNote(null);
+          recordNotebookSession(path, {});
+        }
       } catch (e) {
         onToast(String(e));
       }
@@ -908,6 +1100,20 @@ export function NotebookView({
     // Only re-open when notebook/mode changes — note switches are handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, path, loadNoteAt, onToast]);
+
+  // Persist session state when leaving the notebook
+  useEffect(() => {
+    return () => {
+      if (mode === "notebook" && noteRef.current?.path) {
+        const curCam = camRef.current ? { x: camRef.current.x, y: camRef.current.y, z: camRef.current.z } : undefined;
+        recordNotebookSession(path, {
+          lastNotePath: noteRef.current.path,
+          lastCam: curCam,
+          noteCams: curCam ? { [noteRef.current.path]: curCam } : undefined,
+        });
+      }
+    };
+  }, [mode, path]);
 
   const refreshInfo = useCallback(async () => {
     if (mode !== "notebook") return null;
@@ -1274,31 +1480,8 @@ export function NotebookView({
 
   /* ── notes list ── */
   const sortedNotes = useMemo(() => {
-    if (!info) return [] as NoteListItem[];
-    const notes = [...info.notes];
-    const sort = ui.sort || "name";
-    const byName = (a: NoteListItem, b: NoteListItem) =>
-      a.title.localeCompare(b.title, "hu", { numeric: true, sensitivity: "base" });
-    /** chrono emits ns-precision RFC3339; truncate to ms so Date.parse is reliable. */
-    const ts = (iso: string) => {
-      if (!iso) return 0;
-      const t = Date.parse(iso.replace(/(\.\d{3})\d+/, "$1"));
-      return Number.isFinite(t) ? t : 0;
-    };
-    notes.sort((a, b) => {
-      if (sort.startsWith("name")) {
-        const c = byName(a, b);
-        return sort === "name_desc" ? -c : c;
-      }
-      const ta = ts(a.created);
-      const tb = ts(b.created);
-      if (ta !== tb) {
-        // created = oldest→newest (top→bottom); created_desc = newest first (later toward top)
-        return sort === "created_desc" ? tb - ta : ta - tb;
-      }
-      return byName(a, b);
-    });
-    return notes;
+    if (!info?.notes) return [] as NoteListItem[];
+    return sortNotesList(info.notes, ui.sort || "name");
   }, [info, ui.sort]);
 
   const sepKey = (ui.sort || "name") as keyof Separators;
@@ -1311,21 +1494,49 @@ export function NotebookView({
 
   const openNote = (p: string) =>
     guarded(async () => {
-      await loadNoteAt(p);
+      if (mode === "notebook" && noteRef.current?.path) {
+        const curCam = camRef.current ? { x: camRef.current.x, y: camRef.current.y, z: camRef.current.z } : undefined;
+        recordNotebookSession(path, {
+          lastNotePath: noteRef.current.path,
+          lastCam: curCam,
+          noteCams: curCam ? { [noteRef.current.path]: curCam } : undefined,
+        });
+      }
+
+      const session = getNotebookSession(path);
+      const targetCam = session?.noteCams?.[p] ?? null;
+
+      await loadNoteAt(p, targetCam);
       if (mode === "notebook") {
         const stem = p.replace(/^.*[\\/]/, "").replace(/\.note$/i, "");
         persistUi({ ...ui, last_note: stem });
         onNoteUserOpen?.(p);
+        recordNotebookSession(path, {
+          lastNotePath: p,
+          lastCam: restoreCamRef.current ?? undefined,
+        });
       }
     });
 
   const createNote = () =>
     guarded(async () => {
       if (expiredRef.current || mode !== "notebook") return;
+      if (mode === "notebook" && noteRef.current?.path) {
+        const curCam = camRef.current ? { x: camRef.current.x, y: camRef.current.y, z: camRef.current.z } : undefined;
+        recordNotebookSession(path, {
+          lastNotePath: noteRef.current.path,
+          lastCam: curCam,
+          noteCams: curCam ? { [noteRef.current.path]: curCam } : undefined,
+        });
+      }
       const item = await api.createNote(path);
       await refreshInfo();
       await loadNoteAt(item.path);
       onNoteUserOpen?.(item.path);
+      recordNotebookSession(path, {
+        lastNotePath: item.path,
+        lastCam: restoreCamRef.current ?? undefined,
+      });
       if (titleAwayRef.current) setTitleHoldOpen(true);
       if (settingsRef.current.title_collapsed) patchSettings({ title_collapsed: false });
       setTimeout(() => document.querySelector<HTMLInputElement>(".note-title-row input.title")?.focus(), 60);
@@ -3010,19 +3221,31 @@ export function NotebookView({
     if (!showMoodle) setMoodleOpen(false);
   }, [showMoodle]);
 
-  const titleAutoHide = settings.title_auto_hide !== false;
   const ribbonActionsCollapsed = settings.ribbon_actions_collapsed === true;
-  const titleHidden =
-    settings.title_collapsed === true || (titleAutoHide && !pdf && titleScrolledAway && !titleHoldOpen);
+  const isTitleAutoHidden =
+    titleMode === "hover"
+      ? (!titleHoverActive && !titleHoldOpen)
+      : titleMode === "dynamic"
+      ? (titleScrolledAway && !titleHoldOpen)
+      : false;
+  const titleHidden = settings.title_collapsed === true || (!pdf && isTitleAutoHidden);
   const revealTitle = () => {
     if (settingsRef.current.title_collapsed) patchSettings({ title_collapsed: false });
-    if ((settingsRef.current.title_auto_hide !== false) && titleScrolledAway) setTitleHoldOpen(true);
+    if (titleMode === "hover") setTitleHoverActive(true);
+    if (titleMode === "dynamic" && titleScrolledAway) setTitleHoldOpen(true);
   };
-  const sideHidden =
-    ui.sidebar_collapsed === true || (sideAuto && noteOpen && sideScrolledAway && !sideHoldOpen);
+
+  const isSideAutoHidden =
+    sideMode === "hover"
+      ? (!sideHoverActive && !sideHoldOpen)
+      : sideMode === "dynamic"
+      ? (sideScrolledAway && !sideHoldOpen)
+      : false;
+  const sideHidden = ui.sidebar_collapsed === true || (noteOpen && isSideAutoHidden);
   const revealSidebar = () => {
     if (ui.sidebar_collapsed) persistUi({ ...ui, sidebar_collapsed: false });
-    if (sideAuto && sideScrolledAway) setSideHoldOpen(true);
+    if (sideMode === "hover") setSideHoverActive(true);
+    if (sideMode === "dynamic" && sideScrolledAway) setSideHoldOpen(true);
   };
   const toggleFullscreen = () => {
     window.dispatchEvent(new Event("paperlike-toggle-fullscreen"));
@@ -3804,6 +4027,8 @@ export function NotebookView({
           <>
             <div
               className={`sidebar-slot${sideHidden ? " is-collapsed" : ""}${titleHidden ? " with-title-collapsed" : ""}`}
+              onMouseEnter={onSideHoverEnter}
+              onMouseLeave={onSideHoverLeave}
             >
               <div
                 className="sidebar"
@@ -3837,15 +4062,17 @@ export function NotebookView({
                     <option value="created">Created ↑</option>
                     <option value="created_desc">Created ↓</option>
                   </select>
-                  <button
-                    className={`btn icon title-autohide${sideAuto ? " is-on" : ""}`}
-                    title={messages.sidebarAutoHide}
-                    aria-label={messages.sidebarAutoHide}
-                    aria-pressed={sideAuto}
-                    onClick={() => patchSettings({ sidebar_auto_hide: !sideAuto })}
-                  >
-                    <IcAutoHide size={15} />
-                  </button>
+                  <AutoHideSelector
+                    mode={sideMode}
+                    onChange={(next) =>
+                      patchSettings({
+                        sidebar_autohide_mode: next,
+                        sidebar_auto_hide: next !== "none",
+                      })
+                    }
+                    barLabel="Note list"
+                    align="left"
+                  />
                   <button
                     className="btn icon"
                     title="Collapse"
@@ -4153,14 +4380,18 @@ export function NotebookView({
                   </div>
                 )}
               </div>
-              {!sideAuto && (
+              {sideMode === "none" && (
                 <div
                   className={`sidebar-resizer ${sbDragging ? "drag" : ""}`}
                   onMouseDown={() => setSbDragging(true)}
                 />
               )}
             </div>
-            <div className={`sidebar-reveal-slot${sideHidden ? " is-open" : ""}`}>
+            <div
+              className={`sidebar-reveal-slot${sideHidden ? " is-open" : ""}`}
+              onMouseEnter={onSideHoverEnter}
+              onMouseLeave={onSideHoverLeave}
+            >
               <button
                 className="sidebar-reveal"
                 title={messages.showNoteList}
@@ -4181,7 +4412,11 @@ export function NotebookView({
         >
           {note ? (
             <>
-              <div className={`note-title-slot${titleHidden ? " is-collapsed" : ""}`}>
+              <div
+                className={`note-title-slot${titleHidden ? " is-collapsed" : ""}`}
+                onMouseEnter={onTitleHoverEnter}
+                onMouseLeave={onTitleHoverLeave}
+              >
               <div className="note-title-row" inert={titleHidden || undefined}>
                 {/* the hidden span sizes the input to its text so the date can sit right beside it */}
                 <span className="title-sizer">
@@ -4266,14 +4501,17 @@ export function NotebookView({
                   </span>
                 )}
                 <div className="note-title-tools">
-                  <button
-                    className={`btn icon title-autohide${titleAutoHide ? " is-on" : ""}`}
-                    title={messages.titleAutoHide}
-                    aria-pressed={titleAutoHide}
-                    onClick={() => patchSettings({ title_auto_hide: !titleAutoHide })}
-                  >
-                    <IcAutoHide size={15} />
-                  </button>
+                  <AutoHideSelector
+                    mode={titleMode}
+                    onChange={(next) =>
+                      patchSettings({
+                        title_autohide_mode: next,
+                        title_auto_hide: next !== "none",
+                      })
+                    }
+                    barLabel="Title"
+                    align="right"
+                  />
                   <button
                     className="btn icon"
                     title={messages.hideTitle}
@@ -4288,8 +4526,18 @@ export function NotebookView({
                 </div>
               </div>
               </div>
-              <div className={`note-title-reveal-slot${titleHidden ? " is-open" : ""}`}>
-                <button className="note-title-reveal" title={messages.showTitle} aria-label={messages.showTitle} onClick={revealTitle}>
+              <div
+                className={`note-title-reveal-slot${titleHidden ? " is-open" : ""}`}
+                onMouseEnter={onTitleHoverEnter}
+                onMouseLeave={onTitleHoverLeave}
+              >
+                <button
+                  className="note-title-reveal"
+                  title={messages.showTitle}
+                  aria-label={messages.showTitle}
+                  onClick={revealTitle}
+                  onMouseEnter={revealTitle}
+                >
                   <IcChevron size={12} />
                 </button>
               </div>
@@ -4495,6 +4743,7 @@ export function NotebookView({
                 </div>
               ) : (
                 <CanvasEditor
+                  key={note.path}
                   note={note}
                   onUpdate={updateNote}
                   canEdit={!expired}

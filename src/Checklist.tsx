@@ -67,16 +67,6 @@ const POS_KEY = "pl.checklist.pos";
 
 type PanelPos = { left: number; top: number };
 
-function readPanelPos(): PanelPos | null {
-  try {
-    const v = JSON.parse(localStorage.getItem(POS_KEY) || "") as PanelPos;
-    if (v && typeof v.left === "number" && typeof v.top === "number") return v;
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
 function clampPanelPos(left: number, top: number, el: HTMLElement): PanelPos {
   const margin = 8;
   const w = el.offsetWidth || 320;
@@ -94,8 +84,17 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
   const [erasing, setErasing] = useState<Record<string, { d: string; w: number; h: number; left: number; top: number }>>({});
-  const [panelPos, setPanelPos] = useState<PanelPos | null>(() => readPanelPos());
+  // Always open at the default location under the checklist button.
+  const [panelPos, setPanelPos] = useState<PanelPos | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem(POS_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const addRef = useRef<HTMLInputElement>(null);
   const rowEls = useRef(new Map<string, HTMLDivElement>());
   const latest = useRef<Item[] | null>(null);
@@ -319,7 +318,6 @@ export function ChecklistPanel({ onClose }: { onClose: () => void }) {
       el.removeEventListener("pointercancel", up);
       const next = clampPanelPos(ev.clientX - ox, ev.clientY - oy, el);
       setPanelPos(next);
-      localStorage.setItem(POS_KEY, JSON.stringify(next));
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);

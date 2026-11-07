@@ -1315,7 +1315,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   display: flex;
   min-height: 0;
   width: var(--sidebar-w, 224px);
-  overflow: hidden;
+  overflow: visible;
   transform: translate3d(0, 0, 0);
   will-change: transform;
   transition: transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1), opacity 220ms ease;
@@ -1324,10 +1324,18 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   border-right: 1px solid var(--border);
   background: var(--surface);
 }
+.sidebar-slot:not(.is-collapsed) {
+  overflow: visible;
+}
 .sidebar-slot.is-collapsed {
   transform: translate3d(-100%, 0, 0);
   opacity: 0;
   pointer-events: none;
+  overflow: hidden;
+}
+.sidebar-slot:has(.autohide-popover) {
+  overflow: visible !important;
+  z-index: 120 !important;
 }
 .sidebar-slot .sidebar {
   flex: none;
@@ -1335,6 +1343,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   height: 100%;
   background: transparent;
   border-right: none;
+  overflow: visible;
 }
 .sidebar-slot .sidebar-resizer {
   position: absolute;
@@ -1344,10 +1353,10 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   margin: 0;
   z-index: 1;
 }
-/* Title collapsed: keep the rounded meeting corner in every open/collapsed combo. */
+/* Title collapsed: square meeting corner for the note list window. */
 .sidebar-slot.with-title-collapsed,
 .sidebar-slot.with-title-collapsed .sidebar {
-  border-top-right-radius: 12px;
+  border-top-right-radius: 0;
 }
 .sidebar-head .btn.icon {
   width: 26px;
@@ -1368,6 +1377,127 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   border-color: color-mix(in srgb, var(--ink-3) 35%, var(--border));
 }
 .sidebar-head .btn.icon.title-autohide.is-on:hover { color: var(--ink); }
+
+/* AutoHide 3-mode selector popover */
+.autohide-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.autohide-btn.open {
+  color: var(--ink);
+  background: var(--bg-2);
+}
+.autohide-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 100;
+  min-width: 204px;
+  width: max-content;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: autohide-pop-in 0.12s ease-out;
+}
+.autohide-popover.align-left {
+  left: 0;
+  right: auto;
+}
+.autohide-popover.align-right {
+  right: 0;
+  left: auto;
+}
+.autohide-popover-title {
+  padding: 4px 8px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  user-select: none;
+}
+.autohide-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+  user-select: none;
+  width: 100%;
+}
+.autohide-option:hover {
+  background: var(--bg-2);
+}
+.autohide-option.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.autohide-option-icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  flex: none;
+  color: var(--ink-2);
+}
+.autohide-option.active .autohide-option-icon {
+  color: var(--accent);
+}
+.autohide-option-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.autohide-option-name {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.autohide-option.active .autohide-option-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.autohide-option-desc {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.autohide-option.active .autohide-option-desc {
+  color: color-mix(in srgb, var(--accent) 70%, var(--ink-3));
+}
+.autohide-option-check {
+  margin-left: 8px;
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+@keyframes autohide-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 .sidebar-reveal-slot {
   position: absolute;
   left: 0;
@@ -1454,7 +1584,8 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   align-self: start;
   box-sizing: border-box;
   width: 100%;
-  overflow: hidden;
+  position: relative;
+  z-index: 50;
   interpolate-size: allow-keywords;
   height: max-content;
   transform: translate3d(0, 0, 0);
@@ -1466,6 +1597,14 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
     transform 340ms cubic-bezier(0.22, 0.8, 0.2, 1),
     width 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
 }
+.note-title-slot:not(.is-collapsed) {
+  overflow: visible;
+}
+.note-title-slot:has(.autohide-popover),
+.note-title-row:has(.autohide-popover) {
+  overflow: visible !important;
+  z-index: 120 !important;
+}
 .editor-pane.side-open .note-title-slot,
 .editor-pane.side-open .note-title-reveal-slot {
   transform: translate3d(var(--sidebar-w, 224px), 0, 0);
@@ -1476,7 +1615,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   transition: height 340ms cubic-bezier(0.22, 0.8, 0.2, 1);
 }
 .note-title-slot.is-collapsed,
-.note-title-reveal-slot { height: 0; }
+.note-title-reveal-slot { height: 0; overflow: hidden; }
 .note-title-reveal-slot.is-open { height: max-content; }
 .note-title-row {
   display: flex;
@@ -1485,7 +1624,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   padding: 8px 22px 0;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   transition: padding 340ms cubic-bezier(0.22, 0.8, 0.2, 1), opacity 220ms ease;
 }
 .note-title-slot.is-collapsed .note-title-row {
@@ -1493,6 +1632,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   padding-bottom: 0;
   opacity: 0;
   pointer-events: none;
+  overflow: hidden;
 }
 .note-title-tools {
   display: inline-flex;
@@ -5545,11 +5685,15 @@ svg.hl .hl-ink {
 }
 
 /* Checklist (top-right tools) */
+.qa-checklist-anchor {
+  position: relative;
+  display: inline-flex;
+}
 .qa-tool.is-on { color: var(--accent); }
 .checklist {
   position: absolute;
   top: calc(100% + 10px);
-  right: 0;
+  left: 0;
   z-index: 80;
   width: 320px;
   max-height: min(72vh, 560px);
@@ -5565,7 +5709,7 @@ svg.hl .hl-ink {
   contain: layout paint style;
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.005em;
-  transform-origin: top right;
+  transform-origin: top left;
   animation: checklist-in 0.12s ease-out;
 }
 /* the sheet itself, with torn edges from the #cl-rough filter. It starts under the grey
@@ -5595,6 +5739,7 @@ svg.hl .hl-ink {
 .checklist.is-placed {
   position: fixed;
   right: auto;
+  left: auto;
 }
 .checklist-head { display: flex; align-items: center; gap: 4px; padding: 11px 10px 10px 26px; background: #3c3a37 linear-gradient(rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.06)); border-radius: 4px 4px 0 0; position: relative; --ink: #f5f2ec; --ink-2: rgba(245, 242, 236, 0.82); --ink-3: rgba(245, 242, 236, 0.62); color: var(--ink); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12); cursor: grab; user-select: none; }
 .checklist-head:active { cursor: grabbing; }

@@ -107,12 +107,18 @@ pub struct Settings {
     /// Hide the note title once the canvas is scrolled below the top. Missing means on.
     #[serde(default = "default_true")]
     pub title_auto_hide: bool,
+    /// Note title row auto-collapse mode: "none" | "dynamic" | "hover"
+    #[serde(default)]
+    pub title_autohide_mode: Option<String>,
     /// Note title row manually collapsed.
     #[serde(default)]
     pub title_collapsed: bool,
     /// Note list slides away to a thin rail and back out on hover.
     #[serde(default)]
     pub sidebar_auto_hide: bool,
+    /// Note list auto-collapse mode: "none" | "dynamic" | "hover"
+    #[serde(default)]
+    pub sidebar_autohide_mode: Option<String>,
     /// Hide the ribbon tool row under the tabs.
     #[serde(default)]
     pub ribbon_actions_collapsed: bool,
@@ -160,8 +166,10 @@ impl Default for Settings {
             palm_rejection: true,
             calendar_enabled: true,
             title_auto_hide: true,
+            title_autohide_mode: None,
             title_collapsed: false,
             sidebar_auto_hide: false,
+            sidebar_autohide_mode: None,
             ribbon_actions_collapsed: false,
             home_tile_size: default_home_tile_size(),
         }

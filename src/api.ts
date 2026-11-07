@@ -29,6 +29,22 @@ export type GitSyncStatus = {
 };
 export type GitSyncCheck = { code: string; detail: string; remote: string };
 
+export type AutoHideMode = "none" | "dynamic" | "hover";
+
+export function resolveAutoHideMode(
+  modeSetting?: AutoHideMode | null,
+  legacyBoolean?: boolean,
+  defaultMode: AutoHideMode = "none",
+): AutoHideMode {
+  if (modeSetting === "none" || modeSetting === "dynamic" || modeSetting === "hover") {
+    return modeSetting;
+  }
+  if (typeof legacyBoolean === "boolean") {
+    return legacyBoolean ? "dynamic" : "none";
+  }
+  return defaultMode;
+}
+
 export type Settings = {
   version: number;
   theme: string;
@@ -66,9 +82,13 @@ export type Settings = {
   palm_rejection?: boolean;
   /** Hide the note title after the canvas scrolls below the top. Missing means on. */
   title_auto_hide?: boolean;
+  /** 3-mode auto-collapse: "none" | "dynamic" | "hover" */
+  title_autohide_mode?: AutoHideMode;
   /** Note title row manually collapsed. */
   title_collapsed?: boolean;
   sidebar_auto_hide?: boolean;
+  /** 3-mode auto-collapse: "none" | "dynamic" | "hover" */
+  sidebar_autohide_mode?: AutoHideMode;
   /** Hide the ribbon tool row under the tabs. */
   ribbon_actions_collapsed?: boolean;
   /** Home grid tile min width in px. Missing means 168. */
