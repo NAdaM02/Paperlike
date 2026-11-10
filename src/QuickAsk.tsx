@@ -7,7 +7,7 @@ import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHos
 import { ChecklistPanel } from "./Checklist";
 import { toggleCalendar, useCalendarAvailable } from "./CalendarPane";
 import { messages } from "./copy/messages";
-import { HostLogo, IcCalc, IcCalendar, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcImage, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
+import { HostLogo, IcAnalyzeMarker, IcCalc, IcCalendar, IcCheck, IcChevron, IcChevronUp, IcClose, IcCopy, IcHistory, IcImage, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
 const BRIEFLY =
@@ -51,6 +51,7 @@ export type QuickSeed = {
   analyze?: AnalyzeAction;
   /** Analyze › Custom: the capture is attached to the first question the user types. */
   custom?: boolean;
+  collapsed?: boolean;
   /** Screen area the capture came from: the card opens beside it, and Rescan captures it again. */
   anchor?: AnalyzeRect;
   /** The same area in note coordinates, when it was over a canvas: Rescan follows it there. */
@@ -79,6 +80,7 @@ export function toSavedQuickCard(input: {
   url: string | null;
   analyze?: AnalyzeAction;
   custom?: boolean;
+  collapsed?: boolean;
   imagePreview?: string;
   imagePath?: string;
   anchor?: AnalyzeRect;
@@ -101,6 +103,7 @@ export function toSavedQuickCard(input: {
     url: input.url,
     analyze: input.analyze,
     custom: input.custom,
+    ...(input.collapsed ? { collapsed: true } : null),
     imagePreview: preview,
     imagePngB64,
     anchor: input.anchor,
@@ -160,6 +163,7 @@ export async function seedFromSavedQuickCard(card: SavedQuickCard): Promise<Quic
     imagePath,
     analyze: card.analyze as AnalyzeAction | undefined,
     custom: card.custom,
+    collapsed: card.collapsed ?? false,
     anchor: card.anchor,
     area: card.area ?? null,
     place: card.place,
@@ -179,6 +183,7 @@ export type QuickHistoryEntry = {
   analyze?: AnalyzeAction;
   imagePath?: string;
   custom?: boolean;
+  collapsed?: boolean;
   anchor?: AnalyzeRect;
   area?: NoteArea | null;
   place?: CardPlace;
@@ -687,6 +692,7 @@ export const QuickAskCard = memo(function QuickAskCard({
   onOpenPanel,
   onClose,
   onPinnedPersist,
+  onChangeArea,
   stack = 0,
 }: {
   seed: QuickSeed;
@@ -702,12 +708,17 @@ export const QuickAskCard = memo(function QuickAskCard({
   onClose: () => void;
   /** Write or clear this card on the open note while it is pinned. */
   onPinnedPersist?: (card: SavedQuickCard | null, id: number) => void;
+  /** Re-mark the analyzed area on canvas. */
+  onChangeArea?: () => void;
 }) {
   const [host, setHost] = useState<ChatHost>(seed.prior?.host ?? initialHost);
   const [turns, setTurns] = useState<Turn[]>(seed.prior?.turns ?? []);
   const [live, setLive] = useState("");
   /** The model's reasoning for the question being answered, as the site shows it. */
   const [thinking, setThinking] = useState("");
+  const [collapsed, setCollapsed] = useState<boolean>(seed.collapsed ?? false);
+  const [selected, setSelected] = useState(false);
+  const markerRef = useRef<HTMLDivElement>(null);
   /** Sent Analyze prompts the user expanded (by turn index); collapsed they read as the action name. */
   const [openPrompts, setOpenPrompts] = useState<ReadonlySet<number>>(() => new Set());
   const [busy, setBusy] = useState(false);
@@ -820,6 +831,7 @@ export const QuickAskCard = memo(function QuickAskCard({
           analyze: seed.analyze,
           imagePath: imageRef.current,
           custom: seed.custom,
+          collapsed,
           anchor: seed.anchor,
           area: seed.area,
           place: placeNow(),
@@ -871,14 +883,14 @@ export const QuickAskCard = memo(function QuickAskCard({
   const layoutHRef = useRef(0);
   useLayoutEffect(() => {
     const area = seed.area;
-    const card = cardRef.current;
-    if (!area || !area.w || !pinned || !card) return;
+    const target = collapsed ? markerRef.current : cardRef.current;
+    if (!area || !area.w || !pinned || !target) return;
     const place = () => {
       const rel = relRef.current;
-      if (!rel || !pinnedRef.current || card.classList.contains("resizing")) return;
+      if (!rel || !pinnedRef.current || target.classList.contains("resizing")) return;
       const at = screenOf(area);
       if (!at) {
-        card.style.display = "none";
+        target.style.display = "none";
         return;
       }
       const r = at.rect;
@@ -891,47 +903,63 @@ export const QuickAskCard = memo(function QuickAskCard({
       const w = lw * k;
       const x = rel.side === "right" ? r.x + r.w + rel.gap * z : r.x - rel.gap * z - w;
       const y = r.y + rel.oy * z;
-      card.style.display = "";
-      card.style.left = `${x}px`;
-      card.style.top = `${y}px`;
-      card.style.right = "auto";
-      card.style.width = `${lw}px`;
-      card.style.maxWidth = "none";
-      card.style.maxHeight = "none";
-      if (rel.h != null) card.style.height = `${Math.max(MIN_H, rel.h * base)}px`;
-      card.style.transformOrigin = "0 0";
-      card.style.transform = `scale(${k})`;
-      const c = at.clip;
-      let layoutH = layoutHRef.current;
-      if (!(layoutH > 0)) {
-        layoutH = card.offsetHeight;
-        layoutHRef.current = layoutH;
+      target.style.display = "";
+      target.style.left = `${x}px`;
+      target.style.top = `${y}px`;
+      target.style.right = "auto";
+      if (!collapsed) {
+        target.style.width = `${lw}px`;
+        target.style.maxWidth = "none";
+        target.style.maxHeight = "none";
+        if (rel.h != null) target.style.height = `${Math.max(MIN_H, rel.h * base)}px`;
+        target.style.transformOrigin = "0 0";
+        target.style.transform = `scale(${k})`;
+        const c = at.clip;
+        let layoutH = layoutHRef.current;
+        if (!(layoutH > 0)) {
+          layoutH = target.offsetHeight;
+          layoutHRef.current = layoutH;
+        }
+        const h = layoutH * k;
+        const it = Math.max(0, c.top - y);
+        const il = Math.max(0, c.left - x);
+        const ib = Math.max(0, y + h - c.bottom);
+        const ir = Math.max(0, x + w - c.right);
+        const gone = it + ib >= h || il + ir >= w;
+        target.style.visibility = gone ? "hidden" : "";
+        // inset() is measured on the unscaled card.
+        target.style.clipPath = !gone && (it || il || ib || ir) ? `inset(${it / k}px ${ir / k}px ${ib / k}px ${il / k}px)` : "";
+      } else {
+        target.style.width = "28px";
+        target.style.height = "28px";
+        target.style.transform = "";
+        target.style.clipPath = "";
+        const c = at.clip;
+        const it = Math.max(0, c.top - y);
+        const il = Math.max(0, c.left - x);
+        const ib = Math.max(0, y + 28 - c.bottom);
+        const ir = Math.max(0, x + 28 - c.right);
+        const gone = it + ib >= 28 || il + ir >= 28;
+        target.style.visibility = gone ? "hidden" : "";
       }
-      const h = layoutH * k;
-      const it = Math.max(0, c.top - y);
-      const il = Math.max(0, c.left - x);
-      const ib = Math.max(0, y + h - c.bottom);
-      const ir = Math.max(0, x + w - c.right);
-      const gone = it + ib >= h || il + ir >= w;
-      card.style.visibility = gone ? "hidden" : "";
-      // inset() is measured on the unscaled card.
-      card.style.clipPath = !gone && (it || il || ib || ir) ? `inset(${it / k}px ${ir / k}px ${ib / k}px ${il / k}px)` : "";
     };
     place();
-    // The answer grows while it streams in; keep the cut at the view's edge.
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      const box = entry?.borderBoxSize?.[0];
-      layoutHRef.current = box?.blockSize ?? entry?.contentRect.height ?? card.offsetHeight;
-      place();
-    });
-    ro.observe(card);
+    let ro: ResizeObserver | undefined;
+    if (!collapsed) {
+      ro = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        const box = entry?.borderBoxSize?.[0];
+        layoutHRef.current = box?.blockSize ?? entry?.contentRect.height ?? target.offsetHeight;
+        place();
+      });
+      ro.observe(target);
+    }
     const off = subscribeCanvas(place);
     return () => {
-      ro.disconnect();
+      ro?.disconnect();
       off();
     };
-  }, [seed.area, pinned]);
+  }, [seed.area, pinned, collapsed]);
 
   /** Moving or resizing frees a pinned card: it stays where it is put, over everything. */
   const unpin = () => {
@@ -999,6 +1027,7 @@ export const QuickAskCard = memo(function QuickAskCard({
       url: urlRef.current,
       analyze: seed.analyze,
       custom: seed.custom,
+      collapsed,
       imagePreview: shotRef.current,
       imagePath: imageRef.current,
       anchor: seed.anchor,
@@ -1017,13 +1046,129 @@ export const QuickAskCard = memo(function QuickAskCard({
     const t = window.setTimeout(persistPinned, 200);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinned, turns, host, url, shot, seed.id]);
+  }, [pinned, turns, host, url, shot, seed.id, collapsed]);
 
   /** The card clicked last is on top of the others. */
   const toFront = () => {
-    document.querySelectorAll(".qa-card.front").forEach((el) => el.classList.remove("front"));
-    cardRef.current?.classList.add("front");
+    document.querySelectorAll(".qa-card.front, .qa-marker.front").forEach((el) => el.classList.remove("front"));
+    (cardRef.current ?? markerRef.current)?.classList.add("front");
   };
+
+  const prevAnchorRef = useRef(seed.anchor);
+  useLayoutEffect(() => {
+    if (seed.anchor && seed.area && prevAnchorRef.current !== seed.anchor) {
+      prevAnchorRef.current = seed.anchor;
+      const target = cardRef.current ?? markerRef.current;
+      const w = size?.w ?? (fitW ?? 400);
+      const h = size?.h ?? (layoutHRef.current || 300);
+      const askW = target ? parseFloat(getComputedStyle(target).getPropertyValue("--ask-w")) || 0 : 0;
+      const spot = besideArea(seed.anchor, w, askW);
+      const x = spot.x;
+      const y = Math.max(EDGE, Math.min(seed.anchor.y, window.innerHeight - Math.min(h, 320) - EDGE));
+      setPos({ x, y });
+      if (pinnedRef.current && seed.area.w) {
+        pin({ x, y, w: spot.w, h }, seed.anchor, seed.anchor.w / seed.area.w, !!size);
+      }
+      persistPinned();
+    }
+  }, [seed.anchor, seed.area]);
+
+  const startMarkerDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const marker = markerRef.current;
+    if (!marker) return;
+    e.preventDefault();
+    setSelected(true);
+    toFront();
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const rect = marker.getBoundingClientRect();
+    const ox = rect.left;
+    const oy = rect.top;
+    let moved = false;
+    const askW = parseFloat(getComputedStyle(marker).getPropertyValue("--ask-w")) || 0;
+
+    marker.setPointerCapture(e.pointerId);
+
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) > 3) {
+        moved = true;
+        marker.classList.add("dragging");
+      }
+      if (!moved) return;
+
+      const nextX = Math.max(4, Math.min(ox + dx, window.innerWidth - askW - 32));
+      const nextY = Math.max(4, Math.min(oy + dy, window.innerHeight - 32));
+
+      marker.style.left = `${nextX}px`;
+      marker.style.top = `${nextY}px`;
+      if (pinnedRef.current) {
+        const cardW = size?.w ?? (fitW ?? 400);
+        const cardH = size?.h ?? (layoutHRef.current || 300);
+        repin({ x: nextX, y: nextY, w: cardW, h: cardH }, !!size?.h);
+      } else {
+        setPos({ x: nextX, y: nextY });
+      }
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      marker.removeEventListener("pointermove", onMove);
+      marker.removeEventListener("pointerup", onUp);
+      marker.removeEventListener("pointercancel", onUp);
+      marker.classList.remove("dragging");
+
+      if (!moved) {
+        if (!ev.ctrlKey && !ev.metaKey) {
+          setCollapsed(false);
+        }
+      } else {
+        if (pinnedRef.current) {
+          persistPinned();
+        } else {
+          rememberFree();
+        }
+      }
+    };
+
+    marker.addEventListener("pointermove", onMove);
+    marker.addEventListener("pointerup", onUp);
+    marker.addEventListener("pointercancel", onUp);
+  };
+
+  useEffect(() => {
+    if (!selected || !collapsed) return;
+    const onKey = (e: KeyboardEvent) => {
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        setCollapsed(false);
+      } else if (e.key === "Escape") {
+        setSelected(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, collapsed, onClose]);
+
+  useEffect(() => {
+    if (!selected || !collapsed) return;
+    const onDown = (e: PointerEvent) => {
+      if (markerRef.current && !markerRef.current.contains(e.target as Node)) {
+        setSelected(false);
+      }
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [selected, collapsed]);
 
   // An Analyze card opens just right of the captured area, so the answer sits next to what it is
   // about. A card reopened from history goes back where it was; plain questions fan out.
@@ -1441,6 +1586,42 @@ export const QuickAskCard = memo(function QuickAskCard({
     ? `${transcript(turns)}\n\n`
     : firstQuestion;
 
+  if (collapsed) {
+    return (
+      <div
+        ref={markerRef}
+        className={`qa-marker${selected ? " selected" : ""}`}
+        role="button"
+        tabIndex={0}
+        data-qid={seed.id}
+        title="Analyze window (collapsed) — click to expand, drag to move"
+        aria-label="Analyze window (collapsed)"
+        onPointerDownCapture={toFront}
+        style={{
+          ...(pos ? { left: pos.x, top: pos.y } : null),
+        }}
+        onPointerDown={startMarkerDrag}
+        onKeyDown={(e) => {
+          if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          } else if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            setCollapsed(false);
+          } else if (e.key === "Escape") {
+            setSelected(false);
+          }
+        }}
+      >
+        <div className={`fold-mark${selected ? " selected" : ""}`}>
+          <IcAnalyzeMarker size={18} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
     {seed.anchor && <AnalyzeMark rect={seed.anchor} area={seed.area} />}
@@ -1503,6 +1684,28 @@ export const QuickAskCard = memo(function QuickAskCard({
           </button>
         )}
         <div className="qa-head-actions">
+          {onChangeArea && (seed.anchor || seed.analyze || seed.custom) && (
+            <button
+              className="btn icon"
+              type="button"
+              title="Change area"
+              aria-label="Change area"
+              onClick={onChangeArea}
+            >
+              <IcScan size={14} />
+            </button>
+          )}
+          {(seed.anchor || seed.analyze || seed.custom) && (
+            <button
+              className="btn icon"
+              type="button"
+              title="Collapse"
+              aria-label="Collapse"
+              onClick={() => setCollapsed(true)}
+            >
+              <IcChevronUp size={14} />
+            </button>
+          )}
           <button
             className="btn icon"
             type="button"

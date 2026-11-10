@@ -339,6 +339,7 @@ export type SavedQuickCard = {
   url?: string | null;
   analyze?: string;
   custom?: boolean;
+  collapsed?: boolean;
   /** data:image/png;base64,… for the capture thumb and restore. */
   imagePreview?: string;
   /** Raw PNG base64 so the capture can be re-staged after a restart. */

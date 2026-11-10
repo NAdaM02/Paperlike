@@ -217,6 +217,7 @@ export default function App() {
   const [quicks, setQuicks] = useState<QuickSeed[]>([]);
   const [calcOpen, setCalcOpen] = useState(false);
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  const [changingAreaCardId, setChangingAreaCardId] = useState<number | null>(null);
   /** Outline of the area an Analyze answer is about; `askId` once that chat moved to the Ask pane. */
   const [analyzeMark, setAnalyzeMark] = useState<{ rect: AnalyzeRect; area: NoteArea | null; askId?: number } | null>(null);
   const [recovery, setRecovery] = useState<RecoveryItem[]>([]);
@@ -960,6 +961,7 @@ export default function App() {
           beforeAsk={beforeQuickAsk}
           onHost={rememberHost}
           onPinnedPersist={onQuickPinnedPersist}
+          onChangeArea={() => setChangingAreaCardId(quick.id)}
           onOpenPanel={(host, question, url) => {
             const id = Date.now();
             setQuicks((cur) => cur.filter((q) => q.id !== quick.id));
@@ -979,6 +981,19 @@ export default function App() {
       )}
       {analyzeOpen && (
         <AnalyzeOverlay onCancel={() => setAnalyzeOpen(false)} onCapture={onAnalyzeCapture} />
+      )}
+      {changingAreaCardId !== null && (
+        <AnalyzeOverlay
+          mode="selectArea"
+          onCancel={() => setChangingAreaCardId(null)}
+          onSelectArea={(rect) => {
+            const nextArea = noteAreaAt(rect);
+            setQuicks((cur) =>
+              cur.map((q) => (q.id === changingAreaCardId ? { ...q, anchor: rect, area: nextArea } : q))
+            );
+            setChangingAreaCardId(null);
+          }}
+        />
       )}
       </div>
       {ask && (

@@ -3,7 +3,7 @@ import { api } from "./api";
 import { NoteArea, noteAreaAt, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { CHAT_NAME, ChatHost, defaultHost, setDefaultHost } from "./chat";
 import { messages } from "./copy/messages";
-import { HostLogo, IcAsk, IcClose, IcExplain, IcSolve, IcVerify } from "./icons";
+import { HostLogo, IcAsk, IcClose, IcExplain, IcScan, IcSolve, IcVerify } from "./icons";
 
 export type AnalyzeAction = "explain" | "solve" | "factcheck";
 
@@ -154,11 +154,17 @@ export async function captureArea(rect: AnalyzeRect, hide: (HTMLElement | null |
 export function AnalyzeOverlay({
   onCancel,
   onCapture,
+  mode = "capture",
+  onSelectArea,
 }: {
   onCancel: () => void;
-  onCapture: (result: AnalyzeResult) => void;
+  onCapture?: (result: AnalyzeResult) => void;
+  mode?: "capture" | "selectArea";
+  onSelectArea?: (rect: AnalyzeRect) => void;
 }) {
   const [rect, setRect] = useState<Rect | null>(null);
+  const rectRef = useRef(rect);
+  rectRef.current = rect;
   /** Selection in note units; kept so zoom/pan move the frame with the ink. */
   const areaRef = useRef<NoteArea | null>(null);
   const [drag, setDrag] = useState<"new" | "move" | "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se" | null>(null);
@@ -174,11 +180,16 @@ export function AnalyzeOverlay({
       if (e.key === "Escape") {
         e.preventDefault();
         onCancel();
+      } else if (e.key === "Enter" && mode === "selectArea" && onSelectArea && rectRef.current) {
+        if (rectRef.current.w >= MIN && rectRef.current.h >= MIN) {
+          e.preventDefault();
+          onSelectArea(rectRef.current);
+        }
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onCancel]);
+  }, [onCancel, mode, onSelectArea]);
 
   /** What is under the overlay at a point: the note the wheel and pan drags go to. */
   const under = (x: number, y: number): Element | null => {
@@ -373,7 +384,7 @@ export function AnalyzeOverlay({
   };
 
   const run = async (action: AnalyzeAction | "custom") => {
-    if (!rect || rect.w < MIN || rect.h < MIN || busy) return;
+    if (!rect || rect.w < MIN || rect.h < MIN || busy || !onCapture) return;
     setBusy(true);
     setErr("");
     try {
@@ -428,49 +439,77 @@ export function AnalyzeOverlay({
               className={`analyze-actions${rect.y + rect.h + 54 > window.innerHeight ? (rect.y < 54 ? " inside" : " above") : ""}`}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <button
-                type="button"
-                className="btn analyze-host"
-                disabled={busy}
-                title={`${CHAT_NAME[host]} answers. Click or scroll to switch.`}
-                aria-label={`Model: ${CHAT_NAME[host]}`}
-                onClick={() => stepHost(1)}
-                onWheel={(e) => {
-                  const now = performance.now();
-                  if (now - wheelAt.current < 140 || !e.deltaY) return;
-                  wheelAt.current = now;
-                  stepHost(e.deltaY > 0 ? 1 : -1);
-                }}
-              >
-                <HostLogo host={host} size={15} />
-              </button>
-              {(["explain", "solve", "factcheck"] as const).map((a) => (
-                <button key={a} type="button" className="btn analyze-act" disabled={busy} onClick={() => void run(a)}>
-                  <AnalyzeIcon action={a} />
-                  {analyzeLabel(a)}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="btn analyze-act"
-                disabled={busy}
-                title="Attach this area and write your own question"
-                onClick={() => void run("custom")}
-              >
-                <IcAsk size={14} />
-                Custom
-              </button>
-              <span className="analyze-sep" aria-hidden="true" />
-              <button
-                type="button"
-                className="btn analyze-close"
-                onClick={onCancel}
-                title="Close (Esc)"
-                aria-label="Close"
-              >
-                <IcClose size={14} />
-                Close
-              </button>
+              {mode === "selectArea" ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn analyze-act"
+                    onClick={() => {
+                      if (rect && onSelectArea) onSelectArea(rect);
+                    }}
+                  >
+                    <IcScan size={14} />
+                    Change area
+                  </button>
+                  <span className="analyze-sep" aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="btn analyze-close"
+                    onClick={onCancel}
+                    title="Cancel (Esc)"
+                    aria-label="Cancel"
+                  >
+                    <IcClose size={14} />
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn analyze-host"
+                    disabled={busy}
+                    title={`${CHAT_NAME[host]} answers. Click or scroll to switch.`}
+                    aria-label={`Model: ${CHAT_NAME[host]}`}
+                    onClick={() => stepHost(1)}
+                    onWheel={(e) => {
+                      const now = performance.now();
+                      if (now - wheelAt.current < 140 || !e.deltaY) return;
+                      wheelAt.current = now;
+                      stepHost(e.deltaY > 0 ? 1 : -1);
+                    }}
+                  >
+                    <HostLogo host={host} size={15} />
+                  </button>
+                  {(["explain", "solve", "factcheck"] as const).map((a) => (
+                    <button key={a} type="button" className="btn analyze-act" disabled={busy} onClick={() => void run(a)}>
+                      <AnalyzeIcon action={a} />
+                      {analyzeLabel(a)}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn analyze-act"
+                    disabled={busy}
+                    title="Attach this area and write your own question"
+                    onClick={() => void run("custom")}
+                  >
+                    <IcAsk size={14} />
+                    Custom
+                  </button>
+                  <span className="analyze-sep" aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="btn analyze-close"
+                    onClick={onCancel}
+                    title="Close (Esc)"
+                    aria-label="Close"
+                  >
+                    <IcClose size={14} />
+                    Close
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

@@ -2490,7 +2490,10 @@ svg.hl .hl-ink {
 }
 .fold-mark:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .fold-mark:hover { color: var(--ink); border-color: var(--accent); }
-.fold.selected .fold-mark {
+.fold.selected .fold-mark,
+.fold-mark.selected,
+.qa-marker.selected .fold-mark,
+.qa-marker:focus-visible .fold-mark {
   border-color: var(--accent);
   color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
@@ -6107,6 +6110,20 @@ svg.hl .hl-ink {
   /* scale() already promotes a layer; hint the compositor for pan/zoom. */
   will-change: transform;
 }
+/* Collapsed analyze window marker */
+.qa-marker {
+  position: fixed;
+  z-index: 65;
+  width: 28px;
+  height: 28px;
+  pointer-events: auto;
+  user-select: none;
+  outline: none;
+}
+.qa-marker.front { z-index: 66; }
+.qa-marker.dragging .fold-mark { cursor: grabbing; }
+
 /* While an area is being selected, cards and outlines step aside so they stay out of the capture. */
 body.analyzing .qa-card,
+body.analyzing .qa-marker,
 body.analyzing .analyze-mark { visibility: hidden !important; }

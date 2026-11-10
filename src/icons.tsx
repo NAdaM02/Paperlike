@@ -26,6 +26,9 @@ export const IcBrief = (p: P) => <I {...p} d="M6 3.5h8.2L19 8.2V20.5H6v-17zM14 3
 export const IcAsk = (p: P) => (
   <I {...p} d="M20 11.5a7.5 7.5 0 0 1-11.2 6.5L4 19.5l1.5-4.3A7.5 7.5 0 1 1 20 11.5ZM12.5 8.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2Z" />
 );
+export const IcAnalyzeMarker = (p: P) => (
+  <I {...p} d="M20 11.5a7.5 7.5 0 0 1-11.2 6.5L4 19.5l1.5-4.3A7.5 7.5 0 1 1 20 11.5ZM12.5 8.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2Z" />
+);
 export const IcBack = (p: P) => <I {...p} d="M19 12H5m0 0 6-6m-6 6 6 6" />;
 export const IcReload = (p: P) => <I {...p} d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5" />;
 export const IcNewChat = (p: P) => (
