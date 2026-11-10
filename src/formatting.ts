@@ -92,10 +92,61 @@ function clearNested(
   props: Array<"fontFamily" | "fontSize" | "color" | "backgroundColor">,
 ) {
   span.querySelectorAll<HTMLElement>("[style]").forEach((d) => {
+    if (d.closest(".pl-math")) return;
     for (const p of props) {
       d.style[p] = "";
       d.style.removeProperty(p.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`));
     }
+  });
+}
+
+function rangeIntersectsNode(range: Range, node: Node): boolean {
+  if (!range.intersectsNode(node)) return false;
+  const nodeRange = document.createRange();
+  nodeRange.selectNode(node);
+  return (
+    range.compareBoundaryPoints(Range.START_TO_END, nodeRange) < 0 &&
+    range.compareBoundaryPoints(Range.END_TO_START, nodeRange) > 0
+  );
+}
+
+export function normalizeDecorations(root: HTMLElement) {
+  const decors = root.querySelectorAll<HTMLElement>("u, s");
+  decors.forEach((el) => {
+    const hasColoredChild = Array.from(el.children).some(
+      (c) => c instanceof HTMLElement && (c.style.color || c.getAttribute("color")),
+    );
+    if (!hasColoredChild) return;
+
+    const tag = el.tagName.toLowerCase();
+    const frag = document.createDocumentFragment();
+    const children = Array.from(el.childNodes);
+    for (const child of children) {
+      if (child instanceof HTMLElement && child.classList.contains("pl-math")) {
+        const inner = document.createElement(tag);
+        inner.appendChild(child);
+        if (child.style.color) {
+          const outer = document.createElement("span");
+          outer.style.color = child.style.color;
+          outer.appendChild(inner);
+          frag.appendChild(outer);
+        } else {
+          frag.appendChild(inner);
+        }
+      } else if (child instanceof HTMLElement && child.tagName === "SPAN" && child.style.color) {
+        const inner = document.createElement(tag);
+        while (child.firstChild) {
+          inner.appendChild(child.firstChild);
+        }
+        child.appendChild(inner);
+        frag.appendChild(child);
+      } else {
+        const wrap = document.createElement(tag);
+        wrap.appendChild(child);
+        frag.appendChild(wrap);
+      }
+    }
+    el.replaceWith(frag);
   });
 }
 
@@ -104,10 +155,16 @@ export function applyToSelection(styler: (span: HTMLSpanElement) => void): boole
   if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
 
   const host =
-    (sel.anchorNode instanceof HTMLElement ? sel.anchorNode : sel.anchorNode?.parentElement)?.closest(
+    ((sel.anchorNode instanceof HTMLElement ? sel.anchorNode : sel.anchorNode?.parentElement)?.closest(
       ".content",
-    ) ?? null;
+    ) as HTMLElement | null) ?? null;
   if (!host) return false;
+
+  const selRange = sel.getRangeAt(0);
+  const mathNodes = Array.from(host.querySelectorAll<HTMLElement>(".pl-math")).filter((node) =>
+    rangeIntersectsNode(selRange, node),
+  );
+
   const already = new Set(host.querySelectorAll(`font[size="${MARKER_SIZE}"]`));
 
   document.execCommand("styleWithCSS", false, "false");
@@ -119,7 +176,7 @@ export function applyToSelection(styler: (span: HTMLSpanElement) => void): boole
   const marked = Array.from(host.querySelectorAll(`font[size="${MARKER_SIZE}"]`)).filter(
     (node) => !already.has(node),
   );
-  if (!marked.length) return false;
+  if (!marked.length && !mathNodes.length) return false;
 
   const replacements: HTMLSpanElement[] = [];
   for (const f of marked) {
@@ -130,11 +187,23 @@ export function applyToSelection(styler: (span: HTMLSpanElement) => void): boole
     replacements.push(span);
   }
 
-  const range = document.createRange();
-  range.setStartBefore(replacements[0]);
-  range.setEndAfter(replacements[replacements.length - 1]);
-  sel.removeAllRanges();
-  sel.addRange(range);
+  for (const m of mathNodes) {
+    if (m.isConnected) styler(m);
+  }
+
+  normalizeDecorations(host);
+
+  const allAffected: HTMLElement[] = [...replacements, ...mathNodes].filter((el) => el.isConnected);
+  if (allAffected.length > 0) {
+    allAffected.sort((a, b) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+    );
+    const range = document.createRange();
+    range.setStartBefore(allAffected[0]);
+    range.setEndAfter(allAffected[allAffected.length - 1]);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
   return true;
 }
 
@@ -172,6 +241,10 @@ export function applyToSelectionOrCaret(styler: (span: HTMLSpanElement) => void)
 export function setFontSize(pt: number): boolean {
   const preserved = captureSelectionStyles();
   return applyToSelectionOrCaret((span) => {
+    if (span.classList.contains("pl-math")) {
+      span.style.fontSize = `${pt}pt`;
+      return;
+    }
     paintPreserved(span, preserved, { sizePt: true });
     span.style.fontSize = `${pt}pt`;
     clearNested(span, ["fontSize", "fontFamily", "color", "backgroundColor"]);
@@ -182,6 +255,9 @@ export function setFontSize(pt: number): boolean {
 export function setFontFamily(font: string): boolean {
   const preserved = captureSelectionStyles();
   return applyToSelectionOrCaret((span) => {
+    if (span.classList.contains("pl-math")) {
+      return;
+    }
     paintPreserved(span, preserved, { font: true });
     span.style.fontFamily = font;
     clearNested(span, ["fontFamily", "fontSize", "color", "backgroundColor"]);
@@ -192,6 +268,10 @@ export function setFontFamily(font: string): boolean {
 export function setTextColor(color: string): boolean {
   const preserved = captureSelectionStyles();
   return applyToSelectionOrCaret((span) => {
+    if (span.classList.contains("pl-math")) {
+      span.style.color = color;
+      return;
+    }
     paintPreserved(span, preserved, { color: true });
     span.style.color = color;
     clearNested(span, ["color", "fontFamily", "fontSize", "backgroundColor"]);
@@ -202,6 +282,11 @@ export function setTextColor(color: string): boolean {
 export function setHighlight(color: string | null): boolean {
   const preserved = captureSelectionStyles();
   return applyToSelectionOrCaret((span) => {
+    if (span.classList.contains("pl-math")) {
+      if (color) span.style.backgroundColor = color;
+      else span.style.backgroundColor = "transparent";
+      return;
+    }
     paintPreserved(span, preserved, { highlight: true });
     span.querySelectorAll("mark").forEach((m) => {
       const s = document.createElement("span");
@@ -266,6 +351,7 @@ export function applyToAllContent(content: HTMLElement, fn: () => boolean | void
   selectAllInContent(content);
   content.focus({ preventScroll: true });
   const ok = fn();
+  normalizeDecorations(content);
   returnFocusToCanvas(content);
   requestAnimationFrame(() => {
     if (document.activeElement === content || content.contains(document.activeElement)) {

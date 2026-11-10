@@ -46,9 +46,10 @@ function mathBody(tex: string): string {
 }
 
 /** Render a LaTeX snippet into an inline, non-editable math chip. */
-export function mathHtml(tex: string): string {
+export function mathHtml(tex: string, style?: string): string {
   const cls = tex.trim() ? "pl-math" : "pl-math empty";
-  return `<span class="${cls}" contenteditable="false" data-tex="${esc(tex).replace(/"/g, "&quot;")}">${mathBody(tex)}</span>`;
+  const st = style ? ` style="${style}"` : "";
+  return `<span class="${cls}" contenteditable="false"${st} data-tex="${esc(tex).replace(/"/g, "&quot;")}">${mathBody(tex)}</span>`;
 }
 
 /** Re-render an existing chip in place (used by the inline formula editor). */
@@ -69,21 +70,36 @@ function esc(s: string): string {
 export function runsToHtml(runs: Run[]): string {
   return runs
     .map((r) => {
-      if (r.math) return mathHtml(r.text);
+      if (r.math) {
+        let style = "";
+        if (r.color) style += `color:${r.color};`;
+        if (r.hl) style += `background-color:${r.hl};`;
+        if (r.size) style += `font-size:${r.size}pt;`;
+        if (r.font) style += `font-family:${r.font};`;
+        let t = mathHtml(r.text, style);
+        if (r.sub) t = `<sub>${t}</sub>`;
+        if (r.sup) t = `<sup>${t}</sup>`;
+        if (r.s) t = `<s>${t}</s>`;
+        if (r.u) t = `<u>${t}</u>`;
+        if (r.i) t = `<i>${t}</i>`;
+        if (r.b) t = `<b>${t}</b>`;
+        if (style && (r.u || r.s)) t = `<span style="${style}">${t}</span>`;
+        return t;
+      }
       if (!r.text) return "";
       let t = esc(r.text);
-      let style = "";
-      if (r.color) style += `color:${r.color};`;
-      if (r.hl) style += `background-color:${r.hl};`;
-      if (r.size) style += `font-size:${r.size}pt;`;
-      if (r.font) style += `font-family:${r.font};`;
-      if (style) t = `<span style="${style}">${t}</span>`;
       if (r.sub) t = `<sub>${t}</sub>`;
       if (r.sup) t = `<sup>${t}</sup>`;
       if (r.s) t = `<s>${t}</s>`;
       if (r.u) t = `<u>${t}</u>`;
       if (r.i) t = `<i>${t}</i>`;
       if (r.b) t = `<b>${t}</b>`;
+      let style = "";
+      if (r.color) style += `color:${r.color};`;
+      if (r.hl) style += `background-color:${r.hl};`;
+      if (r.size) style += `font-size:${r.size}pt;`;
+      if (r.font) style += `font-family:${r.font};`;
+      if (style) t = `<span style="${style}">${t}</span>`;
       return t;
     })
     .join("");
@@ -179,7 +195,18 @@ function collectRuns(node: Node, state: StyleState, out: Run[]) {
   const tag = node.tagName.toLowerCase();
   if (tag === "br") return;
   if (node.classList.contains("pl-math")) {
-    out.push({ ...state, math: true, text: node.dataset.tex ?? "" });
+    const mathState: StyleState = { ...state };
+    const st = node.style;
+    if (st) {
+      const c = cssColorToHex(st.color);
+      if (c) mathState.color = c;
+      const bg = cssColorToHex(st.backgroundColor);
+      if (bg) mathState.hl = bg;
+      const sz = fontSizeToPt(st.fontSize);
+      if (sz) mathState.size = sz;
+      if (st.fontFamily) mathState.font = st.fontFamily.split(",")[0].replace(/["']/g, "").trim();
+    }
+    out.push({ ...mathState, math: true, text: node.dataset.tex ?? "" });
     return;
   }
   const next: StyleState = { ...state };
@@ -502,8 +529,8 @@ export function readFormatState(root: HTMLElement): FormatState | null {
   return {
     bold: q("bold") || parseInt(cs.fontWeight) >= 600,
     italic: q("italic") || cs.fontStyle === "italic",
-    underline: q("underline"),
-    strike: q("strikeThrough"),
+    underline: q("underline") || !!el.closest("u"),
+    strike: q("strikeThrough") || !!el.closest("s, strike, del"),
     sub: q("subscript") || !!el.closest("sub"),
     sup: q("superscript") || !!el.closest("sup"),
     font: cs.fontFamily.split(",")[0].replace(/["']/g, "").trim() || DEFAULT_FONT,

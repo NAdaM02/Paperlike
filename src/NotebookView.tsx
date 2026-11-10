@@ -85,6 +85,7 @@ import {
   SavedSelection,
   saveSelection,
   applyToAllContent,
+  normalizeDecorations,
   setFontFamily,
   setFontSize,
   setHighlight,
@@ -1804,6 +1805,7 @@ export function NotebookView({
       onToast(`Select some text to ${label}`);
       return;
     }
+    normalizeDecorations(content);
     savedSel.current = saveSelection() ?? savedSel.current;
     if (savedSel.current) restoreSelection(savedSel.current);
     setFormat(readFormatState(content));
@@ -2141,6 +2143,10 @@ export function NotebookView({
     const chip = document.getElementById("__math_new");
     if (!chip) return;
     chip.removeAttribute("id");
+    const parentColor = chip.closest<HTMLElement>("[style*='color']")?.style.color;
+    if (parentColor) {
+      chip.style.color = parentColor;
+    }
     setMathEdit({ target: chip, initial: "", isNew: true, id: ++mathEditSeq.current });
   };
 
@@ -5221,6 +5227,10 @@ function MathPopover({
     mf.mathModeSpace = "\\ ";
     mf.placeholder = "\\text{Type or pick a symbol}";
     mf.className = "math-field";
+    const targetColor = target.style.color || target.closest<HTMLElement>("[style*='color']")?.style.color;
+    if (targetColor) {
+      mf.style.color = targetColor;
+    }
     mf.style.setProperty("--caret-color", "var(--accent)");
     mf.style.setProperty("--contains-highlight-background-color", "transparent");
     mf.style.setProperty("--contains-highlight-color", "currentColor");

@@ -30,7 +30,7 @@ import { PdfView } from "./PdfView";
 import { mergePdfParts } from "./pdfDoc";
 import { pdfSize, pdfSlots } from "./pdfLayout";
 import { blocksPlainText, blocksToHtml, htmlToBlocks, FONT_SIZES, readFormatState } from "./richtext";
-import { setFontSize } from "./formatting";
+import { normalizeDecorations, setFontSize } from "./formatting";
 import {
   applyCellSelection,
   cellAt,
@@ -4457,6 +4457,15 @@ const RichTextWindow = memo(function RichTextWindow({
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "u" || e.key === "U")) {
+      requestAnimationFrame(() => {
+        if (contentRef.current) {
+          normalizeDecorations(contentRef.current);
+          scheduleCommit();
+        }
+      });
+    }
+
     // Multi-cell selection: Delete/Backspace clears content (OneNote-like)
     if ((e.key === "Delete" || e.key === "Backspace") && hasMultiCellSel()) {
       e.preventDefault();

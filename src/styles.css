@@ -2056,6 +2056,13 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   user-select: none;
 }
 .content mark { background: #ffe066; color: inherit; }
+.content u,
+.content s {
+  text-decoration-color: currentColor;
+}
+.content span[style*="color"] {
+  text-decoration-color: currentColor;
+}
 
 /* Math chips */
 .pl-math {
@@ -2064,6 +2071,10 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   border-radius: 4px;
   cursor: pointer;
   vertical-align: baseline;
+  color: inherit;
+}
+.pl-math .katex {
+  color: inherit;
 }
 .pl-math:hover { background: var(--accent-soft); outline: 1px solid var(--accent); }
 .pl-math.empty .math-placeholder {
@@ -2165,7 +2176,7 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   background: var(--bg-2);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
-  color: var(--ink);
+  color: inherit;
   font-size: 1.25rem;
   --caret-color: var(--accent);
   --contains-highlight-background-color: transparent;
