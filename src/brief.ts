@@ -154,28 +154,41 @@ export function buildPrompt(opts: {
 
 /** Parsed Markdown → HTML, kept so pinned cards don't re-parse on unrelated renders. */
 const summaryHtmlCache = new Map<string, string>();
+const katexCache = new Map<string, string>();
+let lastKatexParseTime = 0;
+
+export type SummaryHtmlOptions = {
+  throttleMath?: boolean;
+};
 
 /**
  * The model's Markdown as readable HTML: headings, lists, bold, italics, code and
- * LaTeX in $…$, $…$, \(…\) and \[…\]. Text is escaped before anything is added.
+ * LaTeX in $…$, $$…$$, \(…\) and \[…\]. Text is escaped before anything is added.
  */
-export function summaryHtml(md: string): string {
+export function summaryHtml(md: string, options?: SummaryHtmlOptions): string {
+  if (options?.throttleMath) {
+    return summaryHtmlBuild(md, true);
+  }
   const hit = summaryHtmlCache.get(md);
   if (hit != null) return hit;
-  const html = summaryHtmlBuild(md);
-  if (summaryHtmlCache.size > 240) summaryHtmlCache.clear();
+  const html = summaryHtmlBuild(md, false);
+  while (summaryHtmlCache.size > 500) {
+    const first = summaryHtmlCache.keys().next().value;
+    if (first === undefined) break;
+    summaryHtmlCache.delete(first);
+  }
   summaryHtmlCache.set(md, html);
   return html;
 }
 
-function summaryHtmlBuild(md: string): string {
+function summaryHtmlBuild(md: string, throttleMath = false): string {
   const out: string[] = [];
   const lines = md.replace(/\r/g, "").split("\n");
   let para: string[] = [];
   type Sub = { ordered: boolean; items: string[] };
   let list: { ordered: boolean; start: number; items: { text: string; sub: Sub | null }[] } | null = null;
   const flushPara = () => {
-    if (para.length) out.push(`<p>${inlineHtml(para.join(" "))}</p>`);
+    if (para.length) out.push(`<p>${inlineHtml(para.join(" "), throttleMath)}</p>`);
     para = [];
   };
   const flushList = () => {
@@ -184,10 +197,10 @@ function summaryHtmlBuild(md: string): string {
     const start = list.ordered && list.start !== 1 ? ` start="${list.start}"` : "";
     const subHtml = (s: Sub) => {
       const st = s.ordered ? "ol" : "ul";
-      return `<${st}>${s.items.map((i) => `<li>${inlineHtml(i)}</li>`).join("")}</${st}>`;
+      return `<${st}>${s.items.map((i) => `<li>${inlineHtml(i, throttleMath)}</li>`).join("")}</${st}>`;
     };
     out.push(
-      `<${tag}${start}>${list.items.map((i) => `<li>${inlineHtml(i.text)}${i.sub ? subHtml(i.sub) : ""}</li>`).join("")}</${tag}>`,
+      `<${tag}${start}>${list.items.map((i) => `<li>${inlineHtml(i.text, throttleMath)}${i.sub ? subHtml(i.sub) : ""}</li>`).join("")}</${tag}>`,
     );
     list = null;
   };
@@ -211,7 +224,7 @@ function summaryHtmlBuild(md: string): string {
       if (body.endsWith(close)) body = body.slice(0, -2);
       flushPara();
       flushList();
-      out.push(`<div class="brief-math">${texHtml(body, true)}</div>`);
+      out.push(`<div class="brief-math">${texHtml(body, true, throttleMath)}</div>`);
       continue;
     }
     if (!t) {
@@ -235,7 +248,7 @@ function summaryHtmlBuild(md: string): string {
       flushPara();
       flushList();
       const level = Math.min(heading[1].length + 2, 5);
-      out.push(`<h${level}>${inlineHtml(heading[2])}</h${level}>`);
+      out.push(`<h${level}>${inlineHtml(heading[2], throttleMath)}</h${level}>`);
       continue;
     }
     const item = /^([-*•]|\d+[.)])\s+(.*)$/.exec(t);
@@ -270,12 +283,12 @@ function summaryHtmlBuild(md: string): string {
 
 const INLINE_MATH = /\$\$([^$]+)\$\$|\\\((.+?)\\\)|\$(?!\s)([^$\n]+?)(?<!\s)\$/g;
 
-function inlineHtml(s: string): string {
+function inlineHtml(s: string, throttleMath = false): string {
   let html = "";
   let last = 0;
   for (const m of s.matchAll(INLINE_MATH)) {
     html += formatHtml(s.slice(last, m.index));
-    html += texHtml(m[1] ?? m[2] ?? m[3] ?? "", false);
+    html += texHtml(m[1] ?? m[2] ?? m[3] ?? "", false, throttleMath);
     last = (m.index ?? 0) + m[0].length;
   }
   return html + formatHtml(s.slice(last));
@@ -288,11 +301,31 @@ function formatHtml(s: string): string {
     .replace(/(^|[^*\w])\*(?!\s)(.+?)\*(?!\w)/g, "$1<em>$2</em>");
 }
 
-function texHtml(tex: string, display: boolean): string {
+function texHtml(tex: string, display: boolean, throttle = false): string {
+  const trimmed = tex.trim();
+  const key = `${display ? "d:" : "i:"}${trimmed}`;
+  const hit = katexCache.get(key);
+  if (hit != null) return hit;
+
+  if (throttle) {
+    const now = performance.now();
+    if (now - lastKatexParseTime < 400) {
+      return `<code>${escHtml(trimmed)}</code>`;
+    }
+    lastKatexParseTime = now;
+  }
+
   try {
-    return katex.renderToString(tex.trim(), { throwOnError: false, displayMode: display, output: "html" });
+    const res = katex.renderToString(trimmed, { throwOnError: false, displayMode: display, output: "html" });
+    while (katexCache.size > 1000) {
+      const first = katexCache.keys().next().value;
+      if (first === undefined) break;
+      katexCache.delete(first);
+    }
+    katexCache.set(key, res);
+    return res;
   } catch {
-    return `<code>${escHtml(tex)}</code>`;
+    return `<code>${escHtml(trimmed)}</code>`;
   }
 }
 

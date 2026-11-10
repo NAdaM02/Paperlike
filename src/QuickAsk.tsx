@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type SavedQuickCard } from "./api";
 import { AnalyzeAction, AnalyzeIcon, analyzeLabel, AnalyzeMark, analyzePrompt, AnalyzeRect, areaOnScreen, captureArea, promptAction, visiblePart } from "./Analyze";
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
@@ -678,6 +678,345 @@ async function processImageFile(file: File | Blob): Promise<{ filePath: string; 
   return { filePath, previewUrl };
 }
 
+const UserTurnItem = memo(function UserTurnItem({ turn }: { turn: Turn }) {
+  const act = useMemo(() => promptAction(turn.text), [turn.text]);
+  const [open, setOpen] = useState(false);
+
+  if (!act) {
+    return (
+      <div className="qa-q">
+        {turn.images && turn.images.length > 0 && (
+          <div className="qa-turn-images">
+            {turn.images.map((img, idx) => (
+              <img key={idx} src={img} alt="Attached" className="qa-turn-thumb" />
+            ))}
+          </div>
+        )}
+        {turn.text ? <div>{turn.text}</div> : null}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={`qa-q qa-q-act ${open ? "open" : ""}`}
+      aria-expanded={open}
+      title={open ? "Hide the prompt" : "Show the full prompt"}
+      onClick={() => setOpen((v) => !v)}
+    >
+      <span className="qa-q-act-head">
+        <AnalyzeIcon action={act.action} size={12} />
+        <b>{act.rescan ? `${analyzeLabel(act.action)} again` : analyzeLabel(act.action)}</b>
+        <IcChevron size={10} />
+      </span>
+      {open && <span className="qa-q-act-text">{turn.text}</span>}
+    </button>
+  );
+});
+
+const ModelTurnItem = memo(function ModelTurnItem({
+  text,
+  thinking,
+}: {
+  text: string;
+  thinking?: string;
+}) {
+  const html = useMemo(() => summaryHtml(text), [text]);
+  return (
+    <div className="qa-turn-a">
+      {thinking && <ThoughtProcess text={thinking} />}
+      <div className="qa-a md-read" dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+});
+
+const TurnItem = memo(function TurnItem({ turn }: { turn: Turn }) {
+  if (turn.role === "user") {
+    return <UserTurnItem turn={turn} />;
+  }
+  return <ModelTurnItem text={turn.text} thinking={turn.thinking} />;
+});
+
+const StreamingAnswer = memo(function StreamingAnswer({
+  live,
+  thinking,
+  name,
+}: {
+  live: string;
+  thinking?: string;
+  name: string;
+}) {
+  const html = useMemo(() => summaryHtml(live, { throttleMath: true }), [live]);
+  return (
+    <>
+      {thinking && <ThoughtProcess text={thinking} />}
+      <div className="qa-a md-read live" dangerouslySetInnerHTML={{ __html: html }} />
+      <span className="qa-typing" aria-label={`${name} is writing`}>
+        <span />
+        <span />
+        <span />
+      </span>
+    </>
+  );
+});
+
+type QuickAskComposerProps = {
+  busy: boolean;
+  name: string;
+  host: ChatHost;
+  hasTurns: boolean;
+  custom?: boolean;
+  anchor?: AnalyzeRect;
+  analyze?: AnalyzeAction;
+  area?: NoteArea | null;
+  cardRef: React.RefObject<HTMLDivElement | null>;
+  onSend: (question: string, images: PendingImage[]) => void;
+  onStop: () => void;
+  onRescanErr: (err: string) => void;
+};
+
+const QuickAskComposer = memo(function QuickAskComposer({
+  busy,
+  name,
+  host,
+  hasTurns,
+  custom,
+  anchor,
+  analyze,
+  area,
+  cardRef,
+  onSend,
+  onStop,
+  onRescanErr,
+}: QuickAskComposerProps) {
+  const [follow, setFollow] = useState("");
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [rescanning, setRescanning] = useState(false);
+  const [priv, setPriv] = useState(privateChats);
+  const dragCount = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAddFiles = async (files: (File | Blob)[]) => {
+    for (const file of files) {
+      try {
+        const { filePath, previewUrl } = await processImageFile(file);
+        setPendingImages((cur) => [
+          ...cur,
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            filePath,
+            previewUrl,
+          },
+        ]);
+      } catch (err) {
+        onRescanErr(err instanceof Error ? err.message : String(err));
+      }
+    }
+  };
+
+  const sendFollow = () => {
+    const q = follow.trim();
+    if ((!q && pendingImages.length === 0) || busy) return;
+    setFollow("");
+    const attaching = [...pendingImages];
+    setPendingImages([]);
+    onSend(q, attaching);
+  };
+
+  const rescan = async () => {
+    if (!anchor || !(analyze || custom) || busy || rescanning) return;
+    onRescanErr("");
+    const at = areaOnScreen(anchor, area);
+    const a = at && visiblePart(at.rect, at.clip);
+    if (!a) {
+      onRescanErr("The marked area isn't on screen. Scroll back to it, then rescan.");
+      return;
+    }
+    setRescanning(true);
+    try {
+      const c = cardRef.current?.getBoundingClientRect();
+      const over = !!c && c.left < a.x + a.w && c.right > a.x && c.top < a.y + a.h && c.bottom > a.y;
+      const next = await captureArea(a, over ? [cardRef.current] : []);
+      setPendingImages((cur) => [
+        ...cur,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          filePath: next.filePath,
+          previewUrl: next.previewUrl,
+        },
+      ]);
+    } catch (e) {
+      onRescanErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRescanning(false);
+    }
+  };
+
+  return (
+    <form
+      className={`qa-foot ${isDragging ? "drop-active" : ""}`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        sendFollow();
+      }}
+      onDragEnter={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          dragCount.current++;
+          setIsDragging(true);
+        }
+      }}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragCount.current--;
+        if (dragCount.current <= 0) {
+          dragCount.current = 0;
+          setIsDragging(false);
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dragCount.current = 0;
+        setIsDragging(false);
+        const files = Array.from(e.dataTransfer.files).filter((f) =>
+          f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.name),
+        );
+        if (files.length > 0) {
+          void handleAddFiles(files);
+        }
+      }}
+      onPaste={(e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        const imageFiles: File[] = [];
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.type.startsWith("image/")) {
+            const file = item.getAsFile();
+            if (file) imageFiles.push(file);
+          }
+        }
+        if (imageFiles.length > 0) {
+          e.preventDefault();
+          void handleAddFiles(imageFiles);
+        }
+      }}
+    >
+      {pendingImages.length > 0 && (
+        <div className="qa-pending-images">
+          {pendingImages.map((img) => (
+            <div key={img.id} className="qa-pending-thumb">
+              <img src={img.previewUrl} alt="Attachment" />
+              <button
+                type="button"
+                className="qa-pending-thumb-remove"
+                title="Remove image"
+                aria-label="Remove image"
+                onClick={() => setPendingImages((cur) => cur.filter((p) => p.id !== img.id))}
+              >
+                <IcClose size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="qa-foot-row">
+        <button
+          type="button"
+          className="qa-note qa-recapture"
+          disabled={!anchor || !(analyze || custom) || busy || rescanning}
+          title={
+            !anchor
+              ? "No screen area associated with this question"
+              : busy
+                ? "Wait for the answer to finish"
+                : "Recapture the marked area again and attach it to your question"
+          }
+          onClick={() => void rescan()}
+        >
+          <IcScan size={13} /> {rescanning ? "Capturing…" : "Recapture"}
+        </button>
+        <button
+          type="button"
+          className="btn icon qa-attach-btn"
+          title="Attach image (PNG, JPG, WEBP, GIF)"
+          aria-label="Attach image"
+          disabled={busy}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <IcImage size={15} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const files = e.target.files ? Array.from(e.target.files) : [];
+            if (files.length > 0) void handleAddFiles(files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className={`qa-note ${priv ? "on" : ""}`}
+          title={
+            priv
+              ? `New chats are private: ${host === "claude" ? "incognito" : "temporary"} in ${name}, kept out of its history. Click to keep them.`
+              : `New chats are kept in ${name}'s history. Click to make them private.`
+          }
+          onClick={() =>
+            setPriv((v) => {
+              setPrivateChats(!v);
+              return !v;
+            })
+          }
+        >
+          <IcIncognito size={13} /> Private
+        </button>
+        <textarea
+          rows={1}
+          value={follow}
+          autoFocus
+          placeholder={hasTurns ? "Follow up…" : custom ? `Ask ${name} about this area…` : `Ask ${name}…`}
+          onChange={(e) => setFollow(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (follow.trim() || pendingImages.length > 0) {
+                e.preventDefault();
+                sendFollow();
+              }
+            }
+          }}
+        />
+        {busy ? (
+          <button className="btn icon" type="button" title="Stop" onClick={onStop}>
+            <IcStop size={13} />
+          </button>
+        ) : (
+          <button
+            className="btn icon"
+            type="submit"
+            title="Send (Enter)"
+            disabled={!follow.trim() && pendingImages.length === 0}
+          >
+            <IcSend size={14} />
+          </button>
+        )}
+      </div>
+    </form>
+  );
+});
+
 /**
  * Floating card with the answer and a follow-up line. The question goes to a supported chat site
  * through the web login, in a view kept out of sight; the reply is read back as it is written.
@@ -719,14 +1058,10 @@ export const QuickAskCard = memo(function QuickAskCard({
   const [collapsed, setCollapsed] = useState<boolean>(seed.collapsed ?? false);
   const [selected, setSelected] = useState(false);
   const markerRef = useRef<HTMLDivElement>(null);
-  /** Sent Analyze prompts the user expanded (by turn index); collapsed they read as the action name. */
-  const [openPrompts, setOpenPrompts] = useState<ReadonlySet<number>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; signin: boolean } | null>(null);
-  const [follow, setFollow] = useState("");
   // The note toggle gave way to Recapture; a stored "on" must not keep sending the note unseen.
   const useNote = false;
-  const [priv, setPriv] = useState(privateChats);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(() =>
     seed.place && !seed.place.pinned ? { x: seed.place.x, y: seed.place.y } : null,
   );
@@ -749,12 +1084,30 @@ export const QuickAskCard = memo(function QuickAskCard({
   const [url, setUrl] = useState<string | null>(seed.prior?.url ?? null);
   /** The latest capture of the area; Rescan replaces it. */
   const [shot] = useState(seed.imagePreview);
-  const [rescanning, setRescanning] = useState(false);
   const [rescanErr, setRescanErr] = useState("");
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const dragCount = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const liveRef = useRef("");
+  const throttleTimerRef = useRef<number | null>(null);
+  const lastLiveUpdateRef = useRef<number>(0);
+
+  const setLiveThrottled = useCallback((t: string) => {
+    liveRef.current = t;
+    const now = performance.now();
+    const elapsed = now - lastLiveUpdateRef.current;
+    if (elapsed >= 50) {
+      if (throttleTimerRef.current !== null) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
+      lastLiveUpdateRef.current = now;
+      setLive(t);
+    } else if (throttleTimerRef.current === null) {
+      throttleTimerRef.current = window.setTimeout(() => {
+        throttleTimerRef.current = null;
+        lastLiveUpdateRef.current = performance.now();
+        setLive(liveRef.current);
+      }, 50 - elapsed);
+    }
+  }, []);
   const shotRef = useRef(shot);
   shotRef.current = shot;
   const abortRef = useRef<AbortController | null>(null);
@@ -815,6 +1168,10 @@ export const QuickAskCard = memo(function QuickAskCard({
 
   useEffect(
     () => () => {
+      if (throttleTimerRef.current !== null) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
       abortRef.current?.abort();
       void api.quickRelease();
       const cur = turnsRef.current;
@@ -1220,6 +1577,11 @@ export const QuickAskCard = memo(function QuickAskCard({
     busyRef.current = true;
     setError(null);
     setBusy(true);
+    if (throttleTimerRef.current !== null) {
+      clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = null;
+    }
+    liveRef.current = "";
     setLive("");
     setThinking("");
     stickRef.current = true;
@@ -1301,15 +1663,19 @@ export const QuickAskCard = memo(function QuickAskCard({
             /^(?:(?:\S+\s+){0,4}is (?:responding|thinking|typing|writing|working)|responding|thinking|typing|writing|just now)[.…]*$/i;
           if (!t.trim() || t.split(/\n+/).every((line) => !line.trim() || status.test(line.trim()))) return;
           soFar = t;
-          setLive(t);
+          setLiveThrottled(t);
         },
       });
       // A run that a newer question replaced ends with an empty "done"; it must not
       // clear the waiting row of the question that is still being answered.
+      if (throttleTimerRef.current !== null) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
       if (!current()) return;
       convo.current = via;
       setUrl(reply.url);
-      const text = (reply.text || soFar).trim();
+      const text = (reply.text || soFar || liveRef.current).trim();
       if (text) setTurns((cur) => [...cur, { role: "model", text, ...(reply.thinking ? { thinking: reply.thinking } : null) }]);
     } catch (e) {
       if (!current()) return;
@@ -1319,6 +1685,11 @@ export const QuickAskCard = memo(function QuickAskCard({
     } finally {
       asking--;
       release();
+      if (throttleTimerRef.current !== null) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
+      liveRef.current = "";
       if (current()) {
         setLive("");
         setThinking("");
@@ -1342,73 +1713,26 @@ export const QuickAskCard = memo(function QuickAskCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleAddFiles = async (files: (File | Blob)[]) => {
-    for (const file of files) {
-      try {
-        const { filePath, previewUrl } = await processImageFile(file);
-        setPendingImages((cur) => [
-          ...cur,
-          {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            filePath,
-            previewUrl,
-          },
-        ]);
-      } catch (err) {
-        setRescanErr(err instanceof Error ? err.message : String(err));
+  const handleSend = useCallback(
+    (question: string, images: PendingImage[]) => {
+      const first = !!seed.custom && !turnsRef.current.some((t) => t.role === "user");
+      const filePaths = [
+        ...(first && imageRef.current ? [imageRef.current] : []),
+        ...images.map((a) => a.filePath),
+      ];
+      const previewUrls = images.map((a) => a.previewUrl);
+      if (images.length > 0) {
+        imageRef.current = images[images.length - 1].filePath;
       }
-    }
-  };
+      void ask(question, "", hostRef.current, filePaths.length ? filePaths : undefined, previewUrls.length ? previewUrls : undefined);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seed.custom],
+  );
 
-  /** The typed question (or empty with attachment). */
-  const sendFollow = () => {
-    const q = follow.trim();
-    if ((!q && pendingImages.length === 0) || busyRef.current) return;
-    setFollow("");
-    const attaching = [...pendingImages];
-    setPendingImages([]);
-    const first = !!seed.custom && !turns.some((t) => t.role === "user");
-    const filePaths = [
-      ...(first && imageRef.current ? [imageRef.current] : []),
-      ...attaching.map((a) => a.filePath),
-    ];
-    const previewUrls = attaching.map((a) => a.previewUrl);
-    if (attaching.length > 0) {
-      imageRef.current = attaching[attaching.length - 1].filePath;
-    }
-    void ask(q, "", host, filePaths.length ? filePaths : undefined, previewUrls.length ? previewUrls : undefined);
-  };
-
-  /** Capture the same area again (after an edit) and attach the new capture image to the composer. */
-  const rescan = async () => {
-    if (!seed.anchor || !(seed.analyze || seed.custom) || busyRef.current || rescanning) return;
-    setRescanErr("");
-    const at = areaOnScreen(seed.anchor, seed.area);
-    const a = at && visiblePart(at.rect, at.clip);
-    if (!a) {
-      setRescanErr("The marked area isn't on screen. Scroll back to it, then rescan.");
-      return;
-    }
-    setRescanning(true);
-    try {
-      // The outline sits just outside the area, so only a card dragged over it needs hiding.
-      const c = cardRef.current?.getBoundingClientRect();
-      const over = !!c && c.left < a.x + a.w && c.right > a.x && c.top < a.y + a.h && c.bottom > a.y;
-      const next = await captureArea(a, over ? [cardRef.current] : []);
-      setPendingImages((cur) => [
-        ...cur,
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          filePath: next.filePath,
-          previewUrl: next.previewUrl,
-        },
-      ]);
-    } catch (e) {
-      setRescanErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRescanning(false);
-    }
-  };
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const switchHost = (next: ChatHost) => {
     if (next === host || busyRef.current) return;
@@ -1770,68 +2094,13 @@ export const QuickAskCard = memo(function QuickAskCard({
             “{seed.selection.length > 120 ? `${seed.selection.slice(0, 120)}…` : seed.selection}”
           </div>
         )}
-        {turns.map((t, i) => {
-          if (t.role === "user") {
-            const act = promptAction(t.text);
-            if (!act) {
-              return (
-                <div key={i} className="qa-q">
-                  {t.images && t.images.length > 0 && (
-                    <div className="qa-turn-images">
-                      {t.images.map((img, idx) => (
-                        <img key={idx} src={img} alt="Attached" className="qa-turn-thumb" />
-                      ))}
-                    </div>
-                  )}
-                  {t.text ? <div>{t.text}</div> : null}
-                </div>
-              );
-            }
-            const open = openPrompts.has(i);
-            return (
-              <button
-                key={i}
-                type="button"
-                className={`qa-q qa-q-act ${open ? "open" : ""}`}
-                aria-expanded={open}
-                title={open ? "Hide the prompt" : "Show the full prompt"}
-                onClick={() =>
-                  setOpenPrompts((cur) => {
-                    const next = new Set(cur);
-                    if (next.has(i)) next.delete(i);
-                    else next.add(i);
-                    return next;
-                  })
-                }
-              >
-                <span className="qa-q-act-head">
-                  <AnalyzeIcon action={act.action} size={12} />
-                  <b>{act.rescan ? `${analyzeLabel(act.action)} again` : analyzeLabel(act.action)}</b>
-                  <IcChevron size={10} />
-                </span>
-                {open && <span className="qa-q-act-text">{t.text}</span>}
-              </button>
-            );
-          }
-          return (
-            <div key={i} className="qa-turn-a">
-              {t.thinking && <ThoughtProcess text={t.thinking} />}
-              <div className="qa-a md-read" dangerouslySetInnerHTML={{ __html: summaryHtml(t.text) }} />
-            </div>
-          );
-        })}
+        {turns.map((t, i) => (
+          <TurnItem key={i} turn={t} />
+        ))}
         {busy && (
           <div className="qa-turn-a" role="status" aria-live="polite">
             {live.trim() ? (
-              <>
-                {thinking && <ThoughtProcess text={thinking} />}
-                <div className="qa-a md-read live" dangerouslySetInnerHTML={{ __html: summaryHtml(live) }} />
-                <span className="qa-typing" aria-label={`${name} is writing`}>
-                  <span />
-                  <span />
-                  <span />
-                </span>
-              </>
+              <StreamingAnswer live={live} thinking={thinking} name={name} />
             ) : (
               <div className="qa-pending">
                 <span className="qa-pending-head">
@@ -1859,165 +2128,20 @@ export const QuickAskCard = memo(function QuickAskCard({
         )}
       </div>
 
-      <form
-        className={`qa-foot ${isDragging ? "drop-active" : ""}`}
-        onSubmit={(e) => {
-          e.preventDefault();
-          sendFollow();
-        }}
-        onDragEnter={(e) => {
-          if (e.dataTransfer.types.includes("Files")) {
-            e.preventDefault();
-            dragCount.current++;
-            setIsDragging(true);
-          }
-        }}
-        onDragOver={(e) => {
-          if (e.dataTransfer.types.includes("Files")) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "copy";
-          }
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          dragCount.current--;
-          if (dragCount.current <= 0) {
-            dragCount.current = 0;
-            setIsDragging(false);
-          }
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          dragCount.current = 0;
-          setIsDragging(false);
-          const files = Array.from(e.dataTransfer.files).filter((f) =>
-            f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.name),
-          );
-          if (files.length > 0) {
-            void handleAddFiles(files);
-          }
-        }}
-        onPaste={(e) => {
-          const items = e.clipboardData?.items;
-          if (!items) return;
-          const imageFiles: File[] = [];
-          for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            if (item.type.startsWith("image/")) {
-              const file = item.getAsFile();
-              if (file) imageFiles.push(file);
-            }
-          }
-          if (imageFiles.length > 0) {
-            e.preventDefault();
-            void handleAddFiles(imageFiles);
-          }
-        }}
-      >
-        {pendingImages.length > 0 && (
-          <div className="qa-pending-images">
-            {pendingImages.map((img) => (
-              <div key={img.id} className="qa-pending-thumb">
-                <img src={img.previewUrl} alt="Attachment" />
-                <button
-                  type="button"
-                  className="qa-pending-thumb-remove"
-                  title="Remove image"
-                  aria-label="Remove image"
-                  onClick={() => setPendingImages((cur) => cur.filter((p) => p.id !== img.id))}
-                >
-                  <IcClose size={10} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="qa-foot-row">
-          <button
-            type="button"
-            className="qa-note qa-recapture"
-            disabled={!seed.anchor || !(seed.analyze || seed.custom) || busy || rescanning}
-            title={
-              !seed.anchor
-                ? "No screen area associated with this question"
-                : busy
-                  ? "Wait for the answer to finish"
-                  : "Recapture the marked area again and attach it to your question"
-            }
-            onClick={() => void rescan()}
-          >
-            <IcScan size={13} /> {rescanning ? "Capturing…" : "Recapture"}
-          </button>
-          <button
-            type="button"
-            className="btn icon qa-attach-btn"
-            title="Attach image (PNG, JPG, WEBP, GIF)"
-            aria-label="Attach image"
-            disabled={busy}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <IcImage size={15} />
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            multiple
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const files = e.target.files ? Array.from(e.target.files) : [];
-              if (files.length > 0) void handleAddFiles(files);
-              e.target.value = "";
-            }}
-          />
-          <button
-            type="button"
-            className={`qa-note ${priv ? "on" : ""}`}
-            title={
-              priv
-                ? `New chats are private: ${host === "claude" ? "incognito" : "temporary"} in ${name}, kept out of its history. Click to keep them.`
-                : `New chats are kept in ${name}'s history. Click to make them private.`
-            }
-            onClick={() =>
-              setPriv((v) => {
-                setPrivateChats(!v);
-                return !v;
-              })
-            }
-          >
-            <IcIncognito size={13} /> Private
-          </button>
-          <textarea
-            rows={1}
-            value={follow}
-            autoFocus
-            placeholder={turns.length ? "Follow up…" : seed.custom ? `Ask ${name} about this area…` : `Ask ${name}…`}
-            onChange={(e) => setFollow(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                if (follow.trim() || pendingImages.length > 0) {
-                  e.preventDefault();
-                  sendFollow();
-                }
-              }
-            }}
-          />
-          {busy ? (
-            <button className="btn icon" type="button" title="Stop" onClick={() => abortRef.current?.abort()}>
-              <IcStop size={13} />
-            </button>
-          ) : (
-            <button
-              className="btn icon"
-              type="submit"
-              title="Send (Enter)"
-              disabled={!follow.trim() && pendingImages.length === 0}
-            >
-              <IcSend size={14} />
-            </button>
-          )}
-        </div>
-      </form>
+      <QuickAskComposer
+        busy={busy}
+        name={name}
+        host={host}
+        hasTurns={turns.length > 0}
+        custom={seed.custom}
+        anchor={seed.anchor}
+        analyze={seed.analyze}
+        area={seed.area}
+        cardRef={cardRef}
+        onSend={handleSend}
+        onStop={handleStop}
+        onRescanErr={setRescanErr}
+      />
     </div>
     </>
   );

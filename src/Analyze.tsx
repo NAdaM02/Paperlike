@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { NoteArea, noteAreaAt, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { CHAT_NAME, ChatHost, defaultHost, setDefaultHost } from "./chat";
@@ -80,7 +80,7 @@ export function visiblePart(rect: AnalyzeRect, clip: DOMRect | null): AnalyzeRec
 
 /** Dashed outline around the area an open answer is about. It sits just outside the area,
  *  so it is never in a capture, and it follows the note when the area was on a canvas. */
-export function AnalyzeMark({ rect, area }: { rect: AnalyzeRect; area?: NoteArea | null }) {
+export const AnalyzeMark = memo(function AnalyzeMark({ rect, area }: { rect: AnalyzeRect; area?: NoteArea | null }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -120,7 +120,7 @@ export function AnalyzeMark({ rect, area }: { rect: AnalyzeRect; area?: NoteArea
     return area ? subscribeCanvas(place) : undefined;
   }, [rect, area]);
   return <div ref={ref} className="analyze-mark" aria-hidden />;
-}
+});
 
 /**
  * Capture what is on the display under `rect` (CSS pixels of the window) and stage it as a PNG.
