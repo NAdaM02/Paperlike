@@ -29,7 +29,8 @@ import { blockedIn, collapsedIds, foldAt, foldIndex, groupAtPoint, groupFrame, G
 import { PdfView } from "./PdfView";
 import { mergePdfParts } from "./pdfDoc";
 import { pdfSize, pdfSlots } from "./pdfLayout";
-import { blocksPlainText, blocksToHtml, htmlToBlocks } from "./richtext";
+import { blocksPlainText, blocksToHtml, htmlToBlocks, FONT_SIZES, readFormatState } from "./richtext";
+import { setFontSize } from "./formatting";
 import {
   applyCellSelection,
   cellAt,
@@ -486,6 +487,29 @@ function isScrollableTarget(target: EventTarget | null, root: HTMLElement): bool
   return false;
 }
 
+/** Non-collapsed text selection inside a text window under the pointer coordinates. */
+function getSelectedTextTarget(root: HTMLElement, clientX: number, clientY: number): { host: HTMLElement; range: Range } | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const el = container instanceof HTMLElement ? container : container.parentElement;
+  const host = el?.closest(".text-window .content");
+  if (!host || !(host instanceof HTMLElement) || !root.contains(host)) return null;
+
+  const rects = range.getClientRects();
+  let over = false;
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (clientX >= r.left - 1 && clientX <= r.right + 1 && clientY >= r.top - 1 && clientY <= r.bottom + 1) {
+      over = true;
+      break;
+    }
+  }
+  if (!over) return null;
+  return { host, range };
+}
+
 export function CanvasEditor({
   note,
   onUpdate,
@@ -586,6 +610,8 @@ export function CanvasEditor({
   const camRef = useRef(cam);
   const camCullKey = useRef("");
   const wheelCamFlush = useRef(0);
+  const textSelWheelAcc = useRef(0);
+  const textSelWheelTimer = useRef(0);
   /** Apply camera to the world/paper/chrome without React. Pan and zoom stay smooth on big notes. */
   const paintCam = (c: Camera) => {
     camRef.current = c;
@@ -653,7 +679,10 @@ export function CanvasEditor({
     camCullKey.current = cullKeyOf(camRef.current);
     publishLiveCam(camRef.current);
   }, [paper, cam]);
-  useEffect(() => () => window.clearTimeout(wheelCamFlush.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(wheelCamFlush.current);
+    window.clearTimeout(textSelWheelTimer.current);
+  }, []);
   const notePathForAnchor = note.path;
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -1145,15 +1174,56 @@ export function CanvasEditor({
             y: my - ((my - c.y) / c.z) * nz,
           };
         });
-      } else if (isScrollableTarget(e.target, el)) {
-        return;
-      } else if (e.shiftKey) {
-        // The canvas takes the wheel; nothing around it should scroll too.
-        e.preventDefault();
-        nudgeCam((c) => ({ ...c, x: c.x - e.deltaY }));
       } else {
-        e.preventDefault();
-        nudgeCam((c) => ({ x: c.x - e.deltaX, y: c.y - e.deltaY, z: c.z }));
+        const selTarget = getSelectedTextTarget(el, e.clientX, e.clientY);
+        if (selTarget) {
+          e.preventDefault();
+          const delta = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 100 : e.deltaY;
+          if ((textSelWheelAcc.current > 0 && delta < 0) || (textSelWheelAcc.current < 0 && delta > 0)) {
+            textSelWheelAcc.current = 0;
+          }
+          textSelWheelAcc.current += delta;
+          window.clearTimeout(textSelWheelTimer.current);
+          textSelWheelTimer.current = window.setTimeout(() => {
+            textSelWheelAcc.current = 0;
+          }, 350);
+
+          const STEP_THRESHOLD = 80;
+          if (Math.abs(textSelWheelAcc.current) >= STEP_THRESHOLD) {
+            const dir = textSelWheelAcc.current > 0 ? -1 : 1;
+            textSelWheelAcc.current = 0;
+            const { host } = selTarget;
+            const cur = readFormatState(host)?.size ?? defaultSize;
+            let idx = FONT_SIZES.indexOf(cur);
+            if (idx < 0) {
+              idx = FONT_SIZES.findIndex((s) => s >= cur);
+              if (idx < 0) idx = FONT_SIZES.length - 1;
+              else if (idx > 0 && cur - FONT_SIZES[idx - 1] < FONT_SIZES[idx] - cur) idx = idx - 1;
+            }
+            const nextIdx = Math.max(0, Math.min(FONT_SIZES.length - 1, idx + dir));
+            const nextSize = FONT_SIZES[nextIdx];
+            if (nextSize !== cur) {
+              if (host !== document.activeElement && !host.contains(document.activeElement)) {
+                host.focus({ preventScroll: true });
+              }
+              snapshot("format", 400);
+              setFontSize(nextSize);
+              host.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+          }
+          return;
+        }
+        if (isScrollableTarget(e.target, el)) {
+          return;
+        }
+        if (e.shiftKey) {
+          // The canvas takes the wheel; nothing around it should scroll too.
+          e.preventDefault();
+          nudgeCam((c) => ({ ...c, x: c.x - e.deltaY }));
+        } else {
+          e.preventDefault();
+          nudgeCam((c) => ({ x: c.x - e.deltaX, y: c.y - e.deltaY, z: c.z }));
+        }
       }
       window.clearTimeout(wheelCamFlush.current);
       wheelCamFlush.current = window.setTimeout(() => flushCam(), 120);
