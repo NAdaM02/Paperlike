@@ -7,7 +7,7 @@ import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHos
 import { ChecklistPanel } from "./Checklist";
 import { toggleCalendar, useCalendarAvailable } from "./CalendarPane";
 import { messages } from "./copy/messages";
-import { HostLogo, IcCalc, IcCalendar, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
+import { HostLogo, IcCalc, IcCalendar, IcCheck, IcChevron, IcClose, IcCopy, IcHistory, IcImage, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
 const BRIEFLY =
@@ -32,7 +32,14 @@ export function useNoteSelection() {
   }, []);
 }
 
-export type QuickTurn = { role: "user" | "model"; text: string; /** The model's visible reasoning, when the site showed it. */ thinking?: string };
+export type QuickTurn = {
+  role: "user" | "model";
+  text: string;
+  /** The model's visible reasoning, when the site showed it. */
+  thinking?: string;
+  images?: string[];
+  imagePaths?: string[];
+};
 
 export type QuickSeed = {
   id: number;
@@ -116,6 +123,35 @@ export async function seedFromSavedQuickCard(card: SavedQuickCard): Promise<Quic
     }
   }
   const host = (["claude", "chatgpt", "gemini"].includes(card.host) ? card.host : "chatgpt") as ChatHost;
+  const turns: QuickTurn[] = [];
+  for (const t of card.turns) {
+    if (t.images?.length) {
+      const staged: string[] = [];
+      for (const img of t.images) {
+        if (img.startsWith("data:image/png;base64,")) {
+          try {
+            const p = await api.stageAnalyzePng(img.slice("data:image/png;base64,".length));
+            staged.push(p);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      turns.push({
+        role: t.role,
+        text: t.text,
+        thinking: t.thinking,
+        images: t.images,
+        imagePaths: staged.length ? staged : undefined,
+      });
+    } else {
+      turns.push({
+        role: t.role,
+        text: t.text,
+        thinking: t.thinking,
+      });
+    }
+  }
   return {
     id: card.id,
     question: card.question,
@@ -127,7 +163,7 @@ export async function seedFromSavedQuickCard(card: SavedQuickCard): Promise<Quic
     anchor: card.anchor,
     area: card.area ?? null,
     place: card.place,
-    prior: { host, turns: card.turns, url: card.url ?? null },
+    prior: { host, turns, url: card.url ?? null },
   };
 }
 
@@ -165,7 +201,12 @@ function sameChat(a: QuickHistoryEntry, b: QuickHistoryEntry): boolean {
   if (a.question !== b.question) return false;
   if ((a.imagePreview ?? "") !== (b.imagePreview ?? "")) return false;
   if (a.turns.length !== b.turns.length) return false;
-  return a.turns.every((t, i) => t.role === b.turns[i]?.role && t.text === b.turns[i]?.text);
+  return a.turns.every(
+    (t, i) =>
+      t.role === b.turns[i]?.role &&
+      t.text === b.turns[i]?.text &&
+      (t.images?.length ?? 0) === (b.turns[i]?.images?.length ?? 0),
+  );
 }
 
 function pushHistory(entry: QuickHistoryEntry) {
@@ -193,7 +234,13 @@ function takeTurn(): Promise<() => void> {
 const viewOwner: Partial<Record<ChatHost, number>> = {};
 
 const transcript = (turns: QuickTurn[]) =>
-  turns.map((t) => `${t.role === "user" ? "I asked" : "You answered"}:\n${t.text}`).join("\n\n");
+  turns
+    .map((t) => {
+      const label = t.role === "user" ? "I asked" : "You answered";
+      const content = t.text || (t.images?.length ? "[Attached image]" : "");
+      return `${label}:\n${content}`;
+    })
+    .join("\n\n");
 
 /** The small "Quick question" field in the header, with calculator / history / analyze. */
 export function QuickAskField({
@@ -576,6 +623,56 @@ const ThoughtProcess = memo(function ThoughtProcess({ text }: { text: string }) 
   );
 });
 
+type PendingImage = {
+  id: string;
+  filePath: string;
+  previewUrl: string;
+};
+
+async function processImageFile(file: File | Blob): Promise<{ filePath: string; previewUrl: string }> {
+  let b64: string;
+  let previewUrl: string;
+  if (file.type === "image/png") {
+    previewUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("Failed to read image file"));
+      reader.readAsDataURL(file);
+    });
+    b64 = previewUrl.replace(/^data:image\/png;base64,/, "");
+  } else {
+    previewUrl = await new Promise<string>((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width || 1;
+          canvas.height = img.naturalHeight || img.height || 1;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            reject(new Error("Canvas context unavailable"));
+            return;
+          }
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/png"));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Failed to load image"));
+      };
+      img.src = url;
+    });
+    b64 = previewUrl.replace(/^data:image\/png;base64,/, "");
+  }
+  const filePath = await api.stageAnalyzePng(b64);
+  return { filePath, previewUrl };
+}
+
 /**
  * Floating card with the answer and a follow-up line. The question goes to a supported chat site
  * through the web login, in a view kept out of sight; the reply is read back as it is written.
@@ -640,9 +737,13 @@ export const QuickAskCard = memo(function QuickAskCard({
   const [copied, setCopied] = useState(false);
   const [url, setUrl] = useState<string | null>(seed.prior?.url ?? null);
   /** The latest capture of the area; Rescan replaces it. */
-  const [shot, setShot] = useState(seed.imagePreview);
+  const [shot] = useState(seed.imagePreview);
   const [rescanning, setRescanning] = useState(false);
   const [rescanErr, setRescanErr] = useState("");
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCount = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef(shot);
   shotRef.current = shot;
   const abortRef = useRef<AbortController | null>(null);
@@ -961,8 +1062,14 @@ export const QuickAskCard = memo(function QuickAskCard({
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [turns, live, thinking, error]);
 
-  const ask = async (question: string, selection = "", via: ChatHost = host, files?: string[]) => {
-    if (!question.trim() || busyRef.current) return;
+  const ask = async (
+    question: string,
+    selection = "",
+    via: ChatHost = host,
+    files?: string[],
+    images?: string[],
+  ) => {
+    if ((!question.trim() && !files?.length) || busyRef.current) return;
     const req = ++reqRef.current;
     const current = () => reqRef.current === req;
     busyRef.current = true;
@@ -986,9 +1093,17 @@ export const QuickAskCard = memo(function QuickAskCard({
     }
     // Selection is only extra context text — not the note file. Don't imply a note is attached.
     if (selection) parts.push(`Context:\n"""\n${selection}\n"""`);
-    parts.push(question.trim());
+    if (question.trim()) parts.push(question.trim());
     if (fresh) parts.push(BRIEFLY);
-    setTurns((cur) => [...(fresh ? [] : cur), { role: "user", text: question.trim() }]);
+    setTurns((cur) => [
+      ...(fresh ? [] : cur),
+      {
+        role: "user",
+        text: question.trim(),
+        ...(images && images.length ? { images } : null),
+        ...(files && files.length ? { imagePaths: files } : null),
+      },
+    ]);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     // One question at a time across cards: this one waits while another is being answered.
@@ -1082,16 +1197,44 @@ export const QuickAskCard = memo(function QuickAskCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** The typed question. A Custom capture goes along with the first one. */
-  const sendFollow = () => {
-    const q = follow.trim();
-    if (!q || busyRef.current) return;
-    setFollow("");
-    const first = !!seed.custom && !turns.some((t) => t.role === "user");
-    void ask(q, "", host, first && imageRef.current ? [imageRef.current] : undefined);
+  const handleAddFiles = async (files: (File | Blob)[]) => {
+    for (const file of files) {
+      try {
+        const { filePath, previewUrl } = await processImageFile(file);
+        setPendingImages((cur) => [
+          ...cur,
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            filePath,
+            previewUrl,
+          },
+        ]);
+      } catch (err) {
+        setRescanErr(err instanceof Error ? err.message : String(err));
+      }
+    }
   };
 
-  /** Capture the same area again (after an edit) and ask about the new image in this chat. */
+  /** The typed question (or empty with attachment). */
+  const sendFollow = () => {
+    const q = follow.trim();
+    if ((!q && pendingImages.length === 0) || busyRef.current) return;
+    setFollow("");
+    const attaching = [...pendingImages];
+    setPendingImages([]);
+    const first = !!seed.custom && !turns.some((t) => t.role === "user");
+    const filePaths = [
+      ...(first && imageRef.current ? [imageRef.current] : []),
+      ...attaching.map((a) => a.filePath),
+    ];
+    const previewUrls = attaching.map((a) => a.previewUrl);
+    if (attaching.length > 0) {
+      imageRef.current = attaching[attaching.length - 1].filePath;
+    }
+    void ask(q, "", host, filePaths.length ? filePaths : undefined, previewUrls.length ? previewUrls : undefined);
+  };
+
+  /** Capture the same area again (after an edit) and attach the new capture image to the composer. */
   const rescan = async () => {
     if (!seed.anchor || !(seed.analyze || seed.custom) || busyRef.current || rescanning) return;
     setRescanErr("");
@@ -1107,11 +1250,14 @@ export const QuickAskCard = memo(function QuickAskCard({
       const c = cardRef.current?.getBoundingClientRect();
       const over = !!c && c.left < a.x + a.w && c.right > a.x && c.top < a.y + a.h && c.bottom > a.y;
       const next = await captureArea(a, over ? [cardRef.current] : []);
-      setShot(next.previewUrl);
-      imageRef.current = next.filePath;
-      const asked = seed.analyze ? analyzePrompt(seed.analyze) : (turns.find((t) => t.role === "user")?.text ?? "");
-      const q = `I changed the area; this is a new capture of it. ${asked}`.trim();
-      void ask(q, "", host, [next.filePath]);
+      setPendingImages((cur) => [
+        ...cur,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          filePath: next.filePath,
+          previewUrl: next.previewUrl,
+        },
+      ]);
     } catch (e) {
       setRescanErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1287,10 +1433,12 @@ export const QuickAskCard = memo(function QuickAskCard({
   };
 
   const lastAnswer = [...turns].reverse().find((t) => t.role === "model")?.text ?? "";
-  const firstQuestion = turns.find((t) => t.role === "user")?.text ?? seed.question;
+  const firstQuestion =
+    (turns.find((t) => t.role === "user" && t.text.trim())?.text ?? seed.question) ||
+    (seed.analyze ? analyzeLabel(seed.analyze) : "Image query");
   /** What the Ask pane's box gets when the chat has no address to open (a private one). */
   const carried = turns.some((t) => t.role === "model")
-    ? `${turns.map((t) => `${t.role === "user" ? "I asked" : "You answered"}:\n${t.text}`).join("\n\n")}\n\n`
+    ? `${transcript(turns)}\n\n`
     : firstQuestion;
 
   return (
@@ -1425,7 +1573,14 @@ export const QuickAskCard = memo(function QuickAskCard({
             if (!act) {
               return (
                 <div key={i} className="qa-q">
-                  {t.text}
+                  {t.images && t.images.length > 0 && (
+                    <div className="qa-turn-images">
+                      {t.images.map((img, idx) => (
+                        <img key={idx} src={img} alt="Attached" className="qa-turn-thumb" />
+                      ))}
+                    </div>
+                  )}
+                  {t.text ? <div>{t.text}</div> : null}
                 </div>
               );
             }
@@ -1502,66 +1657,163 @@ export const QuickAskCard = memo(function QuickAskCard({
       </div>
 
       <form
-        className="qa-foot"
+        className={`qa-foot ${isDragging ? "drop-active" : ""}`}
         onSubmit={(e) => {
           e.preventDefault();
           sendFollow();
         }}
-      >
-        <button
-          type="button"
-          className="qa-note"
-          disabled={!seed.anchor || !(seed.analyze || seed.custom) || busy || rescanning}
-          title={
-            !seed.anchor
-              ? "No screen area associated with this question"
-              : busy
-                ? "Wait for the answer to finish"
-                : "Recapture the marked area again and ask about the new version"
+        onDragEnter={(e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            dragCount.current++;
+            setIsDragging(true);
           }
-          onClick={() => void rescan()}
-        >
-          <IcScan size={13} /> {rescanning ? "Capturing…" : "Recapture"}
-        </button>
-        <button
-          type="button"
-          className={`qa-note ${priv ? "on" : ""}`}
-          title={
-            priv
-              ? `New chats are private: ${host === "claude" ? "incognito" : "temporary"} in ${name}, kept out of its history. Click to keep them.`
-              : `New chats are kept in ${name}'s history. Click to make them private.`
+        }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
           }
-          onClick={() =>
-            setPriv((v) => {
-              setPrivateChats(!v);
-              return !v;
-            })
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          dragCount.current--;
+          if (dragCount.current <= 0) {
+            dragCount.current = 0;
+            setIsDragging(false);
           }
-        >
-          <IcIncognito size={13} /> Private
-        </button>
-        <textarea
-          rows={1}
-          value={follow}
-          autoFocus
-          placeholder={turns.length ? "Follow up…" : seed.custom ? `Ask ${name} about this area…` : `Ask ${name}…`}
-          onChange={(e) => setFollow(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              sendFollow();
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          dragCount.current = 0;
+          setIsDragging(false);
+          const files = Array.from(e.dataTransfer.files).filter((f) =>
+            f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.name),
+          );
+          if (files.length > 0) {
+            void handleAddFiles(files);
+          }
+        }}
+        onPaste={(e) => {
+          const items = e.clipboardData?.items;
+          if (!items) return;
+          const imageFiles: File[] = [];
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type.startsWith("image/")) {
+              const file = item.getAsFile();
+              if (file) imageFiles.push(file);
             }
-          }}
-        />
-        {busy ? (
-          <button className="btn icon" type="button" title="Stop" onClick={() => abortRef.current?.abort()}>
-            <IcStop size={13} />
-          </button>
-        ) : (
-          <button className="btn icon" type="submit" title="Send (Enter)" disabled={!follow.trim()}>
-            <IcSend size={14} />
-          </button>
+          }
+          if (imageFiles.length > 0) {
+            e.preventDefault();
+            void handleAddFiles(imageFiles);
+          }
+        }}
+      >
+        {pendingImages.length > 0 && (
+          <div className="qa-pending-images">
+            {pendingImages.map((img) => (
+              <div key={img.id} className="qa-pending-thumb">
+                <img src={img.previewUrl} alt="Attachment" />
+                <button
+                  type="button"
+                  className="qa-pending-thumb-remove"
+                  title="Remove image"
+                  aria-label="Remove image"
+                  onClick={() => setPendingImages((cur) => cur.filter((p) => p.id !== img.id))}
+                >
+                  <IcClose size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
         )}
+        <div className="qa-foot-row">
+          <button
+            type="button"
+            className="qa-note qa-recapture"
+            disabled={!seed.anchor || !(seed.analyze || seed.custom) || busy || rescanning}
+            title={
+              !seed.anchor
+                ? "No screen area associated with this question"
+                : busy
+                  ? "Wait for the answer to finish"
+                  : "Recapture the marked area again and attach it to your question"
+            }
+            onClick={() => void rescan()}
+          >
+            <IcScan size={13} /> {rescanning ? "Capturing…" : "Recapture"}
+          </button>
+          <button
+            type="button"
+            className="btn icon qa-attach-btn"
+            title="Attach image (PNG, JPG, WEBP, GIF)"
+            aria-label="Attach image"
+            disabled={busy}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <IcImage size={15} />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const files = e.target.files ? Array.from(e.target.files) : [];
+              if (files.length > 0) void handleAddFiles(files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className={`qa-note ${priv ? "on" : ""}`}
+            title={
+              priv
+                ? `New chats are private: ${host === "claude" ? "incognito" : "temporary"} in ${name}, kept out of its history. Click to keep them.`
+                : `New chats are kept in ${name}'s history. Click to make them private.`
+            }
+            onClick={() =>
+              setPriv((v) => {
+                setPrivateChats(!v);
+                return !v;
+              })
+            }
+          >
+            <IcIncognito size={13} /> Private
+          </button>
+          <textarea
+            rows={1}
+            value={follow}
+            autoFocus
+            placeholder={turns.length ? "Follow up…" : seed.custom ? `Ask ${name} about this area…` : `Ask ${name}…`}
+            onChange={(e) => setFollow(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                if (follow.trim() || pendingImages.length > 0) {
+                  e.preventDefault();
+                  sendFollow();
+                }
+              }
+            }}
+          />
+          {busy ? (
+            <button className="btn icon" type="button" title="Stop" onClick={() => abortRef.current?.abort()}>
+              <IcStop size={13} />
+            </button>
+          ) : (
+            <button
+              className="btn icon"
+              type="submit"
+              title="Send (Enter)"
+              disabled={!follow.trim() && pendingImages.length === 0}
+            >
+              <IcSend size={14} />
+            </button>
+          )}
+        </div>
       </form>
     </div>
     </>

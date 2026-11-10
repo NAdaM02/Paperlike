@@ -2272,7 +2272,9 @@ pub fn stage_analyze_png(png_b64: String) -> Result<String, String> {
     let bytes = base64_decode(&png_b64)?;
     let dir = notes_folder().join("briefs").join("attachments");
     std::fs::create_dir_all(&dir).map_err(err_str)?;
-    let name = format!("analyze-{}.png", chrono::Utc::now().timestamp_millis());
+    static ATTACH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = ATTACH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = format!("analyze-{}-{seq}.png", chrono::Utc::now().timestamp_millis());
     let path = dir.join(&name);
     std::fs::write(&path, &bytes).map_err(err_str)?;
     Ok(plain_path(&path))

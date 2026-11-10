@@ -335,7 +335,7 @@ export type SavedQuickCard = {
   question: string;
   selection: string;
   host: string;
-  turns: { role: "user" | "model"; text: string; thinking?: string }[];
+  turns: { role: "user" | "model"; text: string; thinking?: string; images?: string[] }[];
   url?: string | null;
   analyze?: string;
   custom?: boolean;
