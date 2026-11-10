@@ -1121,12 +1121,23 @@ export const QuickAskCard = memo(function QuickAskCard({
   const [textK, setTextK] = useState(readTextK);
   const [zoomTip, setZoomTip] = useState(false);
   const zoomTipTimer = useRef(0);
-  // Ctrl + wheel, or wheel with the middle button held, sizes the card's text (not the app or the note).
+  // Wheel with the middle button held sizes the card's text; ctrl + wheel / pinch zooms the canvas underneath.
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && (e.buttons & 4) === 0) return;
+      if (e.ctrlKey) {
+        card.style.pointerEvents = "none";
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        card.style.pointerEvents = "";
+        if (hit && !card.contains(hit)) {
+          e.preventDefault();
+          e.stopPropagation();
+          hit.dispatchEvent(new WheelEvent("wheel", e));
+          return;
+        }
+      }
       e.preventDefault();
       e.stopPropagation();
       const step = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.04 : 0.0012));

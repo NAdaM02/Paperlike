@@ -470,6 +470,22 @@ const OBJECT_CLIP_MARKER = "\u200bpaperlike-objects\u200b";
 let objectClip: { objects: CanvasObject[]; media: Record<string, string> } | null = null;
 let pasteBusy = false;
 
+/** True when the pointer is over a scrollable child element inside the canvas. */
+function isScrollableTarget(target: EventTarget | null, root: HTMLElement): boolean {
+  for (let node = target instanceof Element ? target : null; node && node !== root; node = node.parentElement) {
+    if (!(node instanceof HTMLElement)) continue;
+    const cs = window.getComputedStyle(node);
+    const scrollableY =
+      (cs.overflowY === "auto" || cs.overflowY === "scroll" || node.tagName === "TEXTAREA") &&
+      node.scrollHeight > node.clientHeight + 1;
+    const scrollableX =
+      (cs.overflowX === "auto" || cs.overflowX === "scroll" || node.tagName === "TEXTAREA") &&
+      node.scrollWidth > node.clientWidth + 1;
+    if (scrollableY || scrollableX) return true;
+  }
+  return false;
+}
+
 export function CanvasEditor({
   note,
   onUpdate,
@@ -1115,17 +1131,22 @@ export function CanvasEditor({
       const zooming = e.ctrlKey || (e.buttons & 4) !== 0;
       if (zooming) {
         e.preventDefault();
+        const isPinch = e.ctrlKey && e.deltaMode === 0 && (!Number.isInteger(e.deltaY) || Math.abs(e.deltaY) < 50);
+        const factor = isPinch ? 0.01 : e.deltaMode === 1 ? 0.05 : 0.0015;
+        const delta = isPinch ? Math.max(-40, Math.min(40, e.deltaY)) : e.deltaY;
         const r = el.getBoundingClientRect();
         const mx = e.clientX - r.left;
         const my = e.clientY - r.top;
         nudgeCam((c) => {
-          const nz = Math.min(30, Math.max(0.15, c.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015))));
+          const nz = Math.min(30, Math.max(0.15, c.z * Math.exp(-delta * factor)));
           return {
             z: nz,
             x: mx - ((mx - c.x) / c.z) * nz,
             y: my - ((my - c.y) / c.z) * nz,
           };
         });
+      } else if (isScrollableTarget(e.target, el)) {
+        return;
       } else if (e.shiftKey) {
         // The canvas takes the wheel; nothing around it should scroll too.
         e.preventDefault();
@@ -1137,8 +1158,15 @@ export function CanvasEditor({
       window.clearTimeout(wheelCamFlush.current);
       wheelCamFlush.current = window.setTimeout(() => flushCam(), 120);
     };
+    const onGesture = (e: Event) => e.preventDefault();
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    el.addEventListener("gesturestart", onGesture);
+    el.addEventListener("gesturechange", onGesture);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("gesturestart", onGesture);
+      el.removeEventListener("gesturechange", onGesture);
+    };
   }, []);
 
   /* ── middle / right button pan anywhere (capture, before objects steal it) ── */

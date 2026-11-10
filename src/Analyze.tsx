@@ -211,7 +211,7 @@ export function AnalyzeOverlay({
     const el = overlayRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if ((e.target as Element | null)?.closest?.(".analyze-actions")) return;
+      if ((e.target as Element | null)?.closest?.(".analyze-actions") && !e.ctrlKey) return;
       e.preventDefault();
       const t = under(e.clientX, e.clientY);
       if (!t) return;
