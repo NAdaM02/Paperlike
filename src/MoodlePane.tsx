@@ -42,6 +42,7 @@ type MoodleMsg = {
   pages?: number;
   aspect?: number;
   token?: number;
+  failures?: number;
 };
 
 type DownloadEvt = { path: string; name: string; state: string; message?: string; insert?: boolean; token?: number };
@@ -185,6 +186,9 @@ export function MoodlePane({
   insertRef.current = onInsertPdf;
   const [paneWidth, setPaneWidth] = useState<number | null>(null);
   const [saveOffer, setSaveOffer] = useState(false);
+  const [passwordPrompt, setPasswordPrompt] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
   // TUM two-factor step: null = not on it; error = a submitted code came back rejected.
   const [mfa, setMfa] = useState<{ error: boolean; autoFailed: boolean; round: number } | null>(null);
   // Automatic codes: whether a key is saved, and the TUMonline setup step if running.
@@ -194,6 +198,11 @@ export function MoodlePane({
   const [liveCode, setLiveCode] = useState<{ code: string; left: number } | null>(null);
   useEffect(() => {
     void invoke<boolean>("moodle_totp_saved").then(setTotpSaved).catch(() => {});
+    void invoke<boolean>("moodle_login_rejected")
+      .then((rejected) => {
+        if (rejected) setPasswordPrompt(true);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => {
     if (setup?.phase !== "confirm") {
@@ -496,6 +505,8 @@ export function MoodlePane({
           if (/^https?:\/\/([^/]*\.)?moodle\.tum\.de\//i.test(payload.url)) {
             otpSent.current = false;
             setMfa(null);
+            setPasswordPrompt(false);
+            setPassword("");
           }
           onPageRef.current(payload.url);
         }
@@ -503,6 +514,11 @@ export function MoodlePane({
       }
       if (type === "login-required") {
         setStatus(messages.moodleSignIn);
+        return;
+      }
+      if (type === "login-password-rejected") {
+        setStatus("");
+        setPasswordPrompt(true);
         return;
       }
       if (type === "login-mfa") {
@@ -992,6 +1008,64 @@ export function MoodlePane({
             </>
           )}
         </div>
+      )}
+      {passwordPrompt && (
+        <form
+          className="moodle-banner moodle-password-prompt"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const pass = password.trim();
+            if (!pass || passwordBusy) return;
+            setPasswordBusy(true);
+            void invoke("moodle_update_password", { password: pass })
+              .then(() => {
+                setPasswordPrompt(false);
+                setPassword("");
+                setStatus(messages.moodleSigningIn);
+              })
+              .catch((err) => {
+                setStatus(String(err));
+              })
+              .finally(() => {
+                setPasswordBusy(false);
+              });
+          }}
+        >
+          <div className="moodle-password-text">
+            <strong>{messages.moodlePasswordFailed}</strong>
+            <span className="moodle-password-hint">{messages.moodlePasswordHint}</span>
+          </div>
+          <div className="moodle-password-controls">
+            <input
+              type="password"
+              className="moodle-password-input"
+              autoFocus
+              placeholder={messages.moodlePasswordPlaceholder}
+              aria-label={messages.moodlePasswordPlaceholder}
+              autoComplete="current-password"
+              value={password}
+              disabled={passwordBusy}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="btn primary"
+              disabled={!password.trim() || passwordBusy}
+            >
+              {passwordBusy ? messages.moodlePasswordSaving : messages.moodlePasswordSave}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setPasswordPrompt(false);
+                setPassword("");
+              }}
+            >
+              {messages.moodlePasswordCancel}
+            </button>
+          </div>
+        </form>
       )}
       {saveOffer && (
         <div className="moodle-banner moodle-save-offer">

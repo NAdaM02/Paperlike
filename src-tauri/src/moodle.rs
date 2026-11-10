@@ -235,6 +235,7 @@ mod win {
 
     pub fn warm(app: AppHandle, state: &AppState) -> Result<(), String> {
         if !crate::secret_store::moodle_login_exists(&state.paths)
+            || crate::secret_store::moodle_login_failures(&state.paths) >= 3
             || app.get_webview(LABEL).is_some()
         {
             return Ok(());
@@ -550,6 +551,34 @@ mod win {
         let ack = v.get("ack").and_then(|a| a.as_u64());
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "login-required" => emit_msg(app, json!({"type": "login-required"})),
+            "login-rejected" => {
+                let paths = crate::state::AppPaths::resolve();
+                if crate::secret_store::moodle_login_exists(&paths) {
+                    let failures = crate::secret_store::increment_moodle_login_failures(&paths);
+                    if failures >= 3 {
+                        emit_msg(app, json!({
+                            "type": "login-password-rejected",
+                            "failures": failures,
+                        }));
+                    } else if let Some(view) = app.get_webview(LABEL) {
+                        if let Ok(Some(login)) = crate::secret_store::load_moodle_login(&paths) {
+                            let user = json_escape(&login.user);
+                            let pass = json_escape(&login.pass);
+                            let script = format!(
+                                r#"(function(){{
+  try {{
+    if (typeof window.__paperlikeFillLogin === "function") {{
+      window.__paperlikeFillLogin({user}, {pass}, true);
+    }}
+  }} catch (e) {{}}
+}})();"#
+                            );
+                            let _ = view.eval(script);
+                            emit_msg(app, json!({"type": "login-auto"}));
+                        }
+                    }
+                }
+            }
             "login-mfa" => {
                 let active = v.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
                 if active {
@@ -714,6 +743,8 @@ mod win {
         if is_moodle_logged_in(&parsed) {
             AUTOFILL_DONE.store(false, Ordering::Release);
             TUM_CLICKED.store(false, Ordering::Release);
+            let paths = crate::state::AppPaths::resolve();
+            let _ = crate::secret_store::reset_moodle_login_failures(&paths);
             if TOTP_TRIES.swap(0, Ordering::AcqRel) > 0 {
                 log_2fa("signed in");
             }
@@ -791,7 +822,9 @@ mod win {
             return;
         }
         let paths = crate::state::AppPaths::resolve();
-        if !crate::secret_store::moodle_login_exists(&paths) {
+        if !crate::secret_store::moodle_login_exists(&paths)
+            || crate::secret_store::moodle_login_failures(&paths) >= 3
+        {
             TUM_CLICKED.store(false, Ordering::Release);
             return;
         }
@@ -807,21 +840,28 @@ mod win {
     }
 
     fn try_autofill(app: &AppHandle, view: &tauri::Webview) {
+        let paths = crate::state::AppPaths::resolve();
+        let Ok(Some(login)) = crate::secret_store::load_moodle_login(&paths) else {
+            return;
+        };
+        let failures = crate::secret_store::moodle_login_failures(&paths);
+        if failures >= 3 {
+            emit_msg(app, json!({
+                "type": "login-password-rejected",
+                "failures": failures,
+            }));
+            return;
+        }
         if AUTOFILL_DONE.swap(true, Ordering::AcqRel) {
             return;
         }
-        let paths = crate::state::AppPaths::resolve();
-        let Ok(Some(login)) = crate::secret_store::load_moodle_login(&paths) else {
-            AUTOFILL_DONE.store(false, Ordering::Release);
-            return;
-        };
         let user = json_escape(&login.user);
         let pass = json_escape(&login.pass);
         let script = format!(
             r#"(function(){{
   try {{
     if (typeof window.__paperlikeFillLogin === "function") {{
-      window.__paperlikeFillLogin({user}, {pass});
+      window.__paperlikeFillLogin({user}, {pass}, false);
     }}
   }} catch (e) {{}}
 }})();"#
@@ -840,6 +880,38 @@ mod win {
 
     pub fn clear_pending_login() {
         *PENDING_LOGIN.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    pub fn update_password(app: &AppHandle, state: &AppState, password: String) -> Result<(), String> {
+        let pass = password.trim();
+        if pass.is_empty() {
+            return Err("Password cannot be empty.".into());
+        }
+        crate::secret_store::update_moodle_password(&state.paths, pass)?;
+        AUTOFILL_DONE.store(false, Ordering::Release);
+        if let Some(view) = app.get_webview(LABEL) {
+            let here_is_idp = view.url().map(|u| is_idp(&u)).unwrap_or(false);
+            if here_is_idp {
+                let Ok(Some(login)) = crate::secret_store::load_moodle_login(&state.paths) else {
+                    return Ok(());
+                };
+                let user = json_escape(&login.user);
+                let pass = json_escape(&login.pass);
+                let script = format!(
+                    r#"(function(){{
+  try {{
+    if (typeof window.__paperlikeFillLogin === "function") {{
+      window.__paperlikeFillLogin({user}, {pass}, true);
+    }}
+  }} catch (e) {{}}
+}})();"#
+                );
+                let _ = view.eval(script);
+                emit_msg(app, json!({"type": "login-auto"}));
+                return Ok(());
+            }
+        }
+        nav(app, DEFAULT_URL.into())
     }
 
     /// Installs credential capture + autofill helper on IdP pages (and harmlessly elsewhere).
@@ -914,19 +986,61 @@ mod win {
     clickLogin(f.pass.form || f.user.form || document.querySelector("form"));
     return true;
   }
-  window.__paperlikeFillLogin = function (user, pass) {
+  function shown(el) {
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+  function findLoginError() {
+    if (!hostOk()) return null;
+    if (!document.querySelector('input[type="password"]')) return null;
+    var selectors = [
+      '.alert-danger',
+      '.alert-error',
+      '.form-error',
+      '.form-element-error',
+      '.output--error',
+      '[role="alert"]',
+      '.text-danger',
+      '.login-error',
+      '.error'
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      var nodes = document.querySelectorAll(selectors[i]);
+      for (var j = 0; j < nodes.length; j++) {
+        var el = nodes[j];
+        if (shown(el)) {
+          var t = ((el.innerText || el.textContent || "") + "").trim();
+          if (t.length > 0) return t.slice(0, 300);
+        }
+      }
+    }
+    return null;
+  }
+  var reportedLoginError = false;
+  function reportLoginError() {
+    try {
+      if (reportedLoginError || !hostOk() || typeof window.paperlikePost !== "function") return;
+      var err = findLoginError();
+      if (err) {
+        reportedLoginError = true;
+        window.paperlikePost({ type: "login-rejected", msg: err });
+      }
+    } catch (e) {}
+  }
+  window.__paperlikeFillLogin = function (user, pass, force) {
     try {
       if (!hostOk()) return;
+      var err = findLoginError();
+      if (err && !force) {
+        reportLoginError();
+        return;
+      }
       applyFill(user, pass, false);
       setTimeout(function () { applyFill(user, pass, true); }, 500);
     } catch (e) {}
   };
   // Two-factor (TOTP) step: find the code field, report it, and fill it on request.
   // The code itself is never stored; it is typed in Paperlike and passed straight through.
-  function shown(el) {
-    var r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  }
   function findOtp() {
     if (!hostOk()) return null;
     if (document.querySelector('input[type="password"]')) return null;
@@ -981,8 +1095,19 @@ mod win {
       window.paperlikePost({ type: "login-mfa", active: !!otp, msg: msg });
     } catch (e) {}
   }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(reportOtp, 300); });
-  else setTimeout(reportOtp, 300);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      setTimeout(function () {
+        reportOtp();
+        reportLoginError();
+      }, 300);
+    });
+  } else {
+    setTimeout(function () {
+      reportOtp();
+      reportLoginError();
+    }, 300);
+  }
 })();
 "#;
 
@@ -2058,6 +2183,7 @@ mod win {
     pub fn open_external(_: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
     pub fn take_pending_login() -> Option<crate::secret_store::MoodleLogin> { None }
     pub fn clear_pending_login() {}
+    pub fn update_password(_: &AppHandle, _: &AppState, _: String) -> Result<(), String> { Err(UNSUPPORTED.into()) }
     pub fn totp_setup(_: &AppHandle, _: bool) -> Result<(), String> { Err(UNSUPPORTED.into()) }
     pub fn totp_found(_: &AppHandle, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
     pub fn totp_fill_confirm(_: &AppHandle) -> Result<(), String> { Err(UNSUPPORTED.into()) }
@@ -2232,4 +2358,26 @@ pub fn moodle_clear_login(state: State<'_, AppState>) -> Result<(), String> {
         win::clear_pending_login();
     }
     crate::secret_store::clear_moodle_login(&state.paths)
+}
+
+#[tauri::command]
+pub fn moodle_update_password(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    password: String,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        win::update_password(&app, &*state, password)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, state, password);
+        Err(UNSUPPORTED.into())
+    }
+}
+
+#[tauri::command]
+pub fn moodle_login_rejected(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(crate::secret_store::moodle_login_failures(&state.paths) >= 3)
 }

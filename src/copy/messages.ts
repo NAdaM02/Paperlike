@@ -296,6 +296,12 @@ export const messages = {
   moodleForgetHint: "Removes the encrypted username and password stored for automatic Moodle sign-in.",
   moodleForgetDone: "Saved Moodle sign-in removed.",
   moodleNoSavedLogin: "No Moodle sign-in is saved on this PC.",
+  moodlePasswordFailed: "Automatic sign-in failed",
+  moodlePasswordHint: "Your saved password was rejected. Enter your updated Moodle password to sign in.",
+  moodlePasswordPlaceholder: "Moodle password",
+  moodlePasswordSave: "Save",
+  moodlePasswordSaving: "Saving…",
+  moodlePasswordCancel: "Cancel",
 
   settingsDrawing: "Drawing & pen",
   penEnabled: "Enable pen input",

@@ -246,6 +246,8 @@ pub fn run() {
             moodle::moodle_save_login,
             moodle::moodle_decline_login,
             moodle::moodle_clear_login,
+            moodle::moodle_update_password,
+            moodle::moodle_login_rejected,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Paperlike");
