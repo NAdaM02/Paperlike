@@ -284,6 +284,8 @@ type Drag =
       /** Smart tool: timestamps aligned with pts, for speed and corners. */
       smart?: boolean;
       times?: number[];
+      /** A Pen stroke that a right-click turned into a Smart stroke; the Pen tool stays selected. */
+      chordSmart?: boolean;
     }
   | { mode: "lasso"; pts: [number, number][]; pen?: boolean; pointerId?: number; additive?: boolean }
   | { mode: "shape"; shape: "rect" | "ellipse" | "line"; sx: number; sy: number; cx: number; cy: number; groupId: string | null }
@@ -764,6 +766,7 @@ export function CanvasEditor({
   const dragMoveRaf = useRef(0);
   /** When pointerrawupdate is flowing, pointermove coordinates are ignored so a frozen event cannot yank the stroke back. */
   const followDrawRef = useRef<(e: PointerEvent) => void>(() => {});
+  const paintLiveInkRef = useRef<(d: Extract<Drag, { mode: "draw" }>) => void>(() => {});
   const sampleClock = useRef<{ d: object | null; t: number }>({ d: null, t: -1 });
   const followLassoRef = useRef<(e: PointerEvent) => void>(() => {});
   const bumpRef = useRef<() => void>(() => {});
@@ -1290,8 +1293,37 @@ export function CanvasEditor({
       bumpRef.current();
     };
 
+    /**
+     * Right button during a Pen stroke (left still held): the stroke continues, and commits,
+     * as a Smart stroke. The Pen tool stays selected, so the next stroke is plain Pen again.
+     * Returns true when the right button belongs to such a stroke and must do nothing else.
+     */
+    const claimRightForStroke = (e: PointerEvent): boolean => {
+      const d = dragRef.current;
+      if (!d || d.mode !== "draw" || d.closing) return false;
+      if (d.pointerId >= 0 && e.pointerId !== d.pointerId) return false;
+      if (d.chordSmart) return true;
+      if (d.smart || d.hl || toolRef.current !== "pen") return false;
+      d.smart = true;
+      d.chordSmart = true;
+      if (d.pen) {
+        // Pen samples carry no timestamps; Smart then works from the shape alone.
+        d.pen = false;
+        d.times = undefined;
+      }
+      d.pressure = undefined;
+      suppressCtxMenu.current = true;
+      paintLiveInkRef.current(d);
+      return true;
+    };
+
     const onDown = (e: PointerEvent) => {
       if ((e.target as Element | null)?.closest?.(".menu, .canvas-minimap, .zoom-chip")) return;
+      if (e.button === 2 && claimRightForStroke(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.pointerType === "pen" && penSettingsRef.current.pen_enabled) {
         penDownRef.current = true;
         penHoverRef.current = true;
@@ -1392,6 +1424,9 @@ export function CanvasEditor({
     };
 
     const onRightMove = (e: PointerEvent) => {
+      // A chorded right press arrives as a move with the right bit set. The sample itself
+      // still reaches the stroke; only the tool wheel and right-drag pan are skipped.
+      if ((e.buttons & 1) !== 0 && (e.buttons & 2) !== 0 && claimRightForStroke(e)) return;
       if ((e.buttons & 1) !== 0 && (e.buttons & 2) !== 0 && e.pointerType !== "pen") {
         const hold = rightHoldRef.current;
         const chord = eraseChordRef.current;
@@ -1891,7 +1926,9 @@ export function CanvasEditor({
         pen: penOn && tool !== "smart",
         pointerId: e.pointerId,
         ...(hl ? { opacity: hlOpacity } : {}),
-        ...(tool === "smart" ? { smart: true, times: [performance.now()] } : {}),
+        // Mouse Pen strokes keep timestamps too, so a right-click can turn them Smart mid-stroke.
+        ...(tool === "smart" || (tool === "pen" && !penOn) ? { times: [performance.now()] } : {}),
+        ...(tool === "smart" ? { smart: true } : {}),
         ...(inkTool ? {} : { color: lastInk.current.color, width: lastInk.current.width }),
       };
       dragRef.current = draw;
@@ -2209,6 +2246,7 @@ export function CanvasEditor({
       if (dragRef.current === d) paintLiveInk(d);
     });
   };
+  paintLiveInkRef.current = paintLiveInk;
 
   /** Coalesced samples newer than the last one taken. pointerrawupdate and pointermove
    *  both carry them, and taking a sample twice steps the line backwards. */
@@ -2605,6 +2643,8 @@ export function CanvasEditor({
     // A pen pointerup is not the end of the stroke. Windows continues it as mouse input.
     if (d?.mode === "draw" && d.pen && !d.closing && e.pointerType === "pen") return;
     if (d?.mode === "draw" && d.pointerId >= 0 && e.pointerId !== d.pointerId) return;
+    // Releasing only the right button of a Pen→Smart chord does not end the stroke.
+    if (d?.mode === "draw" && d.chordSmart && (e.buttons & 1) !== 0) return;
     if (d?.mode === "erase" && e.pointerId !== d.pointerId) return;
     dragRef.current = null;
     if (marqueeRaf.current) {
