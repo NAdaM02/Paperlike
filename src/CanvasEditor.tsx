@@ -1165,8 +1165,26 @@ export function CanvasEditor({
   };
 
   /** One sweep segment of the eraser; the first real change in a gesture takes the undo snapshot. */
+  /** Erased objects not yet handed to the note. The note (and the whole page) updates at most
+   *  once per frame; updating it on every pointer sample re-rendered everything per sample. */
+  const erasePending = useRef<CanvasObject[] | null>(null);
+  const eraseRaf = useRef(0);
+  const flushErase = () => {
+    cancelAnimationFrame(eraseRaf.current);
+    eraseRaf.current = 0;
+    const next = erasePending.current;
+    erasePending.current = null;
+    if (next) updateObjectsRef.current(() => next);
+  };
+  /** Forget erasing not yet applied (a still right-click that becomes the tool wheel restores instead). */
+  const dropErase = () => {
+    cancelAnimationFrame(eraseRaf.current);
+    eraseRaf.current = 0;
+    erasePending.current = null;
+  };
   const eraseStep = (d: Extract<Drag, { mode: "erase" }>, to: [number, number]) => {
-    const next = eraseSweep(objectsRef.current, d.last, to, eraserRadius / camRef.current.z, eraserMode);
+    const base = erasePending.current ?? objectsRef.current;
+    const next = eraseSweep(base, d.last, to, eraserRadius / camRef.current.z, eraserMode);
     d.last = to;
     if (!next) return;
     if (!d.snapped) {
@@ -1174,7 +1192,8 @@ export function CanvasEditor({
       d.snapped = true;
     }
     objectsRef.current = next;
-    updateObjects(() => next);
+    erasePending.current = next;
+    if (!eraseRaf.current) eraseRaf.current = requestAnimationFrame(flushErase);
   };
   const eraseStepRef = useRef(eraseStep);
   eraseStepRef.current = eraseStep;
@@ -1411,6 +1430,7 @@ export function CanvasEditor({
           const prev = chord.objects;
           eraseChordRef.current = null;
           dragRef.current = null;
+          dropErase();
           objectsRef.current = prev;
           updateObjectsRef.current(() => prev);
           setTempErasing(false);
@@ -1477,6 +1497,7 @@ export function CanvasEditor({
         if (origin && Math.hypot(e.clientX - origin.x, e.clientY - origin.y) < 8) {
           const chordSnap = eraseChordRef.current;
           if (chordSnap) {
+            dropErase();
             objectsRef.current = chordSnap.objects;
             updateObjectsRef.current(() => chordSnap.objects);
             eraseChordRef.current = null;
@@ -2712,6 +2733,7 @@ export function CanvasEditor({
       return;
     }
     if (d.mode === "erase") {
+      flushErase();
       if (d.temp) {
         setTempErasing(false);
         moveRing(0, 0, false);

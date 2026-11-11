@@ -1270,15 +1270,37 @@ export function NotebookView({
     setDirty(false);
   }, [expired]);
 
+  // A press in progress (writing, erasing, dragging) holds the write back: serializing the
+  // note on the main thread mid-stroke stalled the ink.
+  const pointerHeld = useRef(false);
+  useEffect(() => {
+    const down = () => {
+      pointerHeld.current = true;
+    };
+    const up = (e: PointerEvent) => {
+      if (e.buttons === 0) pointerHeld.current = false;
+    };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, []);
+
   useEffect(() => {
     if (!dirty || !note || note.read_only || expired) return;
-    const id = window.setTimeout(
-      () => {
-        if (settings.autosave) void flushSave();
-        else api.writeRecovery(note.path, note).catch(() => {});
-      },
-      settings.autosave ? 900 : 1500,
-    );
+    const run = () => {
+      if (pointerHeld.current) {
+        id = window.setTimeout(run, 300);
+        return;
+      }
+      if (settings.autosave) void flushSave();
+      else api.writeRecovery(note.path, note).catch(() => {});
+    };
+    let id = window.setTimeout(run, settings.autosave ? 900 : 1500);
     return () => window.clearTimeout(id);
   }, [dirty, note, settings.autosave, flushSave, expired]);
 
