@@ -1270,14 +1270,19 @@ export function NotebookView({
     setDirty(false);
   }, [expired]);
 
-  // A press in progress (writing, erasing, dragging) holds the write back: serializing the
-  // note on the main thread mid-stroke stalled the ink.
+  // The write waits for a pause in the work: serializing the note on the main thread mid-stroke
+  // stalled the ink. Any edit or pointer press restarts the wait, and a press in progress
+  // (writing, erasing, dragging) always holds it back.
+  const AUTOSAVE_IDLE_MS = 5000;
   const pointerHeld = useRef(false);
+  const lastPointerAt = useRef(0);
   useEffect(() => {
     const down = () => {
       pointerHeld.current = true;
+      lastPointerAt.current = performance.now();
     };
     const up = (e: PointerEvent) => {
+      lastPointerAt.current = performance.now();
       if (e.buttons === 0) pointerHeld.current = false;
     };
     window.addEventListener("pointerdown", down, true);
@@ -1293,16 +1298,39 @@ export function NotebookView({
   useEffect(() => {
     if (!dirty || !note || note.read_only || expired) return;
     const run = () => {
-      if (pointerHeld.current) {
-        id = window.setTimeout(run, 300);
+      const idleFor = performance.now() - lastPointerAt.current;
+      if (pointerHeld.current || idleFor < AUTOSAVE_IDLE_MS) {
+        id = window.setTimeout(run, pointerHeld.current ? 300 : AUTOSAVE_IDLE_MS - idleFor);
         return;
       }
       if (settings.autosave) void flushSave();
       else api.writeRecovery(note.path, note).catch(() => {});
     };
-    let id = window.setTimeout(run, settings.autosave ? 900 : 1500);
+    let id = window.setTimeout(run, AUTOSAVE_IDLE_MS);
     return () => window.clearTimeout(id);
   }, [dirty, note, settings.autosave, flushSave, expired]);
+
+  // Leaving the app (hidden, focus elsewhere, unloading) writes pending edits at once.
+  // Switching notes, closing the window, exports and Ctrl+S already save first.
+  useEffect(() => {
+    const flushNow = () => {
+      const n = noteRef.current;
+      if (!dirtyRef.current || !n || n.read_only || expiredRef.current) return;
+      if (settings.autosave) void flushSave();
+      else api.writeRecovery(n.path, n).catch(() => {});
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushNow();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", flushNow);
+    window.addEventListener("beforeunload", flushNow);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", flushNow);
+      window.removeEventListener("beforeunload", flushNow);
+    };
+  }, [settings.autosave, flushSave]);
 
   /* leave guard: save / discard / cancel */
   const guarded = useCallback(
