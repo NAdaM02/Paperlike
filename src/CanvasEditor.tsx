@@ -27,6 +27,10 @@ import {
 } from "./api";
 import { blockedIn, collapsedIds, FOLD_MARK_SIZE, foldAt, foldIndex, groupAtPoint, groupFrame, GROUP_MIN_H, placeNew, pruneGroups, withChild } from "./group";
 import { PdfView } from "./PdfView";
+
+/** PDFs re-rendered only when their own props change (handlers come from stableFn). */
+const PdfViewMemo = memo(PdfView);
+const NO_PAGES: number[] = [];
 import { mergePdfParts } from "./pdfDoc";
 import { pdfSize, pdfSlots } from "./pdfLayout";
 import { blocksPlainText, blocksToHtml, htmlToBlocks, FONT_SIZES, readFormatState } from "./richtext";
@@ -813,6 +817,34 @@ export function CanvasEditor({
     return { byId, member, kidsOf };
   }, [objects]);
   const selSet = useMemo(() => new Set(selected), [selected]);
+  /** Replace the selection only when it really changes, so a click on the same object costs no render. */
+  const selectIds = (next: string[]) =>
+    setSelected((s) => (s.length === next.length && s.every((id, i) => id === next[i]) ? s : next));
+  // Per-object handlers keep one identity across renders and call the latest closure, so memoized
+  // text windows and PDFs skip re-rendering when the selection or another object changes.
+  const latestFns = useRef(new Map<string, (...args: never[]) => unknown>());
+  const stableFns = useRef(new Map<string, (...args: never[]) => unknown>());
+  const stableFn = <A extends unknown[], R>(key: string, fn: (...args: A) => R): ((...args: A) => R) => {
+    latestFns.current.set(key, fn);
+    const known = stableFns.current.get(key);
+    if (known) return known as (...args: A) => R;
+    const made = (...args: A): R => (latestFns.current.get(key) as (...args: A) => R)(...args);
+    stableFns.current.set(key, made);
+    return made;
+  };
+  // One data: URL per picture. Building it on every render made each render re-read every image.
+  const imageUrls = useRef(new Map<string, { b64: string; url: string }>());
+  const imageUrl = (media: string, b64: string): string => {
+    const hit = imageUrls.current.get(media);
+    if (hit && hit.b64 === b64) {
+      // Equal text from a reloaded note: keep the newer string so later checks compare by identity.
+      hit.b64 = b64;
+      return hit.url;
+    }
+    const url = `data:image/*;base64,${b64}`;
+    imageUrls.current.set(media, { b64, url });
+    return url;
+  };
   // Only strokes near the view are mounted. A long note holds thousands, and
   // mounting all of them made every render, layout and repaint pay for the whole note.
   // The region moves in whole steps, so panning remounts only now and then.
@@ -2021,7 +2053,7 @@ export function CanvasEditor({
       createTextAt(pt.x, pt.y);
       return;
     }
-    if (!additive) setSelected([]);
+    if (!additive) setSelected((s) => (s.length ? [] : s));
     focusCanvas();
     dragRef.current = {
       mode: "marquee",
@@ -2986,7 +3018,7 @@ export function CanvasEditor({
       }
     }
     const live = ids.filter((i) => objsNow.some((o) => o.id === i && (shiftRef.current || !o.locked)));
-    setSelected(base.filter((i) => objsNow.some((o) => o.id === i)));
+    selectIds(base.filter((i) => objsNow.some((o) => o.id === i)));
     if (base.length === 1) onWindowSelect?.(base[0]);
     setMovingIds(live);
     dragRef.current = {
@@ -3471,44 +3503,45 @@ export function CanvasEditor({
     flushCam({ z, x: (W - (x2 - x1) * z) / 2 - x1 * z, y: (H - (y2 - y1) * z) / 2 - y1 * z });
   };
 
-  const paintPdf = (o: PdfObject, sel: boolean) => (
-    <PdfView
-      key={o.id}
-      obj={o}
-      b64={note.media_b64[o.media] ?? ""}
-      active={sel}
-      chosen={pdfPick[o.id] ?? []}
-      zoom={cam.z}
-      view={pdfView}
-      onChoose={(pages, additive, keepOthers) => choosePdf(o.id, pages, additive, keepOthers)}
-      onLayout={(layout) => setPdfLayout(o.id, layout)}
-      onDrop={(pages) => splitPdf(o.id, "drop", { pages: o.pages, aspects: o.aspects, drop: pages })}
-      onCopy={() => copyObjects(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id])}
-      onCut={() => {
-        const ids = selectedRef.current.includes(o.id) ? selectedRef.current : [o.id];
-        copyObjects(ids);
-        deleteIds(ids, true);
-      }}
-      onPaste={objectClip ? () => pasteObjects() : undefined}
-      onFront={() => restack(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id], true)}
-      onBack={() => restack(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id], false)}
-      onDelete={() => deleteIds(selectedRef.current.includes(o.id) ? selectedRef.current : [o.id], true)}
-      onJoin={
-        selected.filter((id) => objects.some((x) => x.id === id && x.type === "pdf")).length >= 2
-          ? () => joinSelectedPdfs(selectedRef.current)
-          : undefined
-      }
-      onSeparate={() => splitPdf(o.id, "all")}
-      onMove={(e) => startMove(e, o.id)}
-      onResize={(e) => startPdfResize(e, o.id)}
-      editable={canEdit}
-      shiftHeld={shiftHeld}
-      onToggleLock={() => setLocked([o.id], !o.locked)}
-      onReorder={(pages, aspects) => reorderPdf(o.id, pages, aspects)}
-      onDropPage={(page, pages, aspects) => splitPdf(o.id, "drop", { pages, aspects, drop: [page] })}
-      onMasks={(masks, hideNumbers) => setPdfMasks(o.id, masks, hideNumbers)}
-    />
-  );
+  type PdfProps = React.ComponentProps<typeof PdfView>;
+  const paintPdf = (o: PdfObject, sel: boolean) => {
+    const k = (name: string) => `pdf-${name}:${o.id}`;
+    const picked = () => (selectedRef.current.includes(o.id) ? selectedRef.current : [o.id]);
+    return (
+      <PdfViewMemo
+        key={o.id}
+        obj={o}
+        b64={note.media_b64[o.media] ?? ""}
+        active={sel}
+        chosen={pdfPick[o.id] ?? NO_PAGES}
+        zoom={cam.z}
+        view={pdfView}
+        onChoose={stableFn(k("choose"), ((pages, additive, keepOthers) => choosePdf(o.id, pages, additive, keepOthers)) as PdfProps["onChoose"])}
+        onLayout={stableFn(k("layout"), ((layout) => setPdfLayout(o.id, layout)) as PdfProps["onLayout"])}
+        onDrop={stableFn(k("drop"), ((pages) => splitPdf(o.id, "drop", { pages: o.pages, aspects: o.aspects, drop: pages })) as PdfProps["onDrop"])}
+        onCopy={stableFn(k("copy"), () => copyObjects(picked()))}
+        onCut={stableFn(k("cut"), () => {
+          const ids = picked();
+          copyObjects(ids);
+          deleteIds(ids, true);
+        })}
+        onPaste={objectClip ? stableFn(k("paste"), () => pasteObjects()) : undefined}
+        onFront={stableFn(k("front"), () => restack(picked(), true))}
+        onBack={stableFn(k("back"), () => restack(picked(), false))}
+        onDelete={stableFn(k("delete"), () => deleteIds(picked(), true))}
+        onJoin={pdfJoinable ? stableFn(k("join"), () => joinSelectedPdfs(selectedRef.current)) : undefined}
+        onSeparate={stableFn(k("separate"), () => splitPdf(o.id, "all"))}
+        onMove={stableFn(k("move"), ((e) => startMove(e, o.id)) as PdfProps["onMove"])}
+        onResize={stableFn(k("resize"), ((e) => startPdfResize(e, o.id)) as PdfProps["onResize"])}
+        editable={canEdit}
+        shiftHeld={shiftHeld}
+        onToggleLock={stableFn(k("lock"), () => setLocked([o.id], !o.locked))}
+        onReorder={stableFn(k("reorder"), ((pages, aspects) => reorderPdf(o.id, pages, aspects)) as NonNullable<PdfProps["onReorder"]>)}
+        onDropPage={stableFn(k("droppage"), ((page, pages, aspects) => splitPdf(o.id, "drop", { pages, aspects, drop: [page] })) as NonNullable<PdfProps["onDropPage"]>)}
+        onMasks={stableFn(k("masks"), ((masks, hideNumbers) => setPdfMasks(o.id, masks, hideNumbers)) as NonNullable<PdfProps["onMasks"]>)}
+      />
+    );
+  };
 
   const startTextResize = (e: React.PointerEvent, id: string, edge: "w" | "e" | "s" | "se") => {
     if (!shiftRef.current && objects.find((x) => x.id === id)?.locked) return;
@@ -3605,7 +3638,7 @@ export function CanvasEditor({
       setSelected(cur.includes(id) ? cur.filter((i) => i !== id) : [...cur, id]);
       return;
     }
-    setSelected([id]);
+    selectIds([id]);
     onWindowSelect?.(id);
   };
 
@@ -3746,6 +3779,8 @@ export function CanvasEditor({
 
   const q = findQuery.trim().toLowerCase();
   const d = dragRef.current;
+  /** Two or more PDFs selected: their menus offer Join. Worked out once per render, not per PDF. */
+  const pdfJoinable = selected.filter((id) => scene.byId.get(id)?.type === "pdf").length >= 2;
   // One object, or one set of joined pictures: each of them shows its resize corner.
   const soloSelected =
     selected.length === 1 ||
@@ -3897,20 +3932,20 @@ export function CanvasEditor({
                 showResize={showAdjust}
                 moving={movingIds.includes(o.id) || resizingId === o.id}
                 highlight={hasMatch}
-                onSelect={(e) => selectOnly(e, o.id)}
-                onFocusSelect={() => setSelected((s) => (s.includes(o.id) ? s : [o.id]))}
-                onEditStart={() => onTextEditStart?.(o.id)}
-                onDragBar={(e) => startMove(e, o.id)}
-                onEdge={(e, edge) => startTextResize(e, o.id, edge)}
+                onSelect={stableFn(`sel:${o.id}`, (e: React.PointerEvent) => selectOnly(e, o.id))}
+                onFocusSelect={stableFn(`focus:${o.id}`, () => setSelected((s) => (s.includes(o.id) ? s : [o.id])))}
+                onEditStart={stableFn(`edit:${o.id}`, () => onTextEditStart?.(o.id))}
+                onDragBar={stableFn(`drag:${o.id}`, (e: React.PointerEvent) => startMove(e, o.id))}
+                onEdge={stableFn(`edge:${o.id}`, (e: React.PointerEvent, edge: "w" | "e" | "s" | "se") => startTextResize(e, o.id, edge))}
                 onCommit={commitText}
-                onGrowWidth={(w, source) => growTextWidth(o.id, w, source ?? "table")}
-                onCreateAt={(cx, cy) => {
+                onGrowWidth={stableFn(`grow:${o.id}`, (w: number, source?: "type" | "table") => growTextWidth(o.id, w, source ?? "table"))}
+                onCreateAt={stableFn(`create:${o.id}`, (cx: number, cy: number) => {
                   const pt = toCanvas(cx, cy);
                   createTextAt(pt.x, pt.y);
-                }}
-                onHeight={(h) => {
+                })}
+                onHeight={stableFn(`height:${o.id}`, (h: number) => {
                   heightsRef.current[o.id] = h;
-                }}
+                })}
                 snapshot={snapshot}
               />
             );
@@ -3928,7 +3963,7 @@ export function CanvasEditor({
                   lockedView && isGifBase64(src) ? (
                     <StillImage b64={src} />
                   ) : (
-                    <img src={`data:image/*;base64,${src}`} alt="" draggable={false} />
+                    <img src={imageUrl(o.media, src)} alt="" draggable={false} />
                   )
                 ) : (
                   <div style={{ padding: 8, color: "var(--ink-3)" }}>missing image</div>
@@ -3994,20 +4029,20 @@ export function CanvasEditor({
                         showResize={showAdjust}
                         moving={movingIds.includes(o.id) || resizingId === o.id}
                         highlight={hasMatch}
-                        onSelect={(e) => selectOnly(e, o.id)}
-                        onFocusSelect={() => setSelected((s) => (s.includes(o.id) ? s : [o.id]))}
-                        onEditStart={() => onTextEditStart?.(o.id)}
-                        onDragBar={(e) => startMove(e, o.id)}
-                        onEdge={(e, edge) => startTextResize(e, o.id, edge)}
+                        onSelect={stableFn(`sel:${o.id}`, (e: React.PointerEvent) => selectOnly(e, o.id))}
+                        onFocusSelect={stableFn(`focus:${o.id}`, () => setSelected((s) => (s.includes(o.id) ? s : [o.id])))}
+                        onEditStart={stableFn(`edit:${o.id}`, () => onTextEditStart?.(o.id))}
+                        onDragBar={stableFn(`drag:${o.id}`, (e: React.PointerEvent) => startMove(e, o.id))}
+                        onEdge={stableFn(`edge:${o.id}`, (e: React.PointerEvent, edge: "w" | "e" | "s" | "se") => startTextResize(e, o.id, edge))}
                         onCommit={commitText}
-                        onGrowWidth={(w, source) => growTextWidth(o.id, w, source ?? "table")}
-                        onCreateAt={(cx, cy) => {
+                        onGrowWidth={stableFn(`grow:${o.id}`, (w: number, source?: "type" | "table") => growTextWidth(o.id, w, source ?? "table"))}
+                        onCreateAt={stableFn(`create:${o.id}`, (cx: number, cy: number) => {
                           const pt = toCanvas(cx, cy);
                           createTextAt(pt.x, pt.y);
-                        }}
-                        onHeight={(h) => {
+                        })}
+                        onHeight={stableFn(`height:${o.id}`, (h: number) => {
                           heightsRef.current[o.id] = h;
-                        }}
+                        })}
                         snapshot={snapshot}
                       />
                     );
@@ -4026,7 +4061,7 @@ export function CanvasEditor({
                           lockedView && isGifBase64(src) ? (
                             <StillImage b64={src} />
                           ) : (
-                            <img src={`data:image/*;base64,${src}`} alt="" draggable={false} />
+                            <img src={imageUrl(o.media, src)} alt="" draggable={false} />
                           )
                         ) : (
                           <div style={{ padding: 8, color: "var(--ink-3)" }}>missing image</div>
