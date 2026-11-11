@@ -2186,16 +2186,38 @@ export function NotebookView({
     const edit = mathEdit;
     setMathEdit(null);
     if (!edit || !edit.target.isConnected) return;
-    const content = edit.target.closest(".content") as HTMLElement | null;
-    const tex = (edit.target.dataset.tex ?? "").trim();
+    const chip = edit.target;
+    const content = chip.closest(".content") as HTMLElement | null;
+    const tex = (chip.dataset.tex ?? "").trim();
+    // Caret goes right after the chip (past the space a new chip brings), so typing
+    // or Ctrl+M continues on the same line, like after a symbol.
+    const caret = document.createRange();
+    const next = chip.nextSibling;
+    if (edit.isNew && next instanceof Text && next.data.startsWith("\u00a0")) caret.setStart(next, 1);
+    else caret.setStartAfter(chip);
+    caret.collapse(true);
     if (!commit) {
       // revert: restore the original formula, or remove a freshly inserted chip
-      if (edit.isNew || !edit.initial.trim()) edit.target.remove();
-      else renderMathInto(edit.target, edit.initial);
+      if (edit.isNew || !edit.initial.trim()) {
+        caret.setStartBefore(chip);
+        caret.collapse(true);
+        chip.remove();
+      } else renderMathInto(chip, edit.initial);
     } else if (!tex) {
-      edit.target.remove();
+      caret.setStartBefore(chip);
+      caret.collapse(true);
+      chip.remove();
     }
     content?.dispatchEvent(new Event("input", { bubbles: true }));
+    if (!content) return;
+    requestAnimationFrame(() => {
+      if (!content.isConnected || !caret.startContainer.isConnected) return;
+      content.focus({ preventScroll: true });
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(caret);
+      savedSel.current = saveSelection() ?? savedSel.current;
+    });
   };
 
   /** Pen colour / width also restyle drawings selected with the Select tool (OneNote-style). */
