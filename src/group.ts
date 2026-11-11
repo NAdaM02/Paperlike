@@ -3,6 +3,8 @@ import { CanvasObject, GroupObject } from "./api";
 export const GROUP_PAD = 14;
 export const GROUP_MIN_W = 160;
 export const GROUP_MIN_H = 64;
+/** Side of a collapsed fold's marker in note units; the collapsed Analyze marker matches it. */
+export const FOLD_MARK_SIZE = 28;
 
 type Box = { x: number; y: number; w: number; h: number };
 type BoxOf = (o: CanvasObject) => Box;

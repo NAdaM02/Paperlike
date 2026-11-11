@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { api, type SavedQuickCard } from "./api";
 import { AnalyzeAction, AnalyzeIcon, analyzeLabel, AnalyzeMark, analyzePrompt, AnalyzeRect, areaOnScreen, captureArea, promptAction, visiblePart } from "./Analyze";
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
+import { FOLD_MARK_SIZE } from "./group";
 import { noteText, summaryHtml } from "./brief";
 import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
 import { ChecklistPanel } from "./Checklist";
@@ -577,8 +578,9 @@ type Turn = QuickTurn;
 type CardSize = { w: number; h: number };
 type Edge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 const RESIZE_EDGES: Edge[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
-const MIN_W = 300;
-const MIN_H = 180;
+/** Smallest card that shows the header controls and the input row without clipping. */
+const MIN_W = 360;
+const MIN_H = 200;
 
 const GAP = 14;
 const EDGE = 8;
@@ -968,7 +970,9 @@ const QuickAskComposer = memo(function QuickAskComposer({
         />
         <button
           type="button"
-          className={`qa-note ${priv ? "on" : ""}`}
+          className={`qa-note icon-only ${priv ? "on" : ""}`}
+          aria-label="Private"
+          aria-pressed={priv}
           title={
             priv
               ? `New chats are private: ${host === "claude" ? "incognito" : "temporary"} in ${name}, kept out of its history. Click to keep them.`
@@ -981,7 +985,7 @@ const QuickAskComposer = memo(function QuickAskComposer({
             })
           }
         >
-          <IcIncognito size={13} /> Private
+          <IcIncognito size={13} />
         </button>
         <textarea
           rows={1}
@@ -1298,16 +1302,19 @@ export const QuickAskCard = memo(function QuickAskCard({
         // inset() is measured on the unscaled card.
         target.style.clipPath = !gone && (it || il || ib || ir) ? `inset(${it / k}px ${ir / k}px ${ib / k}px ${il / k}px)` : "";
       } else {
-        target.style.width = "28px";
-        target.style.height = "28px";
-        target.style.transform = "";
+        // Same size as a collapsed fold's marker: note units, scaled with the note.
+        const s = FOLD_MARK_SIZE * z;
+        target.style.width = `${FOLD_MARK_SIZE}px`;
+        target.style.height = `${FOLD_MARK_SIZE}px`;
+        target.style.transformOrigin = "0 0";
+        target.style.transform = `scale(${z})`;
         target.style.clipPath = "";
         const c = at.clip;
         const it = Math.max(0, c.top - y);
         const il = Math.max(0, c.left - x);
-        const ib = Math.max(0, y + 28 - c.bottom);
-        const ir = Math.max(0, x + 28 - c.right);
-        const gone = it + ib >= 28 || il + ir >= 28;
+        const ib = Math.max(0, y + s - c.bottom);
+        const ir = Math.max(0, x + s - c.right);
+        const gone = it + ib >= s || il + ir >= s;
         target.style.visibility = gone ? "hidden" : "";
       }
     };
@@ -1800,7 +1807,8 @@ export const QuickAskCard = memo(function QuickAskCard({
       el.removeEventListener("wheel", onWheel);
       window.clearTimeout(wheelRef.current.timer);
     };
-  }, []);
+    // The header is not mounted while the card is collapsed; attach again when it returns.
+  }, [collapsed]);
 
   const startDrag = (e: React.PointerEvent<HTMLElement>) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
@@ -1951,7 +1959,7 @@ export const QuickAskCard = memo(function QuickAskCard({
         }}
       >
         <div className={`fold-mark${selected ? " selected" : ""}`}>
-          <IcAnalyzeMarker size={18} />
+          <IcAnalyzeMarker size={22} />
         </div>
       </div>
     );
@@ -1999,11 +2007,11 @@ export const QuickAskCard = memo(function QuickAskCard({
               aria-selected={host === h}
               className={(wheelHost ?? host) === h ? "on" : ""}
               disabled={busy && host !== h}
-              title={host === h ? undefined : `Ask ${CHAT_NAME[h]} instead`}
+              title={host === h ? CHAT_NAME[h] : `Ask ${CHAT_NAME[h]} instead`}
+              aria-label={CHAT_NAME[h]}
               onClick={() => switchHost(h)}
             >
-              <HostLogo host={h} size={12} />
-              {CHAT_NAME[h]}
+              <HostLogo host={h} size={14} />
             </button>
           ))}
         </div>

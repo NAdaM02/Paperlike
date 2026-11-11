@@ -25,7 +25,7 @@ import {
   PdfObject,
   TextObject,
 } from "./api";
-import { blockedIn, collapsedIds, foldAt, foldIndex, groupAtPoint, groupFrame, GROUP_MIN_H, placeNew, pruneGroups, withChild } from "./group";
+import { blockedIn, collapsedIds, FOLD_MARK_SIZE, foldAt, foldIndex, groupAtPoint, groupFrame, GROUP_MIN_H, placeNew, pruneGroups, withChild } from "./group";
 import { PdfView } from "./PdfView";
 import { mergePdfParts } from "./pdfDoc";
 import { pdfSize, pdfSlots } from "./pdfLayout";
@@ -439,7 +439,7 @@ const IMAGE_JOIN_GAP = 14;
 
 /** Collapsed fold marker. New folds store the chevron center; older ones sit on x,y. */
 function collapsedBox(g: GroupObject): { x: number; y: number; w: number; h: number } {
-  return { x: g.marker_x ?? g.x, y: g.marker_y ?? g.y, w: 28, h: 28 };
+  return { x: g.marker_x ?? g.x, y: g.marker_y ?? g.y, w: FOLD_MARK_SIZE, h: FOLD_MARK_SIZE };
 }
 
 /** Center the 28px marker on the collapse chevron (16px, sitting just above the frame). */
@@ -4057,7 +4057,7 @@ export function CanvasEditor({
                 className={`fold ${g.collapsed ? "collapsed" : ""} ${selected.includes(g.id) ? "selected" : ""} ${(g.children ?? []).length ? "" : "empty"}`}
                 style={
                   g.collapsed
-                    ? { left: collapsedBox(g).x, top: collapsedBox(g).y, width: 28, height: 28 }
+                    ? { left: collapsedBox(g).x, top: collapsedBox(g).y, width: FOLD_MARK_SIZE, height: FOLD_MARK_SIZE }
                     : { left: frame.x, top: frame.y, width: frame.w, height: frame.h }
                 }
               >
