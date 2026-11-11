@@ -3603,7 +3603,18 @@ export function CanvasEditor({
     if (!canEdit) return;
     const ae = document.activeElement as HTMLElement | null;
     const editing = !!ae && (ae.isContentEditable || ae.tagName === "INPUT" || ae.tagName === "TEXTAREA");
-    if (editing) return;
+    if (editing) {
+      // A picture alone can't go into a text box: leave the box and paste it on the canvas.
+      const inTextBox = ae.isContentEditable && !!ae.closest(".text-window") && !!wrapRef.current?.contains(ae);
+      const data = e.clipboardData;
+      const imageOnly =
+        !!data &&
+        !(data.getData("text/plain") ?? "").trim() &&
+        Array.from(data.items).some((it) => it.kind === "file" && it.type.startsWith("image/"));
+      if (!inTextBox || !imageOnly) return;
+      ae.blur();
+      window.getSelection()?.removeAllRanges();
+    }
     // A paste event invalidates the keydown fallback, even if this call is the duplicate.
     pasteGenRef.current++;
     if (pasteBusy) return;
