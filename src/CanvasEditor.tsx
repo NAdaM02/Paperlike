@@ -939,12 +939,23 @@ export function CanvasEditor({
       return moved;
     });
     snapshot("paste");
-    onUpdate((n) => ({
-      ...n,
-      media_b64: { ...n.media_b64, ...clip.media },
-      doc: { ...n.doc, canvas: { ...n.doc.canvas, objects: [...n.doc.canvas.objects, ...clones] } },
-    }));
     const tops = clones.filter((o) => !clones.some((g) => g.type === "group" && g.children.includes(o.id))).map((o) => o.id);
+    onUpdate((n) => {
+      // A pasted object whose centre lands in an open fold joins that fold, like a new stroke there.
+      const folds = foldIndex(n.doc.canvas.objects, boxOf);
+      let objects = n.doc.canvas.objects;
+      for (const o of clones) {
+        if (o.type === "group" || !tops.includes(o.id)) continue;
+        const b = objectBBox(o, heightsRef.current);
+        const gid = foldAt(folds, b.x + b.w / 2, b.y + b.h / 2);
+        if (gid) objects = withChild(objects, o.id, gid);
+      }
+      return {
+        ...n,
+        media_b64: { ...n.media_b64, ...clip.media },
+        doc: { ...n.doc, canvas: { ...n.doc.canvas, objects: [...objects, ...clones] } },
+      };
+    });
     setSelected(tops);
     const wrap = wrapRef.current;
     if (!wrap || !clones.length) return;
@@ -970,7 +981,7 @@ export function CanvasEditor({
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     flushCam((cam) => ({ ...cam, x: view.width / 2 - cx * cam.z, y: view.height / 2 - cy * cam.z }));
-  }, [onUpdate, snapshot]);
+  }, [onUpdate, snapshot, boxOf]);
 
   const restack = useCallback(
     (ids: string[], front: boolean) => {
