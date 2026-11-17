@@ -14,14 +14,22 @@ export function arrowHeadKind(style?: string): ArrowHeadKind {
 }
 
 /**
- * Tip length along the shaft. An 18px floor plus 2.25px per stroke-px, and
- * 4.5× the stroke once that is larger — width 2 is about 22.5px, width 8 is 36.
- * Very short shafts keep a visible body: the head stops at 42% of the length.
+ * Tip length along the shaft. It depends on the stroke width only: 6px plus 2.5px per
+ * stroke-px (width 2 → 11px, width 4 → 16px, width 8 → 26px), the same for any arrow length.
+ * Only a very short shaft shrinks it, so a body stays visible: the head is at most 40% of it.
+ * `len` is the shaft's length along the path. Must match export.rs `arrow_reach`.
  */
 export function arrowReach(len: number, width: number): number {
+  const ideal = Math.max(8, 6 + width * 2.5);
   if (!(len > 1)) return Math.max(3, width * 1.6);
-  const ideal = Math.max(14, 13 + width * 1.8, width * 3.6);
-  return Math.min(ideal, len * 0.36);
+  return Math.min(ideal, len * 0.4);
+}
+
+/** Length along a polyline. */
+export function pathLength(pts: Pt[]): number {
+  let n = 0;
+  for (let i = 1; i < pts.length; i++) n += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  return n;
 }
 
 function unit(from: Pt, to: Pt): { ux: number; uy: number; len: number } {
@@ -78,15 +86,23 @@ function trimEnd(pts: Pt[], dist: number): Pt[] {
   return out.length >= 2 ? out : pts.slice(0, 2);
 }
 
-/** Point far enough back that the head follows the line, not the last twitch. */
-function aimBack(line: Pt[], endIndex: number): Pt {
-  const end = line[endIndex];
-  const span = Math.hypot(end[0] - line[0][0], end[1] - line[0][1]) || 1;
-  const need = Math.max(28, Math.min(80, span * 0.18));
-  let walked = 0;
-  for (let i = endIndex - 1; i >= 0; i--) {
-    walked += Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
-    if (walked >= need) return line[i];
+/**
+ * The point on the line `need` px (straight distance) back from its end. The head points from
+ * there to the end: the end tangent over the stretch the head covers, so it lies along the last
+ * bit of the line instead of the start→end direction. Must match export.rs `aim_back`.
+ */
+export function aimBack(line: Pt[], need: number): Pt {
+  const end = line[line.length - 1];
+  for (let i = line.length - 2; i >= 0; i--) {
+    const p = line[i];
+    const d = Math.hypot(p[0] - end[0], p[1] - end[1]);
+    if (d >= need) {
+      // Interpolate on the segment p → next so the distance is exactly `need`.
+      const q = line[i + 1];
+      const dq = Math.hypot(q[0] - end[0], q[1] - end[1]);
+      const t = d - dq > 1e-6 ? (need - dq) / (d - dq) : 1;
+      return [q[0] + (p[0] - q[0]) * t, q[1] + (p[1] - q[1]) * t];
+    }
   }
   return line[0];
 }
@@ -131,7 +147,7 @@ export function arrowHeadPoints(from: Pt, to: Pt, width: number, kind: ArrowHead
   if (kind === "drawn") {
     // along 0 sits on the endpoint; negative runs back toward the tail. side is perpendicular.
     const sketch: Array<[number, number]> = [
-      [-0.05, 0.09],
+      [0, 0.07],
       [-0.37, 0.31],
       [-0.65, 0.5],
       [-0.92, 0.58],
@@ -145,17 +161,19 @@ export function arrowHeadPoints(from: Pt, to: Pt, width: number, kind: ArrowHead
       [-0.8, -0.42],
       [-0.53, -0.34],
       [-0.18, -0.19],
-      [-0.01, -0.05],
+      [0, -0.04],
     ];
     const s = to[0] * 12.3 + to[1] * 4.7 + from[0] * 0.3 + from[1];
+    const last = sketch.length - 1;
     return sketch.map(([along, side], i) => {
-      const ja = (wobble(s + i * 2.2) - 0.5) * 0.08;
+      // The nose stays on the line end; the rest wobbles a little.
+      const ja = i === 0 || i === last ? 0 : (wobble(s + i * 2.2) - 0.5) * 0.08;
       const js = (wobble(s + i * 2.2 + 9.1) - 0.5) * 0.08;
-      return at(along + ja, (side + js) * 0.55);
+      return at(Math.min(0, along + ja), (side + js) * 0.6);
     });
   }
-  // Slim tips: a narrow head reads lighter than the old wide one at every size.
-  const wing = reach * (kind === "open" ? 0.36 : 0.32);
+  // The point sits exactly on the line end. Must match export.rs `arrow_head`.
+  const wing = reach * (kind === "open" ? 0.42 : 0.36);
   const baseX = to[0] - ux * reach;
   const baseY = to[1] - uy * reach;
   return [to, [baseX + px * wing, baseY + py * wing], [baseX - px * wing, baseY - py * wing]];
@@ -169,6 +187,24 @@ export type ArrowDraw = {
   headOpen: [Pt, Pt][] | null;
 };
 
+/** Where the head sits on a line: the end, the point it aims from, and the shaft length. */
+export function arrowHeadPlace(line: Pt[], width: number): { end: Pt; from: Pt; span: number } {
+  const end = line[line.length - 1];
+  const span = pathLength(line);
+  const reach = arrowReach(span, width);
+  let from = aimBack(line, Math.max(3, reach));
+  if (Math.hypot(end[0] - from[0], end[1] - from[1]) < 1e-3) from = line[0];
+  return { end, from, span };
+}
+
+/** The head polygon of an arrow item, as drawn (frame and hit box use it too). */
+export function arrowHeadOf(it: { tail: Pt; head: Pt; c1: Pt; c2: Pt; shaft?: Pt[]; width: number; head_style?: string }): Pt[] {
+  const kind = arrowHeadKind(it.head_style);
+  if (kind === "none") return [];
+  const { end, from, span } = arrowHeadPlace(arrowCenterline(it), it.width);
+  return arrowHeadPoints(from, end, it.width, kind, span);
+}
+
 export function arrowDraw(it: {
   tail: Pt;
   head: Pt;
@@ -181,9 +217,7 @@ export function arrowDraw(it: {
 }): ArrowDraw {
   const kind = arrowHeadKind(it.head_style);
   const line = arrowCenterline(it);
-  const end = line[line.length - 1];
-  const prev = aimBack(line, line.length - 1);
-  const span = Math.hypot(end[0] - line[0][0], end[1] - line[0][1]) || Math.hypot(end[0] - prev[0], end[1] - prev[1]);
+  const { end, from: prev, span } = arrowHeadPlace(line, it.width);
   const reach = kind === "none" ? 0 : arrowReach(span, it.width);
   const body = trimEnd(line, kind === "open" ? reach * 0.2 : reach * 0.62);
   const gap = Math.max(it.width * 1.05, 2.6);

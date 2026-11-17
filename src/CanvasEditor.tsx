@@ -66,7 +66,7 @@ import { messages } from "./copy/messages";
 import { IcExpand } from "./icons";
 import { installTextClipboard } from "./textClipboard";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { arrowHeadKind, arrowHeadPoints, scaleDrawing, shaftIsStraight, smoothFreeShaft, type Pt } from "./drawGeom";
+import { arrowHeadOf, arrowHeadPoints, scaleDrawing, shaftIsStraight, smoothFreeShaft, type Pt } from "./drawGeom";
 
 /** How long a lifted pen still counts as "in use" for palm rejection. */
 const PEN_PALM_MS = 500;
@@ -358,13 +358,9 @@ export function HlBounds({ pts, width }: { pts: [number, number][]; width: numbe
 /** Tip vertices in item space, so the frame and the hit box cover the drawn head. */
 function arrowTipExtents(it: Extract<DrawingItem, { kind: "arrow" }>): Pt[] {
   const line = it.shaft && it.shaft.length >= 2 ? it.shaft : [it.tail, it.head];
-  const from = it.shaft && it.shaft.length > 1 ? it.shaft[it.shaft.length - 2] : it.c2;
-  const to = it.shaft && it.shaft.length ? it.shaft[it.shaft.length - 1] : it.head;
-  const span = Math.hypot(to[0] - line[0][0], to[1] - line[0][1]);
+  const span = Math.hypot(line[line.length - 1][0] - line[0][0], line[line.length - 1][1] - line[0][1]);
   const pts: Pt[] = [];
-  if ((it.head_style ?? "arrow") !== "none") {
-    pts.push(...arrowHeadPoints(from, to, it.width, arrowHeadKind(it.head_style), span));
-  }
+  if ((it.head_style ?? "arrow") !== "none") pts.push(...arrowHeadOf(it));
   if (it.tail_style === "arrow") pts.push(...arrowHeadPoints(it.c1, it.tail, it.width, "full", span));
   return pts;
 }

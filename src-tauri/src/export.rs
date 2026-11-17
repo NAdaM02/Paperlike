@@ -2796,15 +2796,14 @@ fn draw_drawing(
             let double = body.as_deref() == Some("double");
             // Each line of a ⇒ body is half the stroke. The tip below uses the original width.
             layer.set_outline_thickness(thickness(if double { (*width * 0.5).max(0.6) } else { *width }));
-            let chord = if shaft.len() >= 2 {
-                let p0 = abs(&shaft[0]);
-                let p1 = abs(shaft.last().unwrap_or(head));
-                let (dx, dy) = (p1[0] - p0[0], p1[1] - p0[1]);
-                (dx * dx + dy * dy).sqrt()
+            // The centerline the head sits on: the free shaft, or the bezier sampled like
+            // frontend `cubicPoints`. Its length (not the chord) sizes a very short arrow's head.
+            let line: Vec<[f64; 2]> = if shaft.len() >= 2 {
+                shaft.iter().map(|p| abs(p)).collect()
             } else {
-                let (dx, dy) = (h[0] - t[0], h[1] - t[1]);
-                (dx * dx + dy * dy).sqrt()
+                cubic_points(t, a, b, h, 28)
             };
+            let chord = path_length(&line);
             let reach = if head_style == "none" { 0.0 } else { arrow_reach(chord, *width) };
             let trim = if head_style == "open" { reach * 0.2 } else { reach * 0.62 };
             if shaft.len() >= 2 {
@@ -2864,13 +2863,9 @@ fn draw_drawing(
                 h
             };
             if head_style != "none" {
-                let from = if shaft.len() >= 2 {
-                    let pts: Vec<[f64; 2]> = shaft.iter().map(|p| abs(p)).collect();
-                    let back = aim_back(&pts);
-                    directed_from(back, tip, pts[0])
-                } else {
-                    aim_along_tangent(b, h, t, chord)
-                };
+                // Aim along the last stretch of the line (as long as the head), tip on the end.
+                let back = aim_back(&line, arrow_reach(chord, *width).max(3.0));
+                let from = directed_from(back, tip, line[0]);
                 arrow_head(layer, map, from, tip, *width, head_style, chord);
             }
             if tail_style != "none" {
@@ -2880,13 +2875,33 @@ fn draw_drawing(
     }
 }
 
-/// Same reach as frontend `arrowReach`. Width 2 ≈ 22.5px, width 8 = 4.5× the stroke.
+/// Same reach as frontend `arrowReach`: 6px + 2.5px per stroke-px, whatever the length;
+/// only a very short shaft (head over 40% of it) shrinks it.
 fn arrow_reach(len: f64, width: f64) -> f64 {
     if !(len > 1.0) {
         return (width * 1.6).max(3.0);
     }
-    let ideal = (18.0_f64).max(18.0 + width * 2.25).max(width * 4.5);
-    ideal.min(len * 0.42)
+    let ideal = (8.0_f64).max(6.0 + width * 2.5);
+    ideal.min(len * 0.4)
+}
+
+fn path_length(pts: &[[f64; 2]]) -> f64 {
+    pts.windows(2).map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt()).sum()
+}
+
+/// Matches frontend `cubicPoints`.
+fn cubic_points(p0: [f64; 2], c1: [f64; 2], c2: [f64; 2], p1: [f64; 2], steps: usize) -> Vec<[f64; 2]> {
+    (0..=steps)
+        .map(|i| {
+            let u = i as f64 / steps as f64;
+            let m = 1.0 - u;
+            let (b0, b1, b2, b3) = (m * m * m, 3.0 * m * m * u, 3.0 * m * u * u, u * u * u);
+            [
+                b0 * p0[0] + b1 * c1[0] + b2 * c2[0] + b3 * p1[0],
+                b0 * p0[1] + b1 * c1[1] + b2 * c2[1] + b3 * p1[1],
+            ]
+        })
+        .collect()
 }
 
 /// Stable 0..1 wobble. Matches frontend `wobble` (floor, not Rust `fract`, so negatives stay in range).
@@ -2936,57 +2951,26 @@ fn pull_back(anchor: [f64; 2], end: [f64; 2], dist: f64) -> [f64; 2] {
     [anchor[0] + dx * t, anchor[1] + dy * t]
 }
 
-/// Look-back for a head. max(28px, min(80px, 18% of the shaft chord)).
-/// A zero chord uses 1px, same as frontend `aimBack`, and still floors at 28.
-fn arrow_aim_dist(chord: f64) -> f64 {
-    let span = if chord > 0.0 { chord } else { 1.0 };
-    (span * 0.18).min(80.0).max(28.0)
-}
-
-/// Vertex where the path from the tip has covered [`arrow_aim_dist`].
-/// Matches frontend `aimBack`. A shorter shaft returns its first point.
-fn aim_back(pts: &[[f64; 2]]) -> [f64; 2] {
+/// The point `need` px (straight distance) back from the line's end, interpolated.
+/// Matches frontend `aimBack`. A shorter line returns its first point.
+fn aim_back(pts: &[[f64; 2]], need: f64) -> [f64; 2] {
     let n = pts.len();
     if n == 0 {
         return [0.0, 0.0];
     }
-    if n == 1 {
-        return pts[0];
-    }
     let end = pts[n - 1];
-    let start = pts[0];
-    let dx = end[0] - start[0];
-    let dy = end[1] - start[1];
-    let need = arrow_aim_dist((dx * dx + dy * dy).sqrt());
-    let mut walked = 0.0;
-    for i in (0..n - 1).rev() {
-        let a = pts[i];
-        let b = pts[i + 1];
-        let sx = b[0] - a[0];
-        let sy = b[1] - a[1];
-        walked += (sx * sx + sy * sy).sqrt();
-        if walked >= need {
-            return a;
+    let dist = |p: [f64; 2]| ((p[0] - end[0]).powi(2) + (p[1] - end[1]).powi(2)).sqrt();
+    for i in (0..n.saturating_sub(1)).rev() {
+        let p = pts[i];
+        let d = dist(p);
+        if d >= need {
+            let q = pts[i + 1];
+            let dq = dist(q);
+            let t = if d - dq > 1e-6 { (need - dq) / (d - dq) } else { 1.0 };
+            return [q[0] + (p[0] - q[0]) * t, q[1] + (p[1] - q[1]) * t];
         }
     }
     pts[0]
-}
-
-/// `from` for a bezier head: `need` back from `head` toward `c2`, staying on that segment.
-/// A shaft shorter than 28px, or a vanishing tangent, uses `start` (the tail).
-fn aim_along_tangent(c2: [f64; 2], head: [f64; 2], start: [f64; 2], chord: f64) -> [f64; 2] {
-    if chord < 28.0 {
-        return start;
-    }
-    let dx = head[0] - c2[0];
-    let dy = head[1] - c2[1];
-    let len = (dx * dx + dy * dy).sqrt();
-    if len < 0.001 {
-        return start;
-    }
-    let d = arrow_aim_dist(chord).min(len);
-    let t = d / len;
-    directed_from([head[0] - dx * t, head[1] - dy * t], head, start)
 }
 
 /// Keep a real direction. A look-back that landed on the tip falls back to `start`.
@@ -3026,7 +3010,7 @@ fn arrow_head(
     let poly: Vec<[f64; 2]> = if style == "drawn" {
         // Blunt nose, long barb / short barb, concave notch. Same fractions as drawGeom.ts.
         const SKETCH: [(f64, f64); 15] = [
-            (-0.05, 0.09),
+            (0.0, 0.07),
             (-0.37, 0.31),
             (-0.65, 0.50),
             (-0.92, 0.58),
@@ -3040,22 +3024,23 @@ fn arrow_head(
             (-0.80, -0.42),
             (-0.53, -0.34),
             (-0.18, -0.19),
-            (-0.01, -0.05),
+            (0.0, -0.04),
         ];
         let s = tip[0] * 12.3 + tip[1] * 4.7 + from[0] * 0.3 + from[1];
         SKETCH
             .iter()
             .enumerate()
             .map(|(i, (along, side))| {
+                let nose = i == 0 || i == SKETCH.len() - 1;
                 let i = i as f64;
-                let ja = (wobble(s + i * 2.2) - 0.5) * 0.08;
+                // The nose stays on the line end; the rest wobbles a little.
+                let ja = if nose { 0.0 } else { (wobble(s + i * 2.2) - 0.5) * 0.08 };
                 let js = (wobble(s + i * 2.2 + 9.1) - 0.5) * 0.08;
-                // Drawn tips only: narrow the perpendicular sketch. Along-shaft length stays.
-                at(along + ja, (side + js) * 0.7)
+                at((along + ja).min(0.0), (side + js) * 0.6)
             })
             .collect()
     } else {
-        let wing = reach * if style == "open" { 0.48 } else { 0.44 };
+        let wing = reach * if style == "open" { 0.42 } else { 0.36 };
         let base = at(-1.0, 0.0);
         vec![tip, [base[0] + px * wing, base[1] + py * wing], [base[0] - px * wing, base[1] - py * wing]]
     };
