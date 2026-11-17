@@ -223,6 +223,225 @@ function loopSides(pts: Pt[], corners: number[], len: number): { closed: boolean
   return null;
 }
 
+const DEG = Math.PI / 180;
+
+/** A unit direction, turned onto the nearest axis when it is within `maxDeg` of it. */
+function snapAxis(ux: number, uy: number, maxDeg: number): Pt {
+  const a = Math.atan2(uy, ux);
+  const q = Math.round(a / (Math.PI / 2)) * (Math.PI / 2);
+  if (Math.abs(angDiff(a, q)) <= maxDeg * DEG) return [Math.round(Math.cos(q)), Math.round(Math.sin(q))];
+  return [ux, uy];
+}
+
+/** Straight runs between the vertices, sampled every `step` px; every vertex is kept exactly. */
+function sampleLine(vs: Pt[], step = 3): Pt[] {
+  const out: Pt[] = [[vs[0][0], vs[0][1]]];
+  for (let k = 1; k < vs.length; k++) {
+    const a = vs[k - 1];
+    const b = vs[k];
+    const n = Math.max(1, Math.round(dist(a, b) / step));
+    for (let i = 1; i <= n; i++) out.push([a[0] + ((b[0] - a[0]) * i) / n, a[1] + ((b[1] - a[1]) * i) / n]);
+  }
+  return out;
+}
+
+/**
+ * A square bracket, [ or ] (in any orientation): two short arms off the ends of one long straight
+ * spine, both on the same side, tips level. The ink must actually run along the spine and into
+ * both corners, so a parenthesis (which only touches the spine in the middle and never reaches
+ * the corners) or a rounded letter is left alone. Returns the clean bracket: a straight spine
+ * (snapped to the axis within 10°), square corners and equal arms.
+ */
+function squareBracket(pts: Pt[]): Pt[] | null {
+  const n = pts.length;
+  if (n < 8) return null;
+  const a = pts[0];
+  const b = pts[n - 1];
+  const chord = dist(a, b);
+  if (chord < 14) return null;
+  // Frame: along the spine (s) and across it (t). Start from the chord between the tips, then
+  // re-aim along the ink on the far side, so uneven arms or a slant do not tilt the spine.
+  let ux = (b[0] - a[0]) / chord;
+  let uy = (b[1] - a[1]) / chord;
+  for (let pass = 0; pass < 2; pass++) {
+    const tAt = (p: Pt) => (p[0] - a[0]) * -uy + (p[1] - a[1]) * ux;
+    const ts0 = pts.map(tAt);
+    const tip = (ts0[0] + ts0[n - 1]) / 2;
+    const lo = Math.min(...ts0);
+    const hi = Math.max(...ts0);
+    const farT = hi - tip >= tip - lo ? hi : lo;
+    const depth = Math.abs(farT - tip);
+    const spine = pts.filter((_, i) => Math.abs(ts0[i] - farT) <= Math.max(2, depth * 0.35));
+    if (spine.length < 6) return null;
+    const l = fitLine(spine);
+    const sgn = l.u[0] * ux + l.u[1] * uy >= 0 ? 1 : -1;
+    ux = l.u[0] * sgn;
+    uy = l.u[1] * sgn;
+  }
+  const nx = -uy;
+  const ny = ux;
+  const S = pts.map((p) => (p[0] - a[0]) * ux + (p[1] - a[1]) * uy);
+  const T = pts.map((p) => (p[0] - a[0]) * nx + (p[1] - a[1]) * ny);
+  const sA = S[0];
+  const sB = S[n - 1];
+  const H = sB - sA;
+  if (H < 14) return null;
+  const t0 = T[0];
+  const t1 = T[n - 1];
+  const tt = (t0 + t1) / 2;
+  let tMin = Infinity;
+  let tMax = -Infinity;
+  let sMin = Infinity;
+  let sMax = -Infinity;
+  for (let i = 0; i < n; i++) {
+    tMin = Math.min(tMin, T[i]);
+    tMax = Math.max(tMax, T[i]);
+    sMin = Math.min(sMin, S[i]);
+    sMax = Math.max(sMax, S[i]);
+  }
+  // The spine is on the side away from the tips.
+  const side = tMax - tt >= tt - tMin ? 1 : -1;
+  const far = side > 0 ? tMax : tMin;
+  const tol = Math.max(2.2, 0.06 * H, 0.12 * Math.abs(far - tt));
+  const near = T.filter((t) => Math.abs(t - far) <= tol).sort((x, y) => x - y);
+  const ts = near[near.length >> 1];
+  const d = Math.abs(ts - tt);
+  // Matrix brackets are tall and shallow; a squared C or U is not one.
+  if (d < 4 || d > 0.45 * H) return null;
+  // Nothing past the tips or beyond the two ends, and the tips are level.
+  if ((side > 0 ? tt - tMin : tMax - tt) > tol + Math.abs(t0 - t1) / 2) return null;
+  if (sMin < sA - tol || sMax > sB + tol) return null;
+  if (Math.abs(t0 - t1) > Math.max(tol, 0.5 * d)) return null;
+  const len = pathLen(pts);
+  if (len > (H + 2 * d) * 1.4 || len < (H + 2 * d) * 0.8) return null;
+  const bins = new Array<boolean>(20).fill(false);
+  let reachA = Infinity;
+  let reachB = Infinity;
+  for (let i = 0; i < n; i++) {
+    const s = S[i];
+    const t = T[i];
+    // 0 on the spine, d at the tips.
+    const along = (ts - t) * side;
+    const offArm = Math.max(0, -along, along - d);
+    const toSpine = Math.abs(t - ts) + Math.max(0, sA - s, s - sB);
+    const toA = Math.abs(s - sA) + offArm;
+    const toB = Math.abs(s - sB) + offArm;
+    if (Math.min(toSpine, toA, toB) > tol * 1.25) return null;
+    if (Math.abs(t - ts) <= tol) bins[Math.max(0, Math.min(19, Math.floor(((s - sA) / H) * 20)))] = true;
+    if (Math.abs(s - sA) <= tol) reachA = Math.min(reachA, along);
+    if (Math.abs(s - sB) <= tol) reachB = Math.min(reachB, along);
+  }
+  // The spine is inked end to end, and each arm comes all the way into its corner.
+  if (bins.filter(Boolean).length < 17) return null;
+  if (reachA > 0.3 * d || reachB > 0.3 * d) return null;
+  // Clean bracket in an upright frame: a spine within 10° of an axis is set on it, turned about
+  // its middle.
+  const [vx, vy] = snapAxis(ux, uy, 10);
+  const mid: Pt = [a[0] + ux * ((sA + sB) / 2) + nx * ts, a[1] + uy * ((sA + sB) / 2) + ny * ts];
+  const at = (s: number, t: number): Pt => {
+    const ds = s - (sA + sB) / 2;
+    const dt = t - ts;
+    return [mid[0] + vx * ds - vy * dt, mid[1] + vy * ds + vx * dt];
+  };
+  return sampleLine([at(sA, tt), at(sA, ts), at(sB, ts), at(sB, tt)]);
+}
+
+type Line = { p: Pt; u: Pt };
+
+/** Best line through a side (its middle, so rounded corners do not tilt it), aimed along the side. */
+function fitLine(seg: Pt[]): Line {
+  const k = Math.floor(seg.length * 0.15);
+  const mid = seg.length - 2 * k >= 3 ? seg.slice(k, seg.length - k) : seg;
+  let mx = 0;
+  let my = 0;
+  for (const p of mid) {
+    mx += p[0];
+    my += p[1];
+  }
+  mx /= mid.length;
+  my /= mid.length;
+  let sxx = 0;
+  let sxy = 0;
+  let syy = 0;
+  for (const p of mid) {
+    const dx = p[0] - mx;
+    const dy = p[1] - my;
+    sxx += dx * dx;
+    sxy += dx * dy;
+    syy += dy * dy;
+  }
+  const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  let u: Pt = [Math.cos(ang), Math.sin(ang)];
+  const a = seg[0];
+  const b = seg[seg.length - 1];
+  if ((b[0] - a[0]) * u[0] + (b[1] - a[1]) * u[1] < 0) u = [-u[0], -u[1]];
+  return { p: [mx, my], u };
+}
+
+function intersect(a: Line, b: Line): Pt | null {
+  const cross = a.u[0] * b.u[1] - a.u[1] * b.u[0];
+  if (Math.abs(cross) < Math.sin(12 * DEG)) return null;
+  const t = ((b.p[0] - a.p[0]) * b.u[1] - (b.p[1] - a.p[1]) * b.u[0]) / cross;
+  return [a.p[0] + a.u[0] * t, a.p[1] + a.u[1] * t];
+}
+
+function project(p: Pt, l: Line): Pt {
+  const t = (p[0] - l.p[0]) * l.u[0] + (p[1] - l.p[1]) * l.u[1];
+  return [l.p[0] + l.u[0] * t, l.p[1] + l.u[1] * t];
+}
+
+/** Sides within 7° of an axis go onto it; a corner within 8° of square becomes square. */
+function snapLines(lines: Line[], closed: boolean): Line[] {
+  const out = lines.map((l) => ({ p: l.p, u: snapAxis(l.u[0], l.u[1], 7) }));
+  const steps = closed ? out.length : out.length - 1;
+  for (let i = 1; i <= steps; i++) {
+    if (closed && i === out.length) break; // the first side stays as fitted
+    const prev = out[i - 1];
+    const cur = out[i];
+    const turn = angDiff(Math.atan2(prev.u[1], prev.u[0]), Math.atan2(cur.u[1], cur.u[0]));
+    if (Math.abs(Math.abs(turn) - Math.PI / 2) <= 8 * DEG) {
+      const sgn = turn > 0 ? 1 : -1;
+      cur.u = [-prev.u[1] * sgn, prev.u[0] * sgn];
+    }
+  }
+  return out;
+}
+
+/**
+ * Straight sides with exact corners: each side's fitted line, snapped, meets the next one.
+ * Null when a corner would land far from where the pen turned (then the caller keeps its
+ * gentler straightening).
+ */
+function exactPolyline(sides: Pt[][], closed: boolean): Pt[] | null {
+  const m = sides.length;
+  if (m < 2 || sides.some((s) => s.length < 2)) return null;
+  const lines = snapLines(sides.map(fitLine), closed);
+  const verts: Pt[] = [];
+  if (closed) {
+    for (let i = 0; i < m; i++) {
+      const v = intersect(lines[(i - 1 + m) % m], lines[i]);
+      if (!v) return null;
+      verts.push(v);
+    }
+  } else {
+    verts.push(project(sides[0][0], lines[0]));
+    for (let i = 1; i < m; i++) {
+      const v = intersect(lines[i - 1], lines[i]);
+      if (!v) return null;
+      verts.push(v);
+    }
+    const last = sides[m - 1];
+    verts.push(project(last[last.length - 1], lines[m - 1]));
+  }
+  for (let i = closed ? 0 : 1; i < m; i++) {
+    const before = pathLen(sides[(i - 1 + m) % m]);
+    const after = pathLen(sides[i]);
+    if (dist(verts[i], sides[i][0]) > Math.max(10, 0.3 * Math.min(before, after))) return null;
+  }
+  if (closed) verts.push([verts[0][0], verts[0][1]]);
+  return sampleLine(verts);
+}
+
 /**
  * Closed triangle or rectangle: keep every corner and pull each side toward
  * its chord. The side that crosses where the pen started is one side, not two.
@@ -241,6 +460,11 @@ function straightenPolygon(pts: Pt[], corners: number[], len: number): Pt[] | nu
     for (const seg of loop.sides) {
       if (seg.length >= 4 && pathLen(seg) > 28 && deviationFromChord(seg) > 0.42) return null;
     }
+    // Clearly straight sides become exact lines with square corners where they are nearly square.
+    if (loop.sides.every((seg) => deviationFromChord(seg) < 0.12)) {
+      const exact = exactPolyline(loop.sides, true);
+      if (exact) return exact;
+    }
     const out: Pt[] = [];
     for (const seg of loop.sides) {
       if (seg.length < 2) continue;
@@ -254,6 +478,13 @@ function straightenPolygon(pts: Pt[], corners: number[], len: number): Pt[] | nu
   let straightish = 0;
   for (const seg of loop.sides) {
     if (deviationFromChord(seg) < 0.38) straightish += 1;
+  }
+  if (
+    loop.sides.length === loop.interior.length + 1 &&
+    loop.sides.every((seg) => deviationFromChord(seg) < 0.1)
+  ) {
+    const exact = exactPolyline(loop.sides, false);
+    if (exact) return exact;
   }
   if (loop.sides.length >= 2 && straightish >= Math.ceil(loop.sides.length * 0.6)) return tidy(pts, loop.interior, true);
   return null;
@@ -465,13 +696,18 @@ function pullTowardArc(pts: Pt[], amount: number): Pt[] {
   const a1 = Math.atan2(b[1] - circle.cy, b[0] - circle.cx);
   const sweep = sweepThrough(a0, am, a1);
   const n = pts.length - 1;
-  return pts.map((p, i) => {
+  const out = pts.map((p, i) => {
     if (i === 0 || i === n) return [p[0], p[1]] as Pt;
     const ang = a0 + sweep * (i / n);
     const x = circle.cx + circle.r * Math.cos(ang);
     const y = circle.cy + circle.r * Math.sin(ang);
-    return [p[0] + (x - p[0]) * amount, p[1] + (y - p[1]) * amount];
+    return [p[0] + (x - p[0]) * amount, p[1] + (y - p[1]) * amount] as Pt;
   });
+  // The arc must stay on the ink. A sweep taken the long way round (a doubled-back stroke such
+  // as an arrow's barb) drew a big loop that was never there: keep the stroke instead.
+  const reach = Math.max(6, Math.sqrt(len2) * 0.35);
+  if (out.some((p, i) => dist(p, pts[i]) > reach)) return smoothOnce(pts);
+  return out;
 }
 
 function pullTowardEllipse(pts: Pt[], amount: number): Pt[] {
@@ -535,6 +771,12 @@ export function refineSmartStroke(pts: Pt[], times?: number[]): SmartInk {
   const len = pathLen(pts);
   if (len < 10) return { kind: "stroke", points: pts };
   const even = resample(pts, 3.2);
+  // [ and ] (matrices) first: checked on its own, since short arms are easy to miss as corners
+  // and the shake on a small one can read as writing. The test is strict (the ink has to follow
+  // the bracket into both corners), so letters and parentheses fall through. Sampled every 1px (not
+  // `even`): small brackets have arms of only a few px.
+  const bracket = squareBracket(resample(pts, 1));
+  if (bracket) return { kind: "stroke", points: bracket };
   const ink = smoothOnce(even);
   if (looksLikeWriting(ink)) return { kind: "stroke", points: smoothOnce(ink) };
   const tangled = revisitsEarlierInk(even);
