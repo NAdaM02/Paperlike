@@ -914,15 +914,6 @@ export default function App() {
     setStudyActions({
       askOpen: !!ask,
       onAskPane: toggleAsk,
-      onQuickAsk: () => {
-        if (premiumOff()) {
-          toast(messages.premiumOff);
-          openLicense();
-          return;
-        }
-        focusQuickField();
-      },
-      onAnalyze: openAnalyze,
       onQuiz: openQuizSetup,
       onBrief: () => openBrief(),
       onReview: () => setQuizResultsOpen(true),

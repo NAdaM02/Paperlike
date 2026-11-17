@@ -12,8 +12,6 @@ export type StudyActions = {
   askOpen: boolean;
   /** Open or close the chat beside the note. */
   onAskPane: () => void;
-  onQuickAsk: () => void;
-  onAnalyze: () => void;
   onQuiz: () => void;
   /** Brief: study sheet, formulas, explain from picked notes. */
   onBrief: () => void;
@@ -35,8 +33,6 @@ function entries(): Entry[] {
   const kept = note?.history.length ?? 0;
   return [
     { id: "ask", key: "A", label: a.askOpen ? "Close the Ask pane" : "Ask in pane", hint: "Chat beside the note, with it attached", run: a.onAskPane },
-    { id: "quick", key: "K", label: "Quick ask", hint: "A short question in a card", run: a.onQuickAsk },
-    { id: "analyze", key: "N", label: "Analyze an area", hint: "Mark part of the page and ask about it", run: a.onAnalyze },
     { id: "quiz", key: "Q", label: "Quiz me…", hint: "Scope, number of cards and question type", run: a.onQuiz },
     { id: "brief", key: "S", label: "Study sheet, formulas, explain…", hint: "From the notes you pick", run: a.onBrief },
     {
@@ -233,7 +229,7 @@ export function StudyMenu() {
       <div className="study-head">
         Study <span className="muted">Ctrl+J</span>
       </div>
-      {group(["ask", "quick", "analyze"])}
+      {group(["ask"])}
       <hr />
       {group(["quiz", "brief", "review"])}
       <hr />
