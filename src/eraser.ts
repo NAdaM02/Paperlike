@@ -493,7 +493,8 @@ export function strokePath(pts: [number, number][]): string {
 
 /** A click with the pen (no movement) becomes a small round dot that also survives PDF export. */
 export function dotPoints(width: number): Pt[] {
-  const r = Math.max(0.6, width * 0.4);
+  // Hairline pens get a matching small dot; 1 and up keep the old minimum.
+  const r = Math.max(width < 1 ? 0.3 : 0.6, width * 0.4);
   return Array.from({ length: 9 }, (_, i) => {
     const a = (i / 8) * Math.PI * 2;
     return [r + r * Math.cos(a), r + r * Math.sin(a)] as Pt;

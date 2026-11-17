@@ -278,7 +278,9 @@ const LOCAL_DATETIME = new Intl.DateTimeFormat(undefined, {
 
 const DRAW_PREFS_KEY = "paperlike-draw-prefs";
 const LAST_TOOL_COLORS_KEY = "pl.tool.lastColors";
-const DRAW_WIDTHS = [1, 2, 4, 8];
+const DRAW_WIDTHS = [0.5, 1, 2, 4, 8];
+/** Button label for a stroke width (0.5 reads as a half). */
+const widthLabel = (w: number) => (w === 0.5 ? "½" : String(w));
 /** null = theme ink (dark on light paper, light on dark paper). */
 const PEN_QUICK_COLORS: (string | null)[] = [null, "#d64545", "#3f7fd6", "#2f9e5a", "#e8853d"];
 
@@ -4032,7 +4034,7 @@ export function NotebookView({
                       className={`btn ${drawWidth === w ? "active" : ""}`}
                       onClick={() => pickDrawWidth(w)}
                     >
-                      {w}
+                      {widthLabel(w)}
                     </button>
                   ))}
                 </div>
@@ -4975,7 +4977,7 @@ export function NotebookView({
                       className={`btn ${(tool === "highlighter" ? drawPrefs.hlWidth : drawWidth) === w ? "active" : ""}`}
                       onClick={() => (tool === "highlighter" ? updateDrawPrefs({ hlWidth: w }) : pickDrawWidth(w))}
                     >
-                      {w}
+                      {widthLabel(w)}
                     </button>
                   ))}
                 </div>
