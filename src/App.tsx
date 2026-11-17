@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { actionsFor, isCapturing, keyChord, mouseChord } from "./controls";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -164,7 +165,7 @@ function titleFromPath(path: string): string {
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"general" | "study" | "drawing" | "files" | "about" | "license">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "study" | "drawing" | "controls" | "files" | "about" | "license">("general");
   const [trialNotice, setTrialNotice] = useState(false);
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [tourForce, setTourForce] = useState(false);
@@ -688,15 +689,18 @@ export default function App() {
         setShortcutsOpen(true);
         return;
       }
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+      // Rebindable app actions (Settings, Controls). In a note, a note action on the same chord wins.
+      if (isCapturing()) return;
+      const chord = keyChord(e);
+      if (document.querySelector(".notebook") && actionsFor(chord, ["note", "canvas"]).length) return;
+      const act = actionsFor(chord, ["app"])[0];
+      if (act === "searchAll") {
         e.preventDefault();
         setSearchOpen(true);
-      }
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "j") {
+      } else if (act === "ask") {
         e.preventDefault();
         toggleAsk();
-      }
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+      } else if (act === "quickAsk") {
         e.preventDefault();
         if (premiumOff()) {
           toast(messages.premiumOff);
@@ -704,13 +708,10 @@ export default function App() {
           return;
         }
         focusQuickField();
-      }
-      // Browser-style Alt+← / Alt+→
-      if (e.altKey && e.key === "ArrowLeft") {
+      } else if (act === "back") {
         e.preventDefault();
         goBack();
-      }
-      if (e.altKey && e.key === "ArrowRight") {
+      } else if (act === "forward") {
         e.preventDefault();
         goForward();
       }
@@ -723,18 +724,24 @@ export default function App() {
     };
   }, [goBack, goForward, toggleAsk]);
 
-  /* Mouse side buttons: 3 = back, 4 = forward (Firefox / Chrome convention). */
+  /* Extra mouse buttons (3 = back, 4 = forward, …): whatever app action they are bound to. */
   useEffect(() => {
     const block = (e: MouseEvent) => {
-      if (e.button === 3 || e.button === 4) e.preventDefault();
+      if (e.button >= 3) e.preventDefault();
     };
     const onUp = (e: MouseEvent) => {
-      if (e.button !== 3 && e.button !== 4) return;
+      const chord = mouseChord(e);
+      if (!chord) return;
       e.preventDefault();
-      // A note uses the thumb buttons for undo and redo.
-      if (document.querySelector(".notebook")) return;
-      if (e.button === 3) goBack();
-      else goForward();
+      if (isCapturing()) return;
+      // In a note, a note action on the same button wins (undo / redo by default).
+      if (document.querySelector(".notebook") && actionsFor(chord, ["note", "canvas"]).length) return;
+      const act = actionsFor(chord, ["app"])[0];
+      if (act === "back") goBack();
+      else if (act === "forward") goForward();
+      else if (act === "searchAll") setSearchOpen(true);
+      else if (act === "ask") toggleAsk();
+      else if (act === "quickAsk" && !premiumOff()) focusQuickField();
     };
     window.addEventListener("mousedown", block, true);
     window.addEventListener("mouseup", onUp, true);
@@ -744,7 +751,7 @@ export default function App() {
       window.removeEventListener("mouseup", onUp, true);
       window.removeEventListener("auxclick", block, true);
     };
-  }, [goBack, goForward]);
+  }, [goBack, goForward, toggleAsk]);
 
   const [homeReload, setHomeReload] = useState(0);
   const refreshTiles = () => {

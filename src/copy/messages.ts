@@ -49,6 +49,12 @@ export const messages = {
   settingsTitle: "Settings",
   settingsTabGeneral: "General",
   settingsTabDrawing: "Drawing",
+  settingsTabControls: "Controls",
+  controlsOverview: "Overview",
+  controlsCustomize: "Customize",
+  controlsOverviewHint: "Everything you can press, as it's set up now. Nothing changes here.",
+  controlsCustomizeHint:
+    "Click + Add, then press a key, a combination or an extra mouse button. Buttons that Logi Options+ maps to a keystroke work too.",
   settingsTabFiles: "Files",
   settingsFiles: "Note files",
   settingsTabAbout: "About",

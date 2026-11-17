@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ControlsEditor, ControlsOverview } from "./ControlsPanel";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { enable as enableAuto, disable as disableAuto } from "@tauri-apps/plugin-autostart";
@@ -54,7 +55,7 @@ type Thread = {
   replies: { body: string; at: number; author?: string }[];
 };
 
-type SettingsTab = "general" | "study" | "drawing" | "files" | "about" | "license";
+type SettingsTab = "general" | "study" | "drawing" | "controls" | "files" | "about" | "license";
 
 const SETTINGS_TAB_CSS = `
 .pl-settings-frame { container-type: inline-size; container-name: pl-settings; min-width: 0; max-width: 100%; }
@@ -97,6 +98,7 @@ export function SettingsDialog({
   const [assocBusy, setAssocBusy] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [studyOpen, setStudyOpen] = useState(false);
+  const [controlsEdit, setControlsEdit] = useState(false);
   const [key, setKey] = useState("");
   const [moveKey, setMoveKey] = useState("");
   const [moveNote, setMoveNote] = useState("");
@@ -166,6 +168,7 @@ export function SettingsDialog({
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: messages.settingsTabGeneral },
     { id: "drawing", label: messages.settingsTabDrawing },
+    { id: "controls", label: messages.settingsTabControls },
     { id: "study", label: messages.settingsStudy },
     { id: "files", label: messages.settingsTabFiles },
     ...(CUSTOMER ? [{ id: "license" as const, label: messages.settingsTabLicense }] : []),
@@ -338,6 +341,20 @@ export function SettingsDialog({
                 ) : (
                   <p className="settings-hint">{messages.moodleTotpNone}</p>
                 )}
+              </section>
+            )}
+            {tab === "controls" && (
+              <section className="settings-section" style={sectionRest}>
+                <div className="seg" role="group" aria-label={messages.settingsTabControls}>
+                  <button type="button" className={`btn ${controlsEdit ? "" : "active"}`} onClick={() => setControlsEdit(false)}>
+                    {messages.controlsOverview}
+                  </button>
+                  <button type="button" className={`btn ${controlsEdit ? "active" : ""}`} onClick={() => setControlsEdit(true)}>
+                    {messages.controlsCustomize}
+                  </button>
+                </div>
+                <p className="settings-hint">{controlsEdit ? messages.controlsCustomizeHint : messages.controlsOverviewHint}</p>
+                {controlsEdit ? <ControlsEditor onToast={onToast} /> : <ControlsOverview />}
               </section>
             )}
             {tab === "drawing" && (

@@ -6151,3 +6151,31 @@ svg.hl .hl-ink {
 body.analyzing .qa-card,
 body.analyzing .qa-marker,
 body.analyzing .analyze-mark { visibility: hidden !important; }
+
+/* Settings, Controls */
+.controls-editor { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.controls-editor .settings-section { gap: 6px; }
+.controls-row { display: flex; align-items: center; gap: 12px; min-height: 30px; }
+.controls-label { flex: 0 0 11em; font-size: 13px; }
+.controls-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.controls-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  background: var(--bg-2);
+  font-size: 11.5px;
+}
+.controls-chip kbd { font: inherit; padding: 2px 4px 2px 7px; color: var(--ink-2); }
+.controls-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  padding: 0 6px 0 2px;
+  font-size: 13px;
+  line-height: 1;
+}
+.controls-chip button:hover { color: var(--danger); }
+.controls-foot { display: flex; justify-content: flex-end; padding-top: 8px; }
+.controls-sheet-hint { margin-top: 14px; }

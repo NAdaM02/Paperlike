@@ -1,4 +1,5 @@
 import { ReactNode, RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { actionsFor, ActionId, isCapturing, keyChord, mouseChord } from "./controls";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -383,17 +384,18 @@ function loadTextPrefs(): TextPrefs {
   }
 }
 
-const TOOL_KEYS: Record<string, Tool> = {
-  v: "select",
-  s: "lasso",
-  p: "pen",
-  h: "highlighter",
-  g: "smart",
-  e: "eraser",
-  r: "rect",
-  o: "ellipse",
-  l: "line",
-  a: "arrow",
+/** Rebindable tool actions (see controls.ts) and the tool each one picks. */
+const TOOL_ACTIONS: Partial<Record<ActionId, Tool>> = {
+  "tool.select": "select",
+  "tool.lasso": "lasso",
+  "tool.pen": "pen",
+  "tool.highlighter": "highlighter",
+  "tool.smart": "smart",
+  "tool.eraser": "eraser",
+  "tool.rect": "rect",
+  "tool.ellipse": "ellipse",
+  "tool.line": "line",
+  "tool.arrow": "arrow",
 };
 
 /**
@@ -1404,31 +1406,16 @@ export function NotebookView({
       return !!ae?.isContentEditable && !!ae.closest(".canvas-wrap");
     };
     const onKey = (e: KeyboardEvent) => {
-      const k = e.key.toLowerCase();
-      if (expiredRef.current && (k === "s" || k === "z" || k === "y" || k === "n") && e.ctrlKey) {
+      if (isCapturing()) return;
+      const chord = keyChord(e);
+      const act = actionsFor(chord, ["note"])[0];
+      if (act) {
+        if (act === "rename" && !noteRef.current) return;
         e.preventDefault();
+        noteActionRef.current(act);
         return;
       }
-      if (e.ctrlKey && k === "s") {
-        e.preventDefault();
-        save();
-      } else if (e.ctrlKey && !e.shiftKey && k === "z") {
-        e.preventDefault();
-        undo();
-      } else if ((e.ctrlKey && k === "y") || (e.ctrlKey && e.shiftKey && k === "z")) {
-        e.preventDefault();
-        redo();
-      } else if (e.ctrlKey && !e.shiftKey && k === "f") {
-        e.preventDefault();
-        setFindOpen(true);
-        setTimeout(() => document.querySelector<HTMLInputElement>(".find-bar input")?.focus(), 40);
-      } else if (e.ctrlKey && k === "n" && mode === "notebook") {
-        e.preventDefault();
-        createNote();
-      } else if (e.ctrlKey && k === "m") {
-        e.preventDefault();
-        mathInsertRef.current();
-      } else if (e.ctrlKey && !e.altKey && (e.key === "-" || e.code === "Minus") && inNoteText()) {
+      if (e.ctrlKey && !e.altKey && (e.key === "-" || e.code === "Minus") && inNoteText()) {
         e.preventDefault();
         execRef.current("strikeThrough");
       } else if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "=" || e.code === "Equal") && inNoteText()) {
@@ -1440,13 +1427,6 @@ export function NotebookView({
       } else if (e.ctrlKey && e.key === " " && inNoteText()) {
         e.preventDefault();
         execRef.current("removeFormat");
-      } else if (e.key === "F2") {
-        const n = noteRef.current;
-        if (n) {
-          e.preventDefault();
-          setRenaming(n.path);
-          setRenameDraft(n.display_title);
-        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1456,12 +1436,14 @@ export function NotebookView({
 
   /* Thumb buttons: bottom = undo, top = redo. Only this view (a note) is mounted. */
   useEffect(() => {
+    // Extra mouse buttons run whatever note action they are bound to (Settings, Controls).
     const run = (e: MouseEvent) => {
-      if (e.button !== 3 && e.button !== 4) return;
+      if (isCapturing()) return;
+      const act = actionsFor(mouseChord(e), ["note", "canvas"])[0];
+      if (!act) return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.button === 3) undo();
-      else redo();
+      noteActionRef.current(act);
     };
     const swallow = (e: Event) => {
       const b = (e as MouseEvent).button;
@@ -1485,23 +1467,78 @@ export function NotebookView({
     };
   }, [undo, redo]);
 
-  /* Single-key draw tools (Excalidraw-style) — only while not typing anywhere. */
+  /* Draw tool keys (Excalidraw-style single letters by default, rebindable in Settings,
+   * Controls). A key that types text only counts while not typing anywhere. */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.defaultPrevented) return;
+      // Ctrl/Alt/Win chords and keys like F13 (mouse buttons mapped in Logi Options+) never type text.
+      const types = !e.ctrlKey && !e.altKey && !e.metaKey && (e.key.length === 1 || e.key === "Escape");
       const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.isContentEditable || ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
+      if (types && ae && (ae.isContentEditable || ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
       if (document.querySelector(".modal-backdrop, .math-pop")) return;
-      const k = e.key.toLowerCase();
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && types) {
         if (tool !== "select") setTool("select");
         return;
       }
-      if (k === "[" || k === "]") {
-        e.preventDefault();
+      const act = actionsFor(keyChord(e), ["canvas"])[0];
+      if (!act || !noteRef.current) return;
+      if (TOOL_ACTIONS[act] && types) {
+        // Letters belong to text whenever anything is selected or focus is outside the bare canvas.
+        if (canvasSelRef.current.length) return;
+        if (ae && ae !== document.body && !ae.classList.contains("canvas-wrap")) return;
+      }
+      e.preventDefault();
+      noteActionRef.current(act);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tool]);
+
+  /** Runs a rebindable note action (keyboard or mouse button). Rebuilt every render, so state is fresh. */
+  const noteActionRef = useRef<(id: ActionId) => void>(() => {});
+  noteActionRef.current = (id: ActionId) => {
+    if (expiredRef.current && (id === "save" || id === "undo" || id === "redo" || id === "newNote")) return;
+    const t = TOOL_ACTIONS[id];
+    if (t) {
+      setTool(t);
+      if (t !== "select") setOpenRibbons((prev) => (prev.has("Draw") ? prev : new Set<Ribbon>(["Draw"])));
+      return;
+    }
+    switch (id) {
+      case "save":
+        void save();
+        return;
+      case "undo":
+        undo();
+        return;
+      case "redo":
+        redo();
+        return;
+      case "find":
+        setFindOpen(true);
+        setTimeout(() => document.querySelector<HTMLInputElement>(".find-bar input")?.focus(), 40);
+        return;
+      case "newNote":
+        if (mode === "notebook") createNote();
+        return;
+      case "math":
+        mathInsertRef.current();
+        return;
+      case "rename": {
+        const n = noteRef.current;
+        if (n) {
+          setRenaming(n.path);
+          setRenameDraft(n.display_title);
+        }
+        return;
+      }
+      case "width.down":
+      case "width.up": {
+        const dir = id === "width.up" ? 1 : -1;
         const step = (list: number[], cur: number) => {
           const i = Math.max(0, list.indexOf(cur));
-          return list[Math.max(0, Math.min(list.length - 1, i + (k === "]" ? 1 : -1)))];
+          return list[Math.max(0, Math.min(list.length - 1, i + dir))];
         };
         setDrawPrefs((p) => {
           const next =
@@ -1513,27 +1550,15 @@ export function NotebookView({
         });
         return;
       }
-      if (e.shiftKey && k === "e") {
-        e.preventDefault();
+      case "eraser.mode":
         setDrawPrefs((p) => {
           const next: DrawPrefs = { ...p, eraserMode: p.eraserMode === "area" ? "shape" : "area" };
           localStorage.setItem(DRAW_PREFS_KEY, JSON.stringify(next));
           return next;
         });
         return;
-      }
-      const t = TOOL_KEYS[k];
-      if (!t || e.shiftKey || !noteRef.current) return;
-      // Letters belong to text whenever anything is selected or focus is outside the bare canvas.
-      if (canvasSelRef.current.length) return;
-      if (ae && ae !== document.body && !ae.classList.contains("canvas-wrap")) return;
-      e.preventDefault();
-      setTool(t);
-      if (t !== "select") setOpenRibbons((prev) => (prev.has("Draw") ? prev : new Set<Ribbon>(["Draw"])));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [tool]);
+    }
+  };
 
   /* ── notes list ── */
   const sortedNotes = useMemo(() => {
