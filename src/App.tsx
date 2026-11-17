@@ -783,6 +783,8 @@ export default function App() {
     return api.getHomeTiles().then(setTiles).catch(console.error);
   };
 
+  useEffect(() => () => setStudyActions(null), []);
+
   if (!settings) {
     return <div className="empty-state">Loading Paperlike…</div>;
   }
@@ -906,8 +908,9 @@ export default function App() {
     setQuizSetup({ area: currentNotePath ? selectedNoteArea() : null });
   };
 
-  // What the Study menu's entries do (toolbar button, Ctrl+J, canvas right-click).
-  useEffect(() => {
+  // What the Study menu's entries do (toolbar button, Ctrl+J, canvas right-click). A plain
+  // assignment, not a hook: this runs below the early return for missing settings.
+  {
     setStudyActions({
       askOpen: !!ask,
       onAskPane: toggleAsk,
@@ -924,8 +927,7 @@ export default function App() {
       onBrief: () => openBrief(),
       onReview: () => setQuizResultsOpen(true),
     });
-  });
-  useEffect(() => () => setStudyActions(null), []);
+  }
 
   // Floating calendar is an overlay; only the docked pane reserves the right side.
   const sidePane = !!ask || (calOpen && !calFloating);
