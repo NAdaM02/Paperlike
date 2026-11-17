@@ -3084,9 +3084,9 @@ struct PageSpec {
     clip: bool,
 }
 
-/// Pages of a note. Landscape notes with PDFs get one page per PDF page (slide), fitted
-/// and centred, plus pages for anything beside or between the slides. Everything else is
-/// cut top to bottom at the page width.
+/// Pages of a note. Notes with PDFs (portrait or landscape) get one page per PDF page,
+/// fitted to the width or height and centred, plus pages for anything beside or between
+/// the PDF pages. Everything else is cut top to bottom at the page width.
 fn note_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Vec<PageSpec> {
     if let Some(pages) = slide_pages(note, sheet, with_title) {
         return pages;
@@ -3112,9 +3112,6 @@ fn note_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Vec<PageSpec> 
 }
 
 fn slide_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Option<Vec<PageSpec>> {
-    if !sheet.landscape() {
-        return None;
-    }
     let objects = &note.doc.canvas.objects;
     let hidden = crate::note::collapsed_child_ids(objects);
     let mut slots: Vec<(f64, f64, f64, f64)> = Vec::new();
@@ -3404,9 +3401,14 @@ mod tests {
     }
 
     fn slides_note(landscape: bool) -> NoteFile {
+        pdf_note(landscape, 0.5625)
+    }
+
+    /// Five PDF pages of one aspect (height / width), 900 wide, stacked.
+    fn pdf_note(landscape: bool, aspect: f64) -> NoteFile {
         let pdf: CanvasObject = serde_json::from_value(serde_json::json!({
             "type": "pdf", "id": "p1", "x": 0.0, "y": 0.0, "z": 1, "media": "m.pdf",
-            "pages": [1, 2, 3, 4, 5], "aspects": [0.5625, 0.5625, 0.5625, 0.5625, 0.5625],
+            "pages": [1, 2, 3, 4, 5], "aspects": vec![aspect; 5],
             "layout": "stack", "pageWidth": 900.0, "gap": 14.0
         }))
         .unwrap();
@@ -3496,6 +3498,31 @@ mod tests {
     fn portrait_sheet_never_splits_a_slide() {
         let note = slides_note(false);
         assert!(cuts_on_slide_tops(&note));
+    }
+
+    #[test]
+    fn portrait_sheet_puts_one_pdf_page_per_page() {
+        let sheet = Sheet::PORTRAIT;
+        // Slides (16:9) are limited by the width, tall pages (1:2) by the height.
+        for (aspect, width_limited) in [(0.5625, true), (2.0, false)] {
+            let note = pdf_note(false, aspect);
+            let pages = compute_pages(&note);
+            assert_eq!(pages.len(), 5, "aspect {aspect}");
+            assert!(cuts_on_slide_tops(&note));
+            for (i, p) in pages.iter().enumerate() {
+                assert!(p.clip && (p.w - 900.0).abs() < 0.01 && (p.h - 900.0 * aspect).abs() < 0.01, "page {i}: {p:?}");
+                let room = sheet.content_h() - if i == 0 { TITLE_BLOCK_DIP } else { 0.0 };
+                let (w, h) = (p.w * p.scale, p.h * p.scale);
+                assert!(w <= sheet.content_w() + 0.01 && h <= room + 0.01, "page {i} fits");
+                if width_limited {
+                    assert!((w - sheet.content_w()).abs() < 0.01 && p.ox.abs() < 0.01, "page {i} fills the width");
+                    assert!((p.oy - (room - h) / 2.0).abs() < 0.01, "page {i} centred vertically");
+                } else {
+                    assert!((h - room).abs() < 0.01 && p.oy.abs() < 0.01, "page {i} fills the height");
+                    assert!((p.ox - (sheet.content_w() - w) / 2.0).abs() < 0.01, "page {i} centred across");
+                }
+            }
+        }
     }
 
     #[test]

@@ -698,7 +698,7 @@ export function NotebookView({
     scale: number;
     page: number;
     /** Canvas area per sheet: `scale` canvas -> sheet, (`ox`, `oy`) its offset inside the margins
-     *  below the title. `clip` pages (landscape slides) show only their `w` × `h` area. */
+     *  below the title. `clip` pages (one PDF page each, or notes beside them) show only their `w` × `h` area. */
     pages: {
       x: number;
       y: number;
