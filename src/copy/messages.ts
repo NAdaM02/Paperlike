@@ -427,8 +427,8 @@ export const tourSteps: TourStep[] = [
     clearSpot: true,
   },
   {
-    title: "Ask and Brief",
-    text: "Ask opens a chat beside the page that can see the note you have open. Brief turns several notes into a study sheet or a quiz.",
+    title: "Study",
+    text: "Study (Ctrl+J, or right-click the page) holds the AI tools: a chat beside the note, Quiz me, study sheets from several notes, your quiz results, and which AI to use.",
     at: "nb-ask",
     clearSpot: true,
   },

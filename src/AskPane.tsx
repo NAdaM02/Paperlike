@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api, AssistantEvent } from "./api";
 import { ATTACHED_LINE, QUICK_ASKS } from "./brief";
 import { savableNotePath } from "./chat";
+import { setSignIn as setSignInState } from "./chatStatus";
 import { IcAttach, IcBack, IcChevron, IcClose, IcNewChat, IcReload, IcSend, IcWide } from "./icons";
 
 export type AskHost = "claude" | "gemini" | "chatgpt";
@@ -135,7 +136,9 @@ export function AskPane({
       if (payload.kind === "loading") setLoading(true);
       if (payload.kind === "loaded") {
         setLoading(false);
-        setSignIn(/login|signin|sign-in|accounts\.google\./i.test(payload.detail));
+        const wall = /login|signin|sign-in|accounts\.google\./i.test(payload.detail);
+        setSignIn(wall);
+        if (wall) setSignInState(hostRef.current, "out");
       }
     });
     return () => {
@@ -293,7 +296,7 @@ export function AskPane({
           <button className={`btn icon ${wide ? "active" : ""}`} type="button" title={wide ? "Narrow pane" : "Half the window"} onClick={toggleWide}>
             <IcWide size={15} />
           </button>
-          <button className="btn icon" type="button" title="Close (Ctrl+J)" onClick={onClose}>
+          <button className="btn icon" type="button" title="Close (Ctrl+J, then A)" onClick={onClose}>
             <IcClose size={15} />
           </button>
         </div>
@@ -309,7 +312,7 @@ export function AskPane({
         >
           {!fromBrief && (
             <div className="ask-quick">
-              {QUICK_ASKS.map((q) => (
+              {QUICK_ASKS.filter((q) => q.id !== "quiz").map((q) => (
                 <button key={q.id} type="button" className="brief-chip" title={q.text} disabled={busy} onClick={() => void send(q.text)}>
                   {q.label}
                 </button>

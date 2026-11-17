@@ -63,6 +63,7 @@ import { PdfView, type PdfCanvasView } from "./PdfView";
 import { pdfSize } from "./pdfLayout";
 import { isGifBase64, StillImage } from "./stillImage";
 import { quizHistoryOf, setOpenQuizNote, withQuiz } from "./quizHistory";
+import { openStudyMenu } from "./StudyMenu";
 import { ERASER_SIZES, EraserMode, EraserSize } from "./eraser";
 import { CustomColorPicker, pushColorHistory } from "./colorPicker";
 import {
@@ -118,7 +119,6 @@ import {
   IcEllipse,
   IcLine,
   IcRect,
-  IcBrief,
   IcAsk,
   IcBook,
   IcCalendar,
@@ -475,10 +475,6 @@ type Props = {
   /** User chose another note in the sidebar — push history. */
   onNoteUserOpen?: (notePath: string) => void;
   initialFind?: string;
-  /** Open the summary desk with this notebook, or the standalone note, already checked. */
-  onBrief: () => void;
-  /** Open or close the chat beside the note. */
-  onAsk: () => void;
   onOpenSettings: () => void;
   /** Customer trial is over: read and navigate, do not edit. */
   expired?: boolean;
@@ -527,8 +523,6 @@ export function NotebookView({
   onNoteOpened,
   onNoteUserOpen,
   initialFind,
-  onBrief,
-  onAsk,
   onOpenSettings,
   expired = false,
   onQuickAsk,
@@ -3528,23 +3522,15 @@ export function NotebookView({
         </div>
         <div className="spacer" />
         <QuickAskField onAsk={onQuickAsk} onCalc={onCalc} onAnalyze={onAnalyze} disabled={expired} />
-        <button
-          className="btn outline"
-          title={expired ? messages.premiumOff : "Study sheets and quizzes from several notes"}
-          disabled={expired}
-          data-tour="nb-ask"
-          onClick={onBrief}
-        >
-          <IcBrief size={15} /> Brief
-        </button>
-        <button
+<button
           className="btn outline"
           data-tour="nb-ask"
-          title={expired ? messages.premiumOff : "Chat beside this note — attaches the open page (Ctrl+J)"}
+          data-study-button
+          title={expired ? messages.premiumOff : "Ask, Quiz me, study sheets, quiz results and the AI to use (Ctrl+J)"}
           disabled={expired}
-          onClick={onAsk}
+          onClick={(e) => openStudyMenu({ anchor: e.currentTarget.getBoundingClientRect() })}
         >
-          <IcAsk size={15} /> Ask
+          <IcAsk size={15} /> Study
         </button>
         {(showMoodle || tourAt === "nb-moodle") && (
           <button

@@ -35,6 +35,7 @@ import {
   quizStudyPrompt,
 } from "./quiz";
 import { recordQuiz } from "./quizHistory";
+import { ProviderSwitch, useDefaultHost } from "./StudyMenu";
 
 /** A quiz started from the Study menu: what to ask, and for the marked-area scope, the pictures. */
 export type QuizStart = {
@@ -91,7 +92,7 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
   const [loading, setLoading] = useState(true);
   const [topic, setTopic] = useState("");
   const [prefs] = useState(loadPrefs);
-  const [task, setTask] = useState<BriefTask>(quiz ? "quiz" : prefs.task);
+  const [task, setTask] = useState<BriefTask>(quiz ? "quiz" : prefs.task === "quiz" ? "sheet" : prefs.task);
   const [quizPrefs] = useState(loadQuizPrefs);
   const [quizCount, setQuizCount] = useState<QuizCount>(quiz?.count ?? quizPrefs.count);
   const [quizKind, setQuizKind] = useState<QuizKind>(quiz?.kind ?? quizPrefs.kind);
@@ -99,7 +100,8 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
   const answersRef = useRef<Record<string, string>>({});
   const autoRef = useRef(!!quiz?.autoStart);
   const [depth, setDepth] = useState<BriefDepth>(prefs.depth);
-  const [lane, setLane] = useState<ChatHost>(prefs.lane);
+  // The AI is the one the Study menu, the quick field and the Ask pane share.
+  const lane = useDefaultHost();
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [result, setResult] = useState("");
@@ -685,8 +687,9 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
       <div key="body" className="brief-body" ref={bodyRef}>
         <div key="stack" className="brief-stack" style={{ width: leftW, display: popped ? "none" : undefined }}>
         <section className="brief-col brief-work" style={{ flex: "none", height: topH }}>
+          {!quiz && (
           <div className="brief-choices">
-            {TASKS.map((t) => (
+            {TASKS.filter((t) => t.id !== "quiz").map((t) => (
               <button
                 key={t.id}
                 type="button"
@@ -698,6 +701,7 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
               </button>
             ))}
           </div>
+          )}
           {task === "quiz" ? (
             <div className="brief-choices">
               {QUIZ_COUNTS.map((n) => (
@@ -740,20 +744,7 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
             {task === "quiz" ? QUIZ_KINDS.find((k) => k.id === quizKind)?.hint : TASKS.find((t) => t.id === task)?.hint}
           </p>
 
-          <div className="brief-lanes">
-            <button type="button" className={`brief-lane ${lane === "claude" ? "on" : ""}`} onClick={() => setLane("claude")}>
-              <strong>Claude</strong>
-              <span>Uses your claude.ai login.</span>
-            </button>
-            <button type="button" className={`brief-lane ${lane === "chatgpt" ? "on" : ""}`} onClick={() => setLane("chatgpt")}>
-              <strong>ChatGPT</strong>
-              <span>Uses your chatgpt.com login.</span>
-            </button>
-            <button type="button" className={`brief-lane ${lane === "gemini" ? "on" : ""}`} onClick={() => setLane("gemini")}>
-              <strong>Gemini</strong>
-              <span>Roomier limits. Uses your Google login.</span>
-            </button>
-          </div>
+          <ProviderSwitch compact />
 
           <div className="brief-prompt-bar">
             <span>

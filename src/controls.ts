@@ -50,7 +50,7 @@ export const ACTIONS: ActionDef[] = [
   { id: "math", label: "Insert math", group: "Note", layer: "note", defaults: ["Ctrl+M"] },
   { id: "rename", label: "Rename note", group: "Note", layer: "note", defaults: ["F2"] },
   { id: "searchAll", label: "Search everywhere", group: "App", layer: "app", defaults: ["Ctrl+Shift+F"] },
-  { id: "ask", label: "Ask", group: "App", layer: "app", defaults: ["Ctrl+J"] },
+  { id: "ask", label: "Study menu (Ask, Quiz me, AI)", group: "App", layer: "app", defaults: ["Ctrl+J"] },
   { id: "quickAsk", label: "Quick ask field", group: "App", layer: "app", defaults: ["Ctrl+K"] },
   { id: "back", label: "Back", group: "App", layer: "app", defaults: ["Alt+ArrowLeft", "Mouse4"] },
   { id: "forward", label: "Forward", group: "App", layer: "app", defaults: ["Alt+ArrowRight", "Mouse5"] },

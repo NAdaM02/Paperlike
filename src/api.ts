@@ -565,6 +565,8 @@ export const api = {
     }),
   quickStop: () => invoke("quick_stop"),
   quickRelease: () => invoke("quick_release"),
+  /** "in" | "out" | "unknown": whether the chat site shows its message box or a login wall. */
+  chatStatus: (host: string) => invoke<"in" | "out" | "unknown">("chat_status", { host }),
   stageAnalyzePng: (pngB64: string) => invoke<string>("stage_analyze_png", { pngB64 }),
   renderNoteArea: (args: {
     objects: unknown[];

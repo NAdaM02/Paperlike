@@ -207,6 +207,7 @@ pub fn run() {
             commands::quick_ask,
             commands::quick_stop,
             commands::quick_release,
+            commands::chat_status,
             commands::stage_analyze_png,
             commands::capture_screen_region,
             commands::render_note_area,

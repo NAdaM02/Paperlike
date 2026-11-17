@@ -55,6 +55,7 @@ import {
   type CellCoord,
 } from "./tableOps";
 import { ContextMenu, MenuItem, b64ToBytes, bytesToB64, fitImage, imageSize } from "./ui";
+import { studyMenuItems } from "./StudyMenu";
 import { dotPoints, EraserMode, eraseSweep, lassoHits, smoothPoints, strokePath } from "./eraser";
 import { drawingTouchesRect, lassoLoop, pushLassoPoint, refineSmartStroke } from "./inkGesture";
 import { markerOutlinePath, outlinePath, pressureHitWidth, pushPenSample, smoothInk, strokeOutline, strokeRuns } from "./ink";
@@ -1135,7 +1136,7 @@ export function CanvasEditor({
     const cur = selectedRef.current;
     const ids = id ? (cur.includes(id) ? cur : [id]) : [];
     if (id && !cur.includes(id)) setSelected([id]);
-    if (!ids.length && !id && !objectClip && !objectsRef.current.some((o) => o.locked)) return;
+    // Always a menu: the Study entries are there even on empty paper.
     setObjMenu({ x: e.clientX, y: e.clientY, ids: id && !cur.includes(id) ? [id] : ids });
   };
 
@@ -4457,6 +4458,8 @@ export function CanvasEditor({
               );
             }
             if (objectClip) items.push({ label: "Paste", hint: "Ctrl+V", onClick: () => pasteObjects() });
+            const study = studyMenuItems({ x: objMenu.x, y: objMenu.y });
+            const withStudy = (list: MenuItem[]) => (study.length ? [...list, ...(list.length ? ["sep" as const] : []), ...study] : list);
             if (ids.length) {
               items.push(
                 "sep",
@@ -4506,7 +4509,7 @@ export function CanvasEditor({
                 },
               });
             }
-            return items;
+            return withStudy(items);
           })()}
         />
       )}

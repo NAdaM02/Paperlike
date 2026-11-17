@@ -2701,6 +2701,45 @@ pub async fn quick_release(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the chat site is signed in: "in" (message box, no login wall), "out" (login wall) or
+/// "unknown". Reads the Ask pane's page when it is open, else the hidden quick view (opened if
+/// needed; `quick_release` closes it again). Only looks at the page; it types and clicks nothing.
+#[tauri::command]
+pub async fn chat_status(app: tauri::AppHandle, state: State<'_, AppState>, host: String) -> Result<String, String> {
+    if !matches!(host.as_str(), "claude" | "gemini" | "chatgpt") {
+        return Err("unknown chat".into());
+    }
+    use tauri::Manager;
+    let view = match app.get_webview(&assistant_label(&host)) {
+        Some(v) => v,
+        None => {
+            let (v, created) = quick_view(&app, &state, &host).await?;
+            if created {
+                tokio_sleep(std::time::Duration::from_millis(1500)).await;
+            }
+            v
+        }
+    };
+    let js = format!(
+        r#"(() => {{ {LOGIN_WALL_JS} {COMPOSER_JS}
+  if (owLoginWall()) return "out";
+  if (document.readyState !== "complete") return "wait";
+  return owBox() ? "in" : "wait";
+}})()"#
+    );
+    for _ in 0..12 {
+        if let Ok(v) = page_eval(&view, js.clone()).await {
+            match v.as_str() {
+                Some("in") => return Ok("in".into()),
+                Some("out") => return Ok("out".into()),
+                _ => {}
+            }
+        }
+        tokio_sleep(std::time::Duration::from_millis(800)).await;
+    }
+    Ok("unknown".into())
+}
+
 async fn tokio_sleep(d: std::time::Duration) {
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
 }

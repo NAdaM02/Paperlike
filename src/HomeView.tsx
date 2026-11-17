@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, DetectedItem, HomeTile, SearchHit, Settings } from "./api";
 import { QuickAskField, QuickSeed } from "./QuickAsk";
+import { openStudyMenu } from "./StudyMenu";
 import { messages } from "./copy/messages";
 import { TrialMeter } from "./customer";
 import {
@@ -20,7 +21,6 @@ import {
 import {
   IcAsk,
   IcBook,
-  IcBrief,
   IcChevron,
   IcDoc,
   IcFolder,
@@ -98,8 +98,6 @@ type Props = {
   onToast: (msg: string) => void;
   onOpenSearch: () => void;
   onBlankNote: () => void;
-  onBrief: () => void;
-  onAsk: () => void;
   onQuickAsk: (seed: QuickSeed) => void;
   onCalc?: () => void;
   onAnalyze?: () => void;
@@ -127,8 +125,6 @@ export function HomeView({
   onToast,
   onOpenSearch,
   onBlankNote,
-  onBrief,
-  onAsk,
   onQuickAsk,
   onCalc,
   onAnalyze,
@@ -844,23 +840,15 @@ export function HomeView({
             <IcSearch size={16} />
           </button>
           <QuickAskField onAsk={onQuickAsk} onCalc={onCalc} onAnalyze={onAnalyze} disabled={expired} />
-          <button
-            className="btn outline"
-            title={expired ? messages.premiumOff : "Study sheets and quizzes from several notes"}
-            disabled={expired}
-            data-tour="home-ask"
-            onClick={onBrief}
-          >
-            <IcBrief size={15} /> Brief
-          </button>
-          <button
+  <button
             className="btn outline"
             data-tour="home-ask"
-            title={expired ? messages.premiumOff : "Chat beside your notes — attaches what you have open (Ctrl+J)"}
+            data-study-button
+            title={expired ? messages.premiumOff : "Ask, Quiz me from notes you pick, study sheets and the AI to use (Ctrl+J)"}
             disabled={expired}
-            onClick={onAsk}
+            onClick={(e) => openStudyMenu({ anchor: e.currentTarget.getBoundingClientRect() })}
           >
-            <IcAsk size={15} /> Ask
+            <IcAsk size={15} /> Study
           </button>
           <button className="btn icon" data-tour="home-settings" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
             <IcSettings size={16} />

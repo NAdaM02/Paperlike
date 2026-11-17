@@ -1,5 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { api, QuickEvent } from "./api";
+import { setSignIn } from "./chatStatus";
 
 export type ChatHost = "claude" | "gemini" | "chatgpt";
 export const CHAT_NAME: Record<ChatHost, string> = { claude: "Claude", gemini: "Gemini", chatgpt: "ChatGPT" };
@@ -38,9 +39,10 @@ export class ChatError extends Error {
 }
 
 function chatErrorText(code: string, name: string): string {
-  if (code === "signin") return `Sign in to ${name} once in the Ask panel (Ctrl+J); quick questions use the same login.`;
+  if (code === "signin")
+    return `Sign in to ${name} once in the Ask pane (Study → Ask in pane, or Ctrl+J then A); quick questions use the same login.`;
   if (code === "noupload")
-    return `${name} isn't taking pictures right now, so nothing was sent. You've probably reached its daily upload limit; open ${name} in the Ask panel (Ctrl+J) to check, or switch to another model.`;
+    return `${name} isn't taking pictures right now, so nothing was sent. You've probably reached its daily upload limit; open ${name} in the Ask pane (Study → Ask in pane) to check, or switch to another model.`;
   if (code === "nobox") return `${name}'s page didn't show a message box. Open the Ask panel to see why.`;
   if (code === "noreply") return `${name} didn't answer. Open the Ask panel to see what happened.`;
   if (code.startsWith("pageerror:")) {
@@ -119,8 +121,13 @@ export async function askInBackground(opts: {
       if (payload.text) opts.onText(cleanReply(payload.text));
       if (!payload.done) return;
       off?.();
-      if (payload.error) reject(new ChatError(payload.error, payload.url, opts.host));
-      else resolve({ text: cleanReply(payload.text), url: payload.url, thinking });
+      if (payload.error) {
+        if (payload.error === "signin") setSignIn(opts.host, "out");
+        reject(new ChatError(payload.error, payload.url, opts.host));
+      } else {
+        setSignIn(opts.host, "in");
+        resolve({ text: cleanReply(payload.text), url: payload.url, thinking });
+      }
     }).then((unlisten) => {
       off = unlisten;
       opts.signal?.addEventListener("abort", () => void api.quickStop());

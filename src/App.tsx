@@ -8,12 +8,17 @@ import { api, HomeTile, RecoveryItem, SearchHit, Settings } from "./api";
 import { ASK_DEFAULT_W, AskHost, AskNote, AskPane, clampAskWidth } from "./AskPane";
 import { CalendarPane, calendarStartsFloating, setCalendarAvailable } from "./CalendarPane";
 import { AnalyzeMark, AnalyzeOverlay, AnalyzeRect, AnalyzeResult } from "./Analyze";
-import { NoteArea, noteAreaAt } from "./canvasAnchor";
+import { NoteArea, noteAreaAt, selectedNoteArea } from "./canvasAnchor";
 import { Calculator } from "./Calculator";
 import { focusQuickField, QuickAskCard, QuickSeed, seedFromSavedQuickCard, useNoteSelection } from "./QuickAsk";
 import type { SavedQuickCard } from "./api";
 import { defaultHost, setDefaultHost } from "./chat";
-import { BriefView } from "./BriefView";
+import { BriefView, QuizStart } from "./BriefView";
+import { openStudyMenu, QuizSetupDialog, setStudyActions, StudyMenu } from "./StudyMenu";
+import { QuizResultsDialog } from "./QuizResults";
+import { openQuizNote } from "./quizHistory";
+import { chatQuizPrompt, QuizPrefs } from "./quiz";
+import { renderNoteArea } from "./noteRender";
 import { GlobalSearchModal, HomeView } from "./HomeView";
 import { MoodleFloat } from "./MoodlePane";
 import { holdMoodleWebview } from "./moodleBridge";
@@ -177,9 +182,16 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [brief, setBrief] = useState<{ notebookPath?: string; notebookName?: string; notePaths: string[] } | null>(
-    null,
-  );
+  const [brief, setBrief] = useState<{
+    notebookPath?: string;
+    notebookName?: string;
+    notePaths: string[];
+    /** Opened from Study → Quiz me. */
+    quiz?: QuizStart;
+  } | null>(null);
+  /** Study → Quiz me is open; `area` is the selection on the page when it opened. */
+  const [quizSetup, setQuizSetup] = useState<{ area: NoteArea | null } | null>(null);
+  const [quizResultsOpen, setQuizResultsOpen] = useState(false);
   const [ask, setAsk] = useState<{
     id: number;
     host: AskHost;
@@ -516,6 +528,16 @@ export default function App() {
     );
   }, []);
 
+  /** Ctrl+J (the "Study menu" control): show the Study menu, or close it. */
+  const toggleStudy = useCallback(() => {
+    if (premiumOff()) {
+      toast(messages.premiumOff);
+      openLicense();
+      return;
+    }
+    openStudyMenu();
+  }, []);
+
   useEffect(() => {
     let cancel = false;
     void invoke<UpdateAnnouncement | null>("take_update_announcement")
@@ -701,7 +723,7 @@ export default function App() {
         setSearchOpen(true);
       } else if (act === "ask") {
         e.preventDefault();
-        toggleAsk();
+        toggleStudy();
       } else if (act === "quickAsk") {
         e.preventDefault();
         if (premiumOff()) {
@@ -724,7 +746,7 @@ export default function App() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("paperlike-toggle-fullscreen", onToggleFullscreen);
     };
-  }, [goBack, goForward, toggleAsk]);
+  }, [goBack, goForward, toggleStudy]);
 
   /* Extra mouse buttons (3 = back, 4 = forward, …): whatever app action they are bound to. */
   useEffect(() => {
@@ -742,7 +764,7 @@ export default function App() {
       if (act === "back") goBack();
       else if (act === "forward") goForward();
       else if (act === "searchAll") setSearchOpen(true);
-      else if (act === "ask") toggleAsk();
+      else if (act === "ask") toggleStudy();
       else if (act === "quickAsk" && !premiumOff()) focusQuickField();
     };
     window.addEventListener("mousedown", block, true);
@@ -753,7 +775,7 @@ export default function App() {
       window.removeEventListener("mouseup", onUp, true);
       window.removeEventListener("auxclick", block, true);
     };
-  }, [goBack, goForward, toggleAsk]);
+  }, [goBack, goForward, toggleStudy]);
 
   const [homeReload, setHomeReload] = useState(0);
   const refreshTiles = () => {
@@ -795,6 +817,115 @@ export default function App() {
     rememberHost(host);
     setAsk({ id: Date.now(), host, briefPaths: notePaths, question, send: true });
   };
+
+  /** The note on screen, if any. */
+  const currentNotePath = route.view === "standalone" ? route.path : route.view === "notebook" ? route.notePath : undefined;
+
+  /** Brief (study sheet, formulas, explain), or a quiz, over the open notebook or note. */
+  const openBrief = (quiz?: QuizStart, notePaths?: string[]) => {
+    if (premiumOff()) {
+      toast(messages.premiumOff);
+      openLicense();
+      return;
+    }
+    setBrief({
+      notebookPath: route.view === "notebook" ? route.path : undefined,
+      notebookName: route.view === "notebook" ? tiles.find((t) => t.path === route.path)?.name : undefined,
+      notePaths: notePaths ?? (currentNotePath ? [currentNotePath] : []),
+      quiz,
+    });
+  };
+
+  const startQuiz = async (prefs: QuizPrefs, area: NoteArea | null) => {
+    setQuizSetup(null);
+    if (premiumOff()) {
+      toast(messages.premiumOff);
+      openLicense();
+      return;
+    }
+    const base = { count: prefs.count, kind: prefs.kind };
+    if (prefs.scope === "notes") {
+      openBrief({ ...base, scope: "notes" });
+      return;
+    }
+    if (prefs.scope === "note") {
+      if (!currentNotePath) return;
+      if (prefs.chat) {
+        setBrief(null);
+        setAsk({ id: Date.now(), host: lastHost(), briefPaths: [currentNotePath], question: chatQuizPrompt(base), send: true });
+      } else {
+        // Only this note: no notebook list, so nothing else is checked by accident.
+        setBrief({ notePaths: [currentNotePath], quiz: { ...base, scope: "note", autoStart: true } });
+      }
+      return;
+    }
+    if (!area) return;
+    toast("Drawing the selection…");
+    let shot: Awaited<ReturnType<typeof renderNoteArea>> = null;
+    try {
+      shot = await renderNoteArea(area);
+    } catch {
+      shot = null;
+    }
+    if (!shot?.filePaths.length) {
+      toast("The selection couldn't be drawn. Try This note instead.");
+      return;
+    }
+    if (prefs.chat) {
+      openQuick({
+        id: Date.now(),
+        question: chatQuizPrompt({ ...base, area: true }),
+        selection: "",
+        imagePath: shot.filePaths[0],
+        imagePaths: shot.filePaths,
+        areaMap: shot.map,
+        imagePreview: shot.previewB64 ? `data:image/png;base64,${shot.previewB64}` : undefined,
+        area,
+      });
+      return;
+    }
+    setBrief({
+      notePaths: [],
+      quiz: {
+        ...base,
+        scope: "area",
+        images: shot.filePaths,
+        areaNote: currentNotePath,
+        areaTitle: openQuizNote()?.title,
+        autoStart: true,
+      },
+    });
+  };
+
+  const openQuizSetup = () => {
+    if (premiumOff()) {
+      toast(messages.premiumOff);
+      openLicense();
+      return;
+    }
+    setQuizSetup({ area: currentNotePath ? selectedNoteArea() : null });
+  };
+
+  // What the Study menu's entries do (toolbar button, Ctrl+J, canvas right-click).
+  useEffect(() => {
+    setStudyActions({
+      askOpen: !!ask,
+      onAskPane: toggleAsk,
+      onQuickAsk: () => {
+        if (premiumOff()) {
+          toast(messages.premiumOff);
+          openLicense();
+          return;
+        }
+        focusQuickField();
+      },
+      onAnalyze: openAnalyze,
+      onQuiz: openQuizSetup,
+      onBrief: () => openBrief(),
+      onReview: () => setQuizResultsOpen(true),
+    });
+  });
+  useEffect(() => () => setStudyActions(null), []);
 
   // Floating calendar is an overlay; only the docked pane reserves the right side.
   const sidePane = !!ask || (calOpen && !calFloating);
@@ -846,15 +977,6 @@ export default function App() {
                 }
               });
           }}
-          onBrief={() => {
-            if (premiumOff()) {
-              toast(messages.premiumOff);
-              openLicense();
-              return;
-            }
-            setBrief({ notePaths: [] });
-          }}
-          onAsk={toggleAsk}
           onQuickAsk={openQuick}
           onCalc={openCalc}
           onAnalyze={openAnalyze}
@@ -907,19 +1029,6 @@ export default function App() {
           onNoteOpened={replaceNotePath}
           onNoteUserOpen={pushNotePath}
           initialFind={route.find}
-          onBrief={() => {
-            if (premiumOff()) {
-              toast(messages.premiumOff);
-              openLicense();
-              return;
-            }
-            setBrief({
-              notebookPath: route.view === "notebook" ? route.path : undefined,
-              notebookName: route.view === "notebook" ? tiles.find((t) => t.path === route.path)?.name : undefined,
-              notePaths: route.view === "standalone" ? [route.path] : route.notePath ? [route.notePath] : [],
-            });
-          }}
-          onAsk={toggleAsk}
           onQuickAsk={openQuick}
           onCalc={openCalc}
           onAnalyze={openAnalyze}
@@ -943,11 +1052,23 @@ export default function App() {
           }}
         />
       )}
+      <StudyMenu />
+      {quizSetup && (
+        <QuizSetupDialog
+          hasNote={!!currentNotePath}
+          hasArea={!!quizSetup.area}
+          onClose={() => setQuizSetup(null)}
+          onStart={(prefs) => void startQuiz(prefs, quizSetup.area)}
+        />
+      )}
+      {quizResultsOpen && <QuizResultsDialog onClose={() => setQuizResultsOpen(false)} />}
       {brief && (
         <BriefView
+          key={brief.quiz ? `quiz-${brief.quiz.scope}-${brief.notePaths.join("|")}-${brief.quiz.images?.join("|") ?? ""}` : "brief"}
           notebookPath={brief.notebookPath}
           notebookName={brief.notebookName}
           initialPaths={brief.notePaths}
+          quiz={brief.quiz}
           onClose={() => setBrief(null)}
           onToast={toast}
           onOpenNote={(path, nb) => {
