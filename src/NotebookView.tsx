@@ -1966,7 +1966,7 @@ export function NotebookView({
     // Re-applying the shown default (the main button) keeps new text on theme ink.
     updateTextPrefs({ color: c === null || (textPrefs.color === null && c === lastColor) ? null : c });
     if (c) rememberToolColor("text", c);
-    applyLiveFormat(() => setTextColor(color));
+    applyLiveFormat(() => setTextColor(c, color));
   };
 
   /** Highlight: sticky default (when non-null) + apply / clear on selection. */

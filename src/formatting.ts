@@ -265,38 +265,168 @@ export function setFontFamily(font: string): boolean {
   });
 }
 
-export function setTextColor(color: string): boolean {
-  const preserved = captureSelectionStyles();
-  return applyToSelectionOrCaret((span) => {
-    if (span.classList.contains("pl-math")) {
-      span.style.color = color;
-      return;
+/*
+ * Colour and highlight are painted straight onto the selected text nodes rather
+ * than through the fontSize=7 marker pass. That pass copied the font, size and
+ * colour of the first selected character onto every piece of the selection and
+ * cleared them from everything inside it, so recolouring mixed text (or a whole
+ * box) flattened its sizes and fonts, and Chrome sometimes merged or dropped
+ * spans so only part of the selection changed. Here each covered text node gets
+ * the one property and nothing else is touched.
+ */
+type PaintProp = "color" | "backgroundColor";
+
+function propOf(el: HTMLElement, prop: PaintProp): string {
+  if (prop === "color" && el.tagName === "FONT" && el.getAttribute("color")) return el.getAttribute("color")!;
+  if (prop === "backgroundColor" && el.tagName === "MARK") return "mark";
+  return el.style[prop];
+}
+
+function clearProp(el: HTMLElement, prop: PaintProp) {
+  el.style[prop] = "";
+  if (prop === "color" && el.tagName === "FONT") el.removeAttribute("color");
+  if (el.getAttribute("style") === "") el.removeAttribute("style");
+}
+
+/** Split the range's edge text nodes, then return the text nodes it covers whole. */
+function coveredTextNodes(range: Range, host: HTMLElement): Text[] {
+  let sc = range.startContainer;
+  let so = range.startOffset;
+  let ec = range.endContainer;
+  let eo = range.endOffset;
+  if (ec.nodeType === Node.TEXT_NODE && eo > 0 && eo < (ec as Text).length) (ec as Text).splitText(eo);
+  if (sc.nodeType === Node.TEXT_NODE && so > 0 && so < (sc as Text).length) {
+    const rest = (sc as Text).splitText(so);
+    if (ec === sc) {
+      ec = rest;
+      eo -= so;
     }
-    paintPreserved(span, preserved, { color: true });
-    span.style.color = color;
-    clearNested(span, ["color", "fontFamily", "fontSize", "backgroundColor"]);
-    span.querySelectorAll("font[color]").forEach((d) => d.removeAttribute("color"));
-  });
+    sc = rest;
+    so = 0;
+  }
+  const r = document.createRange();
+  r.setStart(sc, so);
+  r.setEnd(ec, eo);
+  const out: Text[] = [];
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    if (!n.length || n.parentElement?.closest(".pl-math")) continue;
+    // Formatting whitespace between paragraphs is not text anyone selected.
+    if (n.parentElement === host && !n.data.trim()) continue;
+    if (r.comparePoint(n, 0) >= 0 && r.comparePoint(n, n.length) <= 0) out.push(n);
+  }
+  return out;
+}
+
+function paintSelection(prop: PaintProp, value: string | null, fallback: string): boolean {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return false;
+  if (sel.isCollapsed) {
+    // Caret: the next typed characters take the colour (theme ink / no highlight for "none").
+    return applyAtCaret((span) => {
+      span.style[prop] = value ?? fallback;
+    });
+  }
+  const range = sel.getRangeAt(0);
+  const anchor = range.commonAncestorContainer;
+  const host = (anchor instanceof HTMLElement ? anchor : anchor.parentElement)?.closest(
+    ".content",
+  ) as HTMLElement | null;
+  if (!host) return false;
+
+  const mathNodes = Array.from(host.querySelectorAll<HTMLElement>(".pl-math")).filter((m) =>
+    rangeIntersectsNode(range, m),
+  );
+  const texts = coveredTextNodes(range, host);
+  if (!texts.length && !mathNodes.length) return false;
+  const covered = new Set<Node>(texts);
+  const allText = (el: HTMLElement) => {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode() as Text | null; n; n = w.nextNode() as Text | null) {
+      if (n.length && !n.parentElement?.closest(".pl-math") && !covered.has(n)) {
+        if (!(n.parentElement === host && !n.data.trim())) return false;
+      }
+    }
+    return true;
+  };
+
+  // Elements whose text is all selected drop their own colour, so it doesn't pile up.
+  const seen = new Set<HTMLElement>();
+  for (const t of texts) {
+    for (let a = t.parentElement; a && a !== host; a = a.parentElement) {
+      if (seen.has(a)) continue;
+      seen.add(a);
+      if (!propOf(a, prop) || !allText(a)) continue;
+      if (a.tagName === "MARK") {
+        const s = document.createElement("span");
+        while (a.firstChild) s.appendChild(a.firstChild);
+        a.replaceWith(s);
+      } else {
+        clearProp(a, prop);
+      }
+    }
+  }
+  const wholeBox = allText(host);
+  if (prop === "color" && wholeBox) {
+    // New text typed into the box keeps the colour too.
+    if (value) host.style.color = value;
+    else clearProp(host, prop);
+  }
+
+  for (const t of texts) {
+    const p = t.parentElement!;
+    let target: HTMLElement;
+    if (p !== host && p.tagName === "SPAN" && p.childNodes.length === 1) {
+      target = p;
+    } else {
+      target = document.createElement("span");
+      t.replaceWith(target);
+      target.appendChild(t);
+    }
+    if (value) {
+      target.style[prop] = value;
+      continue;
+    }
+    clearProp(target, prop);
+    // A partly selected parent still colours this text; override it explicitly.
+    let inherited = false;
+    for (let a = target.parentElement; a && !inherited; a = a.parentElement) {
+      inherited = !!propOf(a, prop);
+      if (a === host) break;
+    }
+    if (inherited) target.style[prop] = fallback;
+    else if (!target.attributes.length) target.replaceWith(t);
+  }
+
+  for (const m of mathNodes) {
+    if (!m.isConnected) continue;
+    if (value) m.style[prop] = value;
+    else if (prop === "color") m.style.color = "";
+    else m.style.backgroundColor = "transparent";
+  }
+
+  normalizeDecorations(host);
+  const first = texts[0] ?? mathNodes[0];
+  const last = texts[texts.length - 1] ?? mathNodes[mathNodes.length - 1];
+  if (first?.isConnected && last?.isConnected) {
+    const r = document.createRange();
+    r.setStartBefore(first);
+    r.setEndAfter(last);
+    if (first.nodeType === Node.TEXT_NODE) r.setStart(first, 0);
+    if (last.nodeType === Node.TEXT_NODE) r.setEnd(last, (last as Text).length);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  return true;
+}
+
+/** `null` = back to the default ink; `ink` is the theme colour used where a parent would keep its colour. */
+export function setTextColor(color: string | null, ink: string): boolean {
+  return paintSelection("color", color, ink);
 }
 
 export function setHighlight(color: string | null): boolean {
-  const preserved = captureSelectionStyles();
-  return applyToSelectionOrCaret((span) => {
-    if (span.classList.contains("pl-math")) {
-      if (color) span.style.backgroundColor = color;
-      else span.style.backgroundColor = "transparent";
-      return;
-    }
-    paintPreserved(span, preserved, { highlight: true });
-    span.querySelectorAll("mark").forEach((m) => {
-      const s = document.createElement("span");
-      s.innerHTML = m.innerHTML;
-      m.replaceWith(s);
-    });
-    clearNested(span, ["backgroundColor", "fontFamily", "fontSize", "color"]);
-    if (color) span.style.backgroundColor = color;
-    else span.style.backgroundColor = "transparent";
-  });
+  return paintSelection("backgroundColor", color, "transparent");
 }
 
 /** Snapshot/restore so clicking a ribbon control doesn't lose the selection. */
