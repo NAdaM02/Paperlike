@@ -63,6 +63,7 @@ import { ArrowInk } from "./ArrowInk";
 import { FileChip, IMAGE_EXTS, fileExt } from "./fileChip";
 import { messages } from "./copy/messages";
 import { IcExpand } from "./icons";
+import { installTextClipboard } from "./textClipboard";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { arrowHeadKind, arrowHeadPoints, scaleDrawing, shaftIsStraight, smoothFreeShaft, type Pt } from "./drawGeom";
 
@@ -1880,6 +1881,7 @@ export function CanvasEditor({
   }, [selected, updateObjects, snapshot, objects, tool, highlightedTextId, copyObjects, deleteIds, pasteObjects, canEdit]);
 
   useEffect(() => {
+    installTextClipboard();
     const onPasteEvt = (e: ClipboardEvent) => handlePasteRef.current(e);
     window.addEventListener("paste", onPasteEvt, true);
     return () => window.removeEventListener("paste", onPasteEvt, true);
