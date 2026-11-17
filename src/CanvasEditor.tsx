@@ -4941,7 +4941,11 @@ const RichTextWindow = memo(function RichTextWindow({
       !canvasHighlight &&
       (e.currentTarget === document.activeElement ||
         e.currentTarget.contains(document.activeElement));
-    if (!alreadyTyping && y < Math.min(16 * scale, rect.height * 0.45)) {
+    // Only the padding above the first line moves the box (the bar above it does too).
+    // A 16 px / 45% strip covered half of a small single line, so a press on the text
+    // dragged the box instead of starting a selection.
+    const padTop = (parseFloat(getComputedStyle(e.currentTarget).paddingTop) || 0) * scale;
+    if (!alreadyTyping && y < Math.min(16 * scale, padTop)) {
       if (e.button !== 0) return;
       e.preventDefault();
       onDragBar(e);
