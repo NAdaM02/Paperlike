@@ -85,8 +85,8 @@ export function noteAreaAt(rect: AnalyzeRect): NoteArea | null {
     const c = e.cam();
     return {
       key: e.key,
-      x: (rect.x - b.left - c.x) / c.z,
-      y: (rect.y - b.top - c.y) / c.z,
+      x: (rect.x - b.left - e.wrap.clientLeft - c.x) / c.z,
+      y: (rect.y - b.top - e.wrap.clientTop - c.y) / c.z,
       w: rect.w / c.z,
       h: rect.h / c.z,
     };

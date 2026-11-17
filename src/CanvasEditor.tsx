@@ -329,6 +329,13 @@ type Drag =
       oh: number;
     };
 
+/** Screen position of the canvas origin: the view's padding box, where the world and
+ *  overlays are placed. The border box is off by the border width. */
+function wrapOrigin(el: HTMLElement) {
+  const r = el.getBoundingClientRect();
+  return { left: r.left + el.clientLeft, top: r.top + el.clientTop, width: el.clientWidth, height: el.clientHeight };
+}
+
 /**
  * Unpainted box around a marker stroke. Chromium drops a mix-blend-mode layer whose
  * geometry has zero height or width (a perfectly straight stroke) — this keeps it alive.
@@ -607,7 +614,16 @@ export function CanvasEditor({
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    // The camera is the only offset. If the browser scrolls the view anyway (focus,
+    // caret, find, drag-select), the world slides away from the pointer math.
+    const unscroll = () => {
+      if (el.scrollLeft || el.scrollTop) el.scrollLeft = el.scrollTop = 0;
+    };
+    el.addEventListener("scroll", unscroll);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", unscroll);
+    };
   }, []);
   const onLiveCamRef = useRef(onLiveCam);
   onLiveCamRef.current = onLiveCam;
@@ -1050,7 +1066,7 @@ export function CanvasEditor({
   };
 
   const toCanvas = useCallback((clientX: number, clientY: number) => {
-    const r = wrapRef.current!.getBoundingClientRect();
+    const r = wrapOrigin(wrapRef.current!);
     const c = camRef.current;
     return { x: (clientX - r.left - c.x) / c.z, y: (clientY - r.top - c.y) / c.z };
   }, []);
@@ -1158,7 +1174,7 @@ export function CanvasEditor({
       ring.style.display = "none";
       return;
     }
-    const r = wrap.getBoundingClientRect();
+    const r = wrapOrigin(wrap);
     ring.style.display = "block";
     ring.style.width = ring.style.height = `${eraserRadius * 2}px`;
     ring.style.transform = `translate(${clientX - r.left - eraserRadius}px, ${clientY - r.top - eraserRadius}px)`;
@@ -1228,7 +1244,7 @@ export function CanvasEditor({
         const isPinch = e.ctrlKey && e.deltaMode === 0 && (!Number.isInteger(e.deltaY) || Math.abs(e.deltaY) < 50);
         const factor = isPinch ? 0.01 : e.deltaMode === 1 ? 0.05 : 0.0015;
         const delta = isPinch ? Math.max(-40, Math.min(40, e.deltaY)) : e.deltaY;
-        const r = el.getBoundingClientRect();
+        const r = wrapOrigin(el);
         const mx = e.clientX - r.left;
         const my = e.clientY - r.top;
         nudgeCam((c) => {
@@ -1328,7 +1344,7 @@ export function CanvasEditor({
       e.preventDefault();
       e.stopPropagation();
       suppressCtxMenu.current = true;
-      const r = el.getBoundingClientRect();
+      const r = wrapOrigin(el);
       const c = camRef.current;
       const pt: [number, number] = [(e.clientX - r.left - c.x) / c.z, (e.clientY - r.top - c.y) / c.z];
       const d: Drag = { mode: "erase", last: pt, snapped: false, temp: true, pointerId: e.pointerId };
@@ -1348,7 +1364,7 @@ export function CanvasEditor({
       e.preventDefault();
       e.stopPropagation();
       suppressCtxMenu.current = true;
-      const r = el.getBoundingClientRect();
+      const r = wrapOrigin(el);
       const c = camRef.current;
       const pt: [number, number] = [(e.clientX - r.left - c.x) / c.z, (e.clientY - r.top - c.y) / c.z];
       dragRef.current = { mode: "lasso", pts: [pt], pen: true, pointerId: e.pointerId };
@@ -1891,7 +1907,7 @@ export function CanvasEditor({
     }
     e.preventDefault();
     e.stopPropagation();
-    const r = wrapRef.current?.getBoundingClientRect();
+    const r = wrapRef.current ? wrapOrigin(wrapRef.current) : null;
     if (!r) return;
     const c = camRef.current;
     const pt = { x: (e.clientX - r.left - c.x) / c.z, y: (e.clientY - r.top - c.y) / c.z };
@@ -2132,7 +2148,7 @@ export function CanvasEditor({
       el.style.fontFamily = defaultFont;
       el.style.fontSize = `${defaultSize}pt`;
       if (defaultColor) el.style.color = defaultColor;
-      el.focus();
+      el.focus({ preventScroll: true });
       const sel = window.getSelection();
       if (!sel) return;
       const range = document.createRange();
@@ -5175,7 +5191,7 @@ function placeCaret(el: HTMLElement) {
   const sel = window.getSelection();
   sel?.removeAllRanges();
   sel?.addRange(range);
-  (el.closest(".content") as HTMLElement | null)?.focus();
+  (el.closest(".content") as HTMLElement | null)?.focus({ preventScroll: true });
 }
 
 /* ─── drawing render ───────────────────────────────────────────────────── */

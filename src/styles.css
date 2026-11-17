@@ -1747,6 +1747,9 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   flex: 1;
   position: relative;
   overflow: hidden;
+  /* clip, not hidden: a hidden box can still be scrolled by focus or caret moves,
+     which shifts the world away from the pointer. */
+  overflow: clip;
   /* A pen stroke is not a pan. Without this, Windows cancels the pointer after a few pixels. */
   touch-action: none;
   margin: 8px 14px 14px;
