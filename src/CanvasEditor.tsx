@@ -803,6 +803,9 @@ export function CanvasEditor({
   const spawnedTextRef = useRef({ t: 0, x: 0, y: 0 });
   /** Bumps when a paste event is handled, so a keydown fallback does not paste twice. */
   const pasteGenRef = useRef(0);
+  /** Last pointer-down on this canvas, in note units: object pastes land there (and in its
+   *  fold, or on the open canvas), whatever the copy came from. `n` counts pastes since. */
+  const pasteAtRef = useRef<{ x: number; y: number; n: number } | null>(null);
   const handlePasteRef = useRef<(e: ClipboardEvent) => void>(() => {});
   const createTextAtRef = useRef<(x: number, y: number, initial?: string) => void>(() => {});
   /** Suppress the browser context menu after a right-button pan. */
@@ -968,11 +971,41 @@ export function CanvasEditor({
     const prefix: Record<string, string> = { text: "t", image: "i", drawing: "d", group: "g", pdf: "p" };
     for (const o of clip.objects) idOf.set(o.id, newId(prefix[o.type] ?? "o"));
     let z = objectsRef.current.reduce((m, o) => Math.max(m, o.z), 0);
+    // Paste where the last click was: the copy's top-left goes to that point (24 further for
+    // each repeat paste), and it joins the fold under that point or none. Before, a copy kept
+    // its own position + 24, so anything copied in a fold landed back in that fold.
+    let dx = 24;
+    let dy = 24;
+    let target: string | null | undefined;
+    const at = pasteAtRef.current;
+    if (at) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      const loose = clip.objects.filter((o) => o.type !== "group");
+      for (const o of loose.length ? loose : clip.objects) {
+        const b = objectBBox(o, heightsRef.current);
+        minX = Math.min(minX, b.x);
+        minY = Math.min(minY, b.y);
+        maxX = Math.max(maxX, b.x + b.w);
+        maxY = Math.max(maxY, b.y + b.h);
+      }
+      // The last click was on the copied objects themselves (selecting them): offset as
+      // before instead of stacking the paste exactly on the original.
+      const onOriginal = at.x >= minX && at.x <= maxX && at.y >= minY && at.y <= maxY;
+      if (Number.isFinite(minX) && !onOriginal) {
+        const step = 24 * at.n++;
+        dx = at.x + step - minX;
+        dy = at.y + step - minY;
+        target = foldAt(foldIndex(objectsRef.current, boxOf), at.x, at.y);
+      }
+    }
     // Pasted joined pictures form a set of their own.
     const joinOf = new Map<string, string>();
     const clones = clip.objects.map((o) => {
       const id = idOf.get(o.id)!;
-      const moved = { ...structuredClone(o), id, x: o.x + 24, y: o.y + 24, z: ++z };
+      const moved = { ...structuredClone(o), id, x: o.x + dx, y: o.y + dy, z: ++z };
       if (moved.type === "image" && moved.join) {
         const j = joinOf.get(moved.join) ?? newId("j");
         joinOf.set(moved.join, j);
@@ -981,8 +1014,8 @@ export function CanvasEditor({
       if (moved.type === "group") {
         moved.children = moved.children.map((c) => idOf.get(c) ?? c);
         if (moved.marker_x != null || moved.marker_y != null) {
-          moved.marker_x = (moved.marker_x ?? moved.x) + 24;
-          moved.marker_y = (moved.marker_y ?? moved.y) + 24;
+          moved.marker_x = moved.marker_x != null ? moved.marker_x + dx : moved.x;
+          moved.marker_y = moved.marker_y != null ? moved.marker_y + dy : moved.y;
         }
       }
       return moved;
@@ -990,13 +1023,13 @@ export function CanvasEditor({
     snapshot("paste");
     const tops = clones.filter((o) => !clones.some((g) => g.type === "group" && g.children.includes(o.id))).map((o) => o.id);
     onUpdate((n) => {
-      // A pasted object whose centre lands in an open fold joins that fold, like a new stroke there.
+      // Joins the fold that was clicked last; without a click yet, the fold its centre lands in.
       const folds = foldIndex(n.doc.canvas.objects, boxOf);
       let objects = n.doc.canvas.objects;
       for (const o of clones) {
         if (o.type === "group" || !tops.includes(o.id)) continue;
         const b = objectBBox(o, heightsRef.current);
-        const gid = foldAt(folds, b.x + b.w / 2, b.y + b.h / 2);
+        const gid = target !== undefined ? target : foldAt(folds, b.x + b.w / 2, b.y + b.h / 2);
         if (gid) objects = withChild(objects, o.id, gid);
       }
       return {
@@ -1071,6 +1104,18 @@ export function CanvasEditor({
     const c = camRef.current;
     return { x: (clientX - r.left - c.x) / c.z, y: (clientY - r.top - c.y) / c.z };
   }, []);
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    // Capture phase: handlers below stop propagation (text boxes, folds, handles).
+    const onDown = (e: PointerEvent) => {
+      const p = toCanvas(e.clientX, e.clientY);
+      pasteAtRef.current = { x: p.x, y: p.y, n: 0 };
+    };
+    wrap.addEventListener("pointerdown", onDown, true);
+    return () => wrap.removeEventListener("pointerdown", onDown, true);
+  }, [toCanvas]);
 
   const paintMarquee = () => {
     const el = marqueeElRef.current;
@@ -3723,13 +3768,17 @@ export function CanvasEditor({
           const media = `media/${newId("m").slice(2)}.${ext}`;
           const natural = await imageSize(b64);
           const { width, height } = fitImage(natural.width, natural.height);
+          // At the last click (and in its fold), like pasted objects; else mid-view.
+          const at = pasteAtRef.current;
           const r = wrapRef.current!.getBoundingClientRect();
-          const center = toCanvas(r.left + r.width / 2, r.top + r.height / 2);
+          const mid = toCanvas(r.left + r.width / 2, r.top + r.height / 2);
+          const step = at ? 24 * at.n++ : 0;
+          const corner = at ? { x: at.x + step, y: at.y + step } : { x: mid.x - width / 2, y: mid.y - height / 2 };
           const img: ImageObject = {
             type: "image",
             id: newId("i"),
-            x: center.x - width / 2,
-            y: center.y - height / 2,
+            x: corner.x,
+            y: corner.y,
             z: maxZ() + 1,
             media,
             width,
@@ -3741,7 +3790,7 @@ export function CanvasEditor({
             media_b64: { ...n.media_b64, [media]: b64 },
             doc: {
               ...n.doc,
-              canvas: { ...n.doc.canvas, objects: placeNew(n.doc.canvas.objects, img, img.x + img.width / 2, img.y + img.height / 2, boxOf) },
+              canvas: { ...n.doc.canvas, objects: placeNew(n.doc.canvas.objects, img, at ? at.x : img.x + img.width / 2, at ? at.y : img.y + img.height / 2, boxOf) },
             },
           }));
           setSelected([img.id]);
