@@ -4323,12 +4323,15 @@ svg.hl .hl-ink {
 }
 .settings-section h3 { margin: 0; font-size: 13px; letter-spacing: 0.02em; }
 .settings-section .switch { align-items: flex-start; gap: 8px; }
-.settings-hint { display: block; color: var(--ink-3); font-size: 12px; font-weight: 400; margin: 0; }
+.settings-hint { display: block; color: var(--ink-3); font-size: 12px; font-weight: 400; margin: 0; overflow-wrap: anywhere; }
+.settings-section, .settings-section .switch, .settings-section .switch > span:last-child { min-width: 0; }
 
 /* Sync github */
-.git-sync-box { display: grid; gap: 4px; margin: 10px 0 0 40px; }
-.checklist-file-box { display: grid; gap: 4px; margin-top: 6px; }
-.git-sync-folder { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+/* minmax(0, 1fr): an auto grid column grows to the full path's width (the path only
+   ellipsizes once its row is narrower), which gave Settings a horizontal scrollbar. */
+.git-sync-box { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 10px 0 0 40px; min-width: 0; }
+.checklist-file-box { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 6px; min-width: 0; }
+.git-sync-folder { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; min-width: 0; }
 .git-sync-path {
   flex: 1;
   min-width: 0;
