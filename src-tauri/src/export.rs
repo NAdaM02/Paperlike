@@ -1619,19 +1619,21 @@ struct Mapper {
     scale: f64,
     /// Sheet height in DIP (PDF y runs up from the bottom edge).
     page_h: f64,
-    /// Pushes page-1 canvas content below the title band.
+    /// Shifts content right inside the margins (centred slides).
+    content_offset_x: f64,
+    /// Pushes page-1 canvas content below the title band (and centres slides).
     content_offset_y: f64,
 }
 
 impl Mapper {
     /// canvas DIP -> page mm (PDF origin is bottom-left)
     fn point(&self, x: f64, y: f64) -> Point {
-        let px = MARGIN_DIP + (x - self.bx) * self.scale;
+        let px = MARGIN_DIP + self.content_offset_x + (x - self.bx) * self.scale;
         let py = MARGIN_DIP + self.content_offset_y + (y - self.page_top) * self.scale;
         Point::new(Mm((px * DIP_TO_MM) as f32), Mm(((self.page_h - py) * DIP_TO_MM) as f32))
     }
     fn mm_x(&self, x: f64) -> Mm {
-        Mm(((MARGIN_DIP + (x - self.bx) * self.scale) * DIP_TO_MM) as f32)
+        Mm(((MARGIN_DIP + self.content_offset_x + (x - self.bx) * self.scale) * DIP_TO_MM) as f32)
     }
     fn mm_y(&self, y: f64) -> Mm {
         let py = MARGIN_DIP + self.content_offset_y + (y - self.page_top) * self.scale;
@@ -1814,36 +1816,26 @@ pub fn export_pdf(
     struct NotePages<'a> {
         note: &'a NoteFile,
         header: Option<&'a str>,
-        bx: f64,
-        bottom: f64,
-        scale: f64,
         sheet: Sheet,
-        cuts: Vec<f64>,
+        pages: Vec<PageSpec>,
     }
 
     let layouts: Vec<NotePages<'_>> = notes
         .iter()
         .map(|(note, title, header)| {
             let sheet = Sheet::of(note);
-            let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(|| empty_pagination_bbox(sheet));
-            let scale = sheet.scale(note, bw);
             let header_text = header.as_deref().or(Some(*title));
             let with_title = header_text.is_some_and(|h: &str| !h.is_empty());
-            let (first_span, full_span, _) = paginate_spans(bh, scale, with_title, sheet);
-            let cuts = page_cuts(note, by, by + bh, first_span, full_span);
             NotePages {
                 note,
                 header: header_text,
-                bx,
-                bottom: by + bh,
-                scale,
                 sheet,
-                cuts,
+                pages: note_pages(note, sheet, with_title),
             }
         })
         .collect();
 
-    let total_pages: usize = layouts.iter().map(|l| l.cuts.len()).sum();
+    let total_pages: usize = layouts.iter().map(|l| l.pages.len()).sum();
     let doc_title = notes
         .first()
         .map(|(_, t, _)| *t)
@@ -1871,34 +1863,50 @@ pub fn export_pdf(
             .collect();
         objects.sort_by_key(|o| o.z());
 
-        for page_idx in 0..layout.cuts.len() {
-            let page_top = layout.cuts[page_idx];
-            let page_span = if page_idx + 1 < layout.cuts.len() {
-                layout.cuts[page_idx + 1] - page_top
-            } else {
-                layout.bottom - page_top
-            };
-            let content_offset = if page_idx == 0 && layout.header.is_some_and(|h| !h.is_empty()) {
+        for (page_idx, spec) in layout.pages.iter().enumerate() {
+            let page_top = spec.top;
+            let page_bottom = spec.bottom;
+            let (page_left, page_right) = (spec.left, spec.right);
+            let across = |x: f64, w: f64| x <= page_right && x + w >= page_left;
+            let title_offset = if page_idx == 0 && layout.header.is_some_and(|h| !h.is_empty()) {
                 TITLE_BLOCK_DIP
             } else {
                 0.0
             };
             let mut layer = Layer::new(Some(multiply.clone())).sized(layout.sheet);
-            let page_bottom = page_top + page_span;
             let map = Mapper {
-                bx: layout.bx,
+                bx: spec.origin_x,
                 page_top,
-                scale: layout.scale,
+                scale: spec.scale,
                 page_h: layout.sheet.h,
-                content_offset_y: content_offset,
+                content_offset_x: spec.off_x,
+                content_offset_y: title_offset + spec.off_y,
             };
-            let scale = layout.scale;
+            let scale = spec.scale;
+            if spec.clip {
+                // A slide page shows only its slide: neighbours and stray ink stay off it.
+                layer.ops.push(Op::SaveGraphicsState);
+                layer.ops.push(Op::DrawPolygon {
+                    polygon: Polygon {
+                        rings: vec![PolygonRing {
+                            points: line_points(vec![
+                                map.point(page_left, page_top),
+                                map.point(page_right, page_top),
+                                map.point(page_right, page_bottom),
+                                map.point(page_left, page_bottom),
+                            ]),
+                        }],
+                        mode: PaintMode::Clip,
+                        winding_order: WindingOrder::NonZero,
+                    },
+                });
+            }
 
             for obj in &objects {
                 match obj {
                     CanvasObject::Text(t) => {
                         for f in layout_text_object(t) {
-                            if f.y < page_top || f.y > page_bottom || f.text.trim().is_empty() {
+                            if f.y < page_top || f.y > page_bottom || !across(f.x, 0.0) || f.text.trim().is_empty() {
                                 continue;
                             }
                             // Highlight behind the glyphs (run.hl → CSS background-color).
@@ -1930,7 +1938,7 @@ pub fn export_pdf(
                         }
                     }
                     CanvasObject::Image(img) => {
-                        if img.y > page_bottom || img.y + img.height < page_top {
+                        if img.y > page_bottom || img.y + img.height < page_top || !across(img.x, img.width) {
                             continue;
                         }
                         if let Some(bytes) = layout.note.media.get(&img.media) {
@@ -1941,22 +1949,22 @@ pub fn export_pdf(
                         }
                     }
                     CanvasObject::Drawing(d) => {
-                        let (_, oy, _, oh) = obj.bbox();
-                        if oy > page_bottom || oy + oh < page_top {
+                        let (ox, oy, ow, oh) = obj.bbox();
+                        if oy > page_bottom || oy + oh < page_top || !across(ox, ow) {
                             continue;
                         }
                         draw_drawing(&mut layer, d, &map, scale);
                     }
                     CanvasObject::Group(_) => {}
                     CanvasObject::File(f) => {
-                        if f.y > page_bottom || f.y + f.height < page_top {
+                        if f.y > page_bottom || f.y + f.height < page_top || !across(f.x, f.width) {
                             continue;
                         }
                         draw_file_chip(&mut layer, f, &map, scale);
                     }
                     CanvasObject::Pdf(pdf) => {
-                        let (ox, oy, _, oh) = obj.bbox();
-                        if oy > page_bottom || oy + oh < page_top {
+                        let (ox, oy, ow, oh) = obj.bbox();
+                        if oy > page_bottom || oy + oh < page_top || !across(ox, ow) {
                             continue;
                         }
                         let Some(bytes) = layout.note.media.get(&pdf.media) else {
@@ -1964,7 +1972,7 @@ pub fn export_pdf(
                         };
                         for slot in pdf.slots() {
                             let y = pdf.y + slot.y;
-                            if y > page_bottom || y + slot.h < page_top {
+                            if y > page_bottom || y + slot.h < page_top || !across(ox + slot.x, slot.w) {
                                 continue;
                             }
                             let px = (slot.w * scale * 2.0).clamp(160.0, 1600.0) as u32;
@@ -2008,6 +2016,9 @@ pub fn export_pdf(
                 }
             }
 
+            if spec.clip {
+                layer.ops.push(Op::RestoreGraphicsState);
+            }
             layer.set_fill_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
             if let Some(h) = layout.header {
                 if page_idx == 0 && !h.is_empty() {
@@ -2885,6 +2896,157 @@ pub struct PageRect {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// Canvas -> sheet scale of this page.
+    pub scale: f64,
+    /// Where the area starts inside the margins (DIP; slides are centred).
+    pub ox: f64,
+    pub oy: f64,
+    /// Only the area shows (a slide page); otherwise content may run past the cut.
+    pub clip: bool,
+}
+
+/// One export page: the canvas area it shows and where that lands on the sheet.
+#[derive(Clone, Debug)]
+struct PageSpec {
+    /// Canvas x drawn at the left margin (before `off_x`).
+    origin_x: f64,
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+    scale: f64,
+    off_x: f64,
+    off_y: f64,
+    clip: bool,
+}
+
+/// Pages of a note. Landscape notes with PDFs get one page per PDF page (slide), fitted
+/// and centred, plus pages for anything beside or between the slides. Everything else is
+/// cut top to bottom at the page width.
+fn note_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Vec<PageSpec> {
+    if let Some(pages) = slide_pages(note, sheet, with_title) {
+        return pages;
+    }
+    let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(|| empty_pagination_bbox(sheet));
+    let scale = sheet.scale(note, bw);
+    let (first_span, full_span, _) = paginate_spans(bh, scale, with_title, sheet);
+    let cuts = page_cuts(note, by, by + bh, first_span, full_span);
+    cuts.iter()
+        .enumerate()
+        .map(|(i, &top)| PageSpec {
+            origin_x: bx,
+            left: f64::NEG_INFINITY,
+            top,
+            right: f64::INFINITY,
+            bottom: cuts.get(i + 1).copied().unwrap_or(by + bh),
+            scale,
+            off_x: 0.0,
+            off_y: 0.0,
+            clip: false,
+        })
+        .collect()
+}
+
+fn slide_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Option<Vec<PageSpec>> {
+    if !sheet.landscape() {
+        return None;
+    }
+    let objects = &note.doc.canvas.objects;
+    let hidden = crate::note::collapsed_child_ids(objects);
+    let mut slots: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for obj in objects {
+        if let CanvasObject::Pdf(pdf) = obj {
+            if hidden.contains(obj.id()) {
+                continue;
+            }
+            for s in pdf.slots() {
+                slots.push((pdf.x + s.x, pdf.y + s.y, s.w, s.h));
+            }
+        }
+    }
+    if slots.is_empty() {
+        return None;
+    }
+    let hits = |b: (f64, f64, f64, f64), r: &(f64, f64, f64, f64)| {
+        b.0 < r.0 + r.2 && b.0 + b.2 > r.0 && b.1 < r.1 + r.3 && b.1 + b.3 > r.1
+    };
+    // Content on no slide (notes beside or between slides) gets its own pages.
+    let mut loose: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for obj in objects {
+        if hidden.contains(obj.id()) || matches!(obj, CanvasObject::Pdf(_) | CanvasObject::Group(_)) {
+            continue;
+        }
+        if let CanvasObject::Text(t) = obj {
+            if text_content_empty(t) {
+                continue;
+            }
+        }
+        let b = obj.bbox();
+        if !slots.iter().any(|r| hits(b, r)) {
+            loose.push(b);
+        }
+    }
+    loose.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let mut bands: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for b in loose {
+        if let Some(last) = bands.last_mut() {
+            if b.1 <= last.3 + 24.0 {
+                last.0 = last.0.min(b.0);
+                last.2 = last.2.max(b.0 + b.2);
+                last.3 = last.3.max(b.1 + b.3);
+                continue;
+            }
+        }
+        bands.push((b.0, b.1, b.0 + b.2, b.1 + b.3));
+    }
+    let mut regions: Vec<(f64, f64, f64, f64, bool)> = slots.iter().map(|s| (s.0, s.1, s.2, s.3, true)).collect();
+    regions.extend(bands.iter().map(|b| (b.0, b.1, b.2 - b.0, b.3 - b.1, false)));
+    regions.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)));
+
+    let avail_w = sheet.content_w();
+    let room_h = |first: bool| sheet.content_h() - if first && with_title { TITLE_BLOCK_DIP } else { 0.0 };
+    let mut pages: Vec<PageSpec> = Vec::new();
+    for (x, y, w, h, slide) in regions {
+        let (w, h) = (w.max(1.0), h.max(1.0));
+        if slide {
+            let avail_h = room_h(pages.is_empty());
+            let scale = (avail_w / w).min(avail_h / h);
+            pages.push(PageSpec {
+                origin_x: x,
+                left: x,
+                top: y,
+                right: x + w,
+                bottom: y + h,
+                scale,
+                off_x: (avail_w - w * scale) / 2.0,
+                off_y: (avail_h - h * scale) / 2.0,
+                clip: true,
+            });
+        } else {
+            // Notes keep their size (shrunk only to fit the width) and run on to more pages.
+            let scale = (avail_w / w).min(1.0);
+            let mut top = y;
+            for _ in 0..200 {
+                if top >= y + h - 0.5 {
+                    break;
+                }
+                let bottom = (top + room_h(pages.is_empty()) / scale).min(y + h);
+                pages.push(PageSpec {
+                    origin_x: x,
+                    left: x,
+                    top,
+                    right: x + w,
+                    bottom,
+                    scale,
+                    off_x: 0.0,
+                    off_y: 0.0,
+                    clip: true,
+                });
+                top = bottom;
+            }
+        }
+    }
+    Some(pages)
 }
 
 /// Page tops. A cut that would slice a text line, or an image or drawing that fits on a
@@ -3014,17 +3176,17 @@ fn empty_pagination_bbox(sheet: Sheet) -> (f64, f64, f64, f64) {
 /// Compute locked page rects for PDF Preview. Must match `export_pdf`.
 pub fn compute_pages(note: &NoteFile) -> Vec<PageRect> {
     let sheet = Sheet::of(note);
-    let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(|| empty_pagination_bbox(sheet));
-    let scale = sheet.scale(note, bw);
-    let (first_span, full_span, _) = paginate_spans(bh, scale, true, sheet);
-    let cuts = page_cuts(note, by, by + bh, first_span, full_span);
-    // The preview reads the scale back as content width / w.
-    let w = bw.max(sheet.content_w() / scale);
-    cuts.iter()
-        .enumerate()
-        .map(|(i, &y)| {
-            let next = cuts.get(i + 1).copied().unwrap_or(by + bh);
-            PageRect { x: bx, y, w, h: (next - y).max(1.0) }
+    note_pages(note, sheet, true)
+        .into_iter()
+        .map(|p| PageRect {
+            x: p.origin_x,
+            y: p.top,
+            w: if p.clip { p.right - p.left } else { sheet.content_w() / p.scale },
+            h: (p.bottom - p.top).max(1.0),
+            scale: p.scale,
+            ox: p.off_x,
+            oy: p.off_y,
+            clip: p.clip,
         })
         .collect()
 }
@@ -3100,8 +3262,17 @@ mod tests {
     #[test]
     fn landscape_sheet_puts_one_slide_per_page() {
         let note = slides_note(true);
-        assert_eq!(compute_pages(&note).len(), 5);
+        let pages = compute_pages(&note);
+        assert_eq!(pages.len(), 5);
         assert!(cuts_on_slide_tops(&note));
+        let sheet = Sheet::LANDSCAPE;
+        for (i, p) in pages.iter().enumerate() {
+            // Exactly one slide, filling the width (16:9 is wider than the content box), centred.
+            assert!(p.clip && (p.w - 900.0).abs() < 0.01 && (p.h - 506.25).abs() < 0.01, "page {i}: {p:?}");
+            assert!((p.w * p.scale - sheet.content_w()).abs() < 0.01, "page {i} fills the width");
+            let room = sheet.content_h() - if i == 0 { TITLE_BLOCK_DIP } else { 0.0 };
+            assert!(p.oy >= 0.0 && p.h * p.scale + p.oy <= room + 0.01, "page {i} fits below the title");
+        }
     }
 
     #[test]

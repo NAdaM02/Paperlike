@@ -699,7 +699,20 @@ export function NotebookView({
   const [pdf, setPdf] = useState<{
     scale: number;
     page: number;
-    pages: { x: number; y: number; h: number; titleBlock: number; title?: string }[];
+    /** Canvas area per sheet: `scale` canvas -> sheet, (`ox`, `oy`) its offset inside the margins
+     *  below the title. `clip` pages (landscape slides) show only their `w` × `h` area. */
+    pages: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      scale: number;
+      ox: number;
+      oy: number;
+      clip: boolean;
+      titleBlock: number;
+      title?: string;
+    }[];
   } | null>(null);
   const [pdfZoom, setPdfZoom] = useState(1);
   const pdfZoomRef = useRef(1);
@@ -710,8 +723,9 @@ export function NotebookView({
   useEffect(() => {
     if (!pdf || !note) return;
     const last = pdf.pages[pdf.pages.length - 1];
-    if (!last) return;
-    const span = (sheet.h - 2 * sheet.margin - last.titleBlock) / pdf.scale;
+    // Slide pages already cover everything (Rust adds pages for loose notes too).
+    if (!last || last.clip) return;
+    const span = (sheet.h - 2 * sheet.margin - last.titleBlock) / last.scale;
     const floor = last.y + span;
     let maxBottom = floor;
     const hidden = collapsedIds(note.doc.canvas.objects);
@@ -726,11 +740,11 @@ export function NotebookView({
       maxBottom = Math.max(maxBottom, b.y + b.h);
     }
     if (maxBottom <= floor + 0.5) return;
-    const full = (sheet.h - 2 * sheet.margin) / pdf.scale;
+    const full = (sheet.h - 2 * sheet.margin) / last.scale;
     const extra: typeof pdf.pages = [];
     let y = floor;
     for (let guard = 0; maxBottom - y > 0.5 && guard < 30; guard++) {
-      extra.push({ x: last.x, y, h: full, titleBlock: 0 });
+      extra.push({ ...last, y, h: full, titleBlock: 0, title: undefined });
       y += full;
     }
     if (extra.length) setPdf((p) => (p ? { ...p, pages: [...p.pages, ...extra] } : p));
@@ -2911,8 +2925,8 @@ export function NotebookView({
         if (pg && r) {
           const zView = pdfZoomRef.current || 1;
           const off = (cy - r.top) / zView;
-          const cyCanvas = Math.min(pg.y + pg.h, Math.max(pg.y, pg.y + (off - sheet.margin - pg.titleBlock) / pdf.scale));
-          const cxCanvas = pg.x + (sheet.w / 2 - sheet.margin) / pdf.scale;
+          const cyCanvas = Math.min(pg.y + pg.h, Math.max(pg.y, pg.y + (off - sheet.margin - pg.titleBlock - pg.oy) / pg.scale));
+          const cxCanvas = pg.x + (pg.clip ? pg.w / 2 : (sheet.w / 2 - sheet.margin) / pg.scale);
           const z = pdfCamZ.current ?? cam.z;
           restoreCamRef.current = { z, x: cam.w / 2 - cxCanvas * z, y: cam.h / 2 - cyCanvas * z };
         }
@@ -2942,7 +2956,7 @@ export function NotebookView({
         const el = els?.[want.page];
         if (!sc || !el || !pg) return;
         const zView = pdfZoomRef.current || 1;
-        const off = (sheet.margin + pg.titleBlock + want.frac * pg.h * pdf.scale) * zView;
+        const off = (sheet.margin + pg.titleBlock + pg.oy + want.frac * pg.h * pg.scale) * zView;
         sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top + off - sc.clientHeight / 2;
       });
     });
@@ -3053,15 +3067,22 @@ export function NotebookView({
           const ok = await save();
           if (!ok) return;
         }
-        const rects = await invoke<{ x: number; y: number; w: number; h: number }[]>("compute_pdf_pages", {
+        const rects = await invoke<
+          { x: number; y: number; w: number; h: number; scale: number; ox: number; oy: number; clip: boolean }[]
+        >("compute_pdf_pages", {
           notePath: n.path,
         });
         if (!rects.length) return;
-        const scale = rects[0].w > 0 ? Math.min(1, cw / rects[0].w) : 1;
+        const scale = rects[0].scale > 0 ? rects[0].scale : rects[0].w > 0 ? Math.min(1, cw / rects[0].w) : 1;
         const pages = rects.map((r, i) => ({
           x: r.x,
           y: r.y,
+          w: r.w,
           h: Math.max(1, r.h),
+          scale: r.scale > 0 ? r.scale : scale,
+          ox: r.ox ?? 0,
+          oy: r.oy ?? 0,
+          clip: !!r.clip,
           titleBlock: i === 0 ? PDF_TITLE_BLOCK : 0,
           title: i === 0 ? titleLabel : undefined,
         }));
@@ -4800,7 +4821,11 @@ export function NotebookView({
                   </div>
                   <div className="pdf-scroll" ref={pdfScrollRef}>
                     {pdf.pages.map((pg, i) => {
-                      const z = pdf.scale * pdfZoom;
+                      const z = pg.scale * pdfZoom;
+                      // A slide page frames just its slide, centred; other pages fill the content box.
+                      const frame: React.CSSProperties = pg.clip
+                        ? { position: "absolute", left: pg.ox * pdfZoom, top: pg.oy * pdfZoom, width: pg.w * z, height: pg.h * z, overflow: "hidden" }
+                        : { position: "absolute", inset: 0 };
                       return (
                       <div key={i} className="pdf-page" style={{ width: sheet.w * pdfZoom, height: sheet.h * pdfZoom, marginBottom: 26 * pdfZoom }}>
                         <div
@@ -4818,6 +4843,7 @@ export function NotebookView({
                             </div>
                           ) : null}
                           <div className="pdf-content" style={{ top: pg.titleBlock * pdfZoom, height: (sheet.h - 2 * sheet.margin - pg.titleBlock) * pdfZoom }}>
+                            <div style={frame}>
                             {pdf.page === i ? (
                               <CanvasEditor
                                 lockedView={{ x: -pg.x * z, y: -pg.y * z, z }}
@@ -4857,18 +4883,19 @@ export function NotebookView({
                             ) : (
                               <LazyPdfStatic
                                 note={note}
-                                scale={pdf.scale * pdfZoom}
+                                scale={z}
                                 originX={pg.x}
                                 originY={pg.y}
                                 view={{
                                   x: pg.x,
                                   y: pg.y,
-                                  w: (sheet.w - 2 * sheet.margin) / pdf.scale,
-                                  h: Math.max(1, (sheet.h - 2 * sheet.margin - pg.titleBlock) / pdf.scale),
+                                  w: pg.clip ? pg.w : (sheet.w - 2 * sheet.margin) / pg.scale,
+                                  h: pg.clip ? pg.h : Math.max(1, (sheet.h - 2 * sheet.margin - pg.titleBlock) / pg.scale),
                                 }}
                                 onActivate={() => setPdf((p) => (p ? { ...p, page: i } : p))}
                               />
                             )}
+                            </div>
                           </div>
                         </div>
                         <div className="page-num" style={{ bottom: 14 * pdfZoom, fontSize: 11 * pdfZoom }}>
