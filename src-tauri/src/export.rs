@@ -1318,8 +1318,66 @@ const DIP_TO_MM: f64 = 25.4 / 96.0;
 const PAGE_W_DIP: f64 = 794.0;
 const PAGE_H_DIP: f64 = 1123.0;
 const MARGIN_DIP: f64 = 40.0;
-const CONTENT_W_DIP: f64 = PAGE_W_DIP - 2.0 * MARGIN_DIP;
-const CONTENT_H_DIP: f64 = PAGE_H_DIP - 2.0 * MARGIN_DIP;
+
+/// Export page size for one note: A4 portrait, or A4 landscape when the note asks
+/// for it (`canvas.page_orientation = "landscape"`, set from PDF Preview).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Sheet {
+    w: f64,
+    h: f64,
+}
+
+impl Sheet {
+    const PORTRAIT: Sheet = Sheet { w: PAGE_W_DIP, h: PAGE_H_DIP };
+    const LANDSCAPE: Sheet = Sheet { w: PAGE_H_DIP, h: PAGE_W_DIP };
+
+    fn of(note: &NoteFile) -> Sheet {
+        match note.doc.canvas.extra.get("page_orientation").and_then(|v| v.as_str()) {
+            Some("landscape") => Sheet::LANDSCAPE,
+            _ => Sheet::PORTRAIT,
+        }
+    }
+    fn content_w(&self) -> f64 {
+        self.w - 2.0 * MARGIN_DIP
+    }
+    fn content_h(&self) -> f64 {
+        self.h - 2.0 * MARGIN_DIP
+    }
+    fn landscape(&self) -> bool {
+        self.w > self.h
+    }
+    /// Canvas -> page scale. Wide content shrinks to the page width. On landscape
+    /// sheets the tallest PDF page also has to fit one page (below the title), so a
+    /// slide is never cut in two.
+    fn scale(&self, note: &NoteFile, bw: f64) -> f64 {
+        let mut scale = if bw > self.content_w() { self.content_w() / bw } else { 1.0 };
+        if self.landscape() {
+            let room = self.content_h() - TITLE_BLOCK_DIP;
+            let tallest = pdf_slot_spans(note).iter().fold(0.0_f64, |m, (_, h)| m.max(*h));
+            if tallest * scale > room && tallest > 0.0 {
+                scale = room / tallest;
+            }
+        }
+        scale
+    }
+}
+
+/// (top, height) of every visible page of every PDF on the canvas.
+fn pdf_slot_spans(note: &NoteFile) -> Vec<(f64, f64)> {
+    let hidden = crate::note::collapsed_child_ids(&note.doc.canvas.objects);
+    let mut out = Vec::new();
+    for obj in &note.doc.canvas.objects {
+        if let CanvasObject::Pdf(pdf) = obj {
+            if hidden.contains(obj.id()) {
+                continue;
+            }
+            for slot in pdf.slots() {
+                out.push((pdf.y + slot.y, slot.h));
+            }
+        }
+    }
+    out
+}
 const PDF_TITLE_PT: f64 = 15.0;
 const PDF_TITLE_GAP_DIP: f64 = 20.0;
 /// Reserved band at the top of page 1 for the note title + breathing room.
@@ -1559,6 +1617,8 @@ struct Mapper {
     bx: f64,
     page_top: f64,
     scale: f64,
+    /// Sheet height in DIP (PDF y runs up from the bottom edge).
+    page_h: f64,
     /// Pushes page-1 canvas content below the title band.
     content_offset_y: f64,
 }
@@ -1568,14 +1628,14 @@ impl Mapper {
     fn point(&self, x: f64, y: f64) -> Point {
         let px = MARGIN_DIP + (x - self.bx) * self.scale;
         let py = MARGIN_DIP + self.content_offset_y + (y - self.page_top) * self.scale;
-        Point::new(Mm((px * DIP_TO_MM) as f32), Mm(((PAGE_H_DIP - py) * DIP_TO_MM) as f32))
+        Point::new(Mm((px * DIP_TO_MM) as f32), Mm(((self.page_h - py) * DIP_TO_MM) as f32))
     }
     fn mm_x(&self, x: f64) -> Mm {
         Mm(((MARGIN_DIP + (x - self.bx) * self.scale) * DIP_TO_MM) as f32)
     }
     fn mm_y(&self, y: f64) -> Mm {
         let py = MARGIN_DIP + self.content_offset_y + (y - self.page_top) * self.scale;
-        Mm(((PAGE_H_DIP - py) * DIP_TO_MM) as f32)
+        Mm(((self.page_h - py) * DIP_TO_MM) as f32)
     }
 }
 
@@ -1584,11 +1644,17 @@ struct Layer {
     ops: Vec<Op>,
     /// Graphics state with the multiply blend mode, for highlighter strokes.
     multiply: Option<ExtendedGraphicsStateId>,
+    /// Page size in mm (A4 portrait unless set).
+    size_mm: (f32, f32),
 }
 
 impl Layer {
     fn new(multiply: Option<ExtendedGraphicsStateId>) -> Self {
-        Self { ops: Vec::new(), multiply }
+        Self { ops: Vec::new(), multiply, size_mm: (210.0, 297.0) }
+    }
+    fn sized(mut self, sheet: Sheet) -> Self {
+        self.size_mm = if sheet.landscape() { (297.0, 210.0) } else { (210.0, 297.0) };
+        self
     }
     fn set_fill_color(&mut self, col: Color) {
         self.ops.push(Op::SetFillColor { col });
@@ -1609,7 +1675,7 @@ impl Layer {
         ]);
     }
     fn into_page(self) -> PdfPage {
-        PdfPage::new(Mm(210.0), Mm(297.0), self.ops)
+        PdfPage::new(Mm(self.size_mm.0), Mm(self.size_mm.1), self.ops)
     }
 }
 
@@ -1751,21 +1817,19 @@ pub fn export_pdf(
         bx: f64,
         bottom: f64,
         scale: f64,
+        sheet: Sheet,
         cuts: Vec<f64>,
     }
 
     let layouts: Vec<NotePages<'_>> = notes
         .iter()
         .map(|(note, title, header)| {
-            let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(empty_pagination_bbox);
-            let scale = if bw > CONTENT_W_DIP {
-                CONTENT_W_DIP / bw
-            } else {
-                1.0
-            };
+            let sheet = Sheet::of(note);
+            let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(|| empty_pagination_bbox(sheet));
+            let scale = sheet.scale(note, bw);
             let header_text = header.as_deref().or(Some(*title));
             let with_title = header_text.is_some_and(|h: &str| !h.is_empty());
-            let (first_span, full_span, _) = paginate_spans(bh, scale, with_title);
+            let (first_span, full_span, _) = paginate_spans(bh, scale, with_title, sheet);
             let cuts = page_cuts(note, by, by + bh, first_span, full_span);
             NotePages {
                 note,
@@ -1773,6 +1837,7 @@ pub fn export_pdf(
                 bx,
                 bottom: by + bh,
                 scale,
+                sheet,
                 cuts,
             }
         })
@@ -1818,12 +1883,13 @@ pub fn export_pdf(
             } else {
                 0.0
             };
-            let mut layer = Layer::new(Some(multiply.clone()));
+            let mut layer = Layer::new(Some(multiply.clone())).sized(layout.sheet);
             let page_bottom = page_top + page_span;
             let map = Mapper {
                 bx: layout.bx,
                 page_top,
                 scale: layout.scale,
+                page_h: layout.sheet.h,
                 content_offset_y: content_offset,
             };
             let scale = layout.scale;
@@ -1951,7 +2017,7 @@ pub fn export_pdf(
                         pdf_text(h),
                         PDF_TITLE_PT as f32,
                         Mm((MARGIN_DIP * DIP_TO_MM) as f32),
-                        Mm(((PAGE_H_DIP - title_baseline) * DIP_TO_MM) as f32),
+                        Mm(((layout.sheet.h - title_baseline) * DIP_TO_MM) as f32),
                         BuiltinFont::HelveticaBold,
                     );
                     layer.set_fill_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
@@ -1959,7 +2025,8 @@ pub fn export_pdf(
             }
             if opts.page_numbers {
                 let label = format!("{} / {}", global_page + 1, total_pages);
-                layer.use_text(label, 9.0, Mm(100.0), Mm(8.0), base_font);
+                let mid = (layout.sheet.w * DIP_TO_MM / 2.0 - 5.0) as f32;
+                layer.use_text(label, 9.0, Mm(mid), Mm(8.0), base_font);
             }
             if opts.export_date {
                 let d = chrono::Local::now().format("%Y. %m. %d.").to_string();
@@ -2848,6 +2915,8 @@ fn page_cuts(note: &NoteFile, top: f64, bottom: f64, first_span: f64, full_span:
             _ => {}
         }
     }
+    // PDF pages (slides) are kept whole: a cut may move up to any page top on the sheet.
+    let pdf_pages = pdf_slot_spans(note);
     let mut cuts = vec![top];
     let mut y = top;
     let mut first = true;
@@ -2870,6 +2939,11 @@ fn page_cuts(note: &NoteFile, top: f64, bottom: f64, first_span: f64, full_span:
         }
         for (oy, h) in &wholes {
             if *h <= span && *oy < raw && *oy + *h > raw && *oy >= floor && *oy < best {
+                best = *oy;
+            }
+        }
+        for (oy, h) in &pdf_pages {
+            if *h <= span && *oy < raw && *oy + *h > raw && *oy > y + 1.0 && *oy < best {
                 best = *oy;
             }
         }
@@ -2932,22 +3006,20 @@ fn page_content_bbox(note: &NoteFile) -> Option<(f64, f64, f64, f64)> {
 /// No real content. Width fits the page (scale 1). Height stays strictly under the
 /// titled first span — a fallback of `CONTENT_H_DIP` is one title-block too tall
 /// and `page_cuts` opens a second, nearly empty page.
-fn empty_pagination_bbox() -> (f64, f64, f64, f64) {
-    let (first_span, _, _) = paginate_spans(0.0, 1.0, true);
-    (0.0, 0.0, CONTENT_W_DIP, (first_span - 1.0).max(1.0))
+fn empty_pagination_bbox(sheet: Sheet) -> (f64, f64, f64, f64) {
+    let (first_span, _, _) = paginate_spans(0.0, 1.0, true, sheet);
+    (0.0, 0.0, sheet.content_w(), (first_span - 1.0).max(1.0))
 }
 
 /// Compute locked page rects for PDF Preview. Must match `export_pdf`.
 pub fn compute_pages(note: &NoteFile) -> Vec<PageRect> {
-    let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(empty_pagination_bbox);
-    let scale = if bw > CONTENT_W_DIP {
-        CONTENT_W_DIP / bw
-    } else {
-        1.0
-    };
-    let (first_span, full_span, _) = paginate_spans(bh, scale, true);
+    let sheet = Sheet::of(note);
+    let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(|| empty_pagination_bbox(sheet));
+    let scale = sheet.scale(note, bw);
+    let (first_span, full_span, _) = paginate_spans(bh, scale, true, sheet);
     let cuts = page_cuts(note, by, by + bh, first_span, full_span);
-    let w = bw.max(CONTENT_W_DIP / scale);
+    // The preview reads the scale back as content width / w.
+    let w = bw.max(sheet.content_w() / scale);
     cuts.iter()
         .enumerate()
         .map(|(i, &y)| {
@@ -2957,14 +3029,15 @@ pub fn compute_pages(note: &NoteFile) -> Vec<PageRect> {
         .collect()
 }
 
-fn paginate_spans(bh: f64, scale: f64, with_title: bool) -> (f64, f64, usize) {
+fn paginate_spans(bh: f64, scale: f64, with_title: bool, sheet: Sheet) -> (f64, f64, usize) {
+    let content_h = sheet.content_h();
     let first_h = if with_title {
-        CONTENT_H_DIP - TITLE_BLOCK_DIP
+        content_h - TITLE_BLOCK_DIP
     } else {
-        CONTENT_H_DIP
+        content_h
     };
     let first_span = first_h / scale;
-    let full_span = CONTENT_H_DIP / scale;
+    let full_span = content_h / scale;
     let n = if bh <= first_span {
         1
     } else {
@@ -3002,6 +3075,39 @@ mod tests {
             text: text.into(),
             ..Default::default()
         }
+    }
+
+    fn slides_note(landscape: bool) -> NoteFile {
+        let pdf: CanvasObject = serde_json::from_value(serde_json::json!({
+            "type": "pdf", "id": "p1", "x": 0.0, "y": 0.0, "z": 1, "media": "m.pdf",
+            "pages": [1, 2, 3, 4, 5], "aspects": [0.5625, 0.5625, 0.5625, 0.5625, 0.5625],
+            "layout": "stack", "pageWidth": 900.0, "gap": 14.0
+        }))
+        .unwrap();
+        let mut note = note_with(vec![pdf], HashMap::new());
+        if landscape {
+            note.doc.canvas.extra.insert("page_orientation".into(), "landscape".into());
+        }
+        note
+    }
+
+    /// Every cut lands on a slide top, so no slide is split across pages.
+    fn cuts_on_slide_tops(note: &NoteFile) -> bool {
+        let tops: Vec<f64> = pdf_slot_spans(note).iter().map(|(y, _)| *y).collect();
+        compute_pages(note).iter().all(|p| tops.iter().any(|t| (t - p.y).abs() < 0.01))
+    }
+
+    #[test]
+    fn landscape_sheet_puts_one_slide_per_page() {
+        let note = slides_note(true);
+        assert_eq!(compute_pages(&note).len(), 5);
+        assert!(cuts_on_slide_tops(&note));
+    }
+
+    #[test]
+    fn portrait_sheet_never_splits_a_slide() {
+        let note = slides_note(false);
+        assert!(cuts_on_slide_tops(&note));
     }
 
     #[test]

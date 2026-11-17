@@ -229,6 +229,9 @@ export function getTopContentCam(
 }
 
 const A4 = { w: 794, h: 1123, margin: 40 };
+const A4_LANDSCAPE = { w: 1123, h: 794, margin: 40 };
+/** Export sheet of a note: A4, turned sideways when the note asks for landscape pages. */
+const sheetOf = (n: NotePayload | null | undefined) => (n?.doc.canvas.page_orientation === "landscape" ? A4_LANDSCAPE : A4);
 const PDF_ZOOM_MIN = 0.4;
 const PDF_ZOOM_MAX = 10;
 
@@ -574,6 +577,7 @@ export function NotebookView({
   const dragPrep = useRef(0);
   const dragPlaced = useRef(new Set<number>());
   const [note, setNote] = useState<NotePayload | null>(null);
+  const sheet = sheetOf(note);
   const [dirty, setDirty] = useState(false);
   const [saveInFlight, setSaveInFlight] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -705,7 +709,7 @@ export function NotebookView({
     if (!pdf || !note) return;
     const last = pdf.pages[pdf.pages.length - 1];
     if (!last) return;
-    const span = (A4.h - 2 * A4.margin - last.titleBlock) / pdf.scale;
+    const span = (sheet.h - 2 * sheet.margin - last.titleBlock) / pdf.scale;
     const floor = last.y + span;
     let maxBottom = floor;
     const hidden = collapsedIds(note.doc.canvas.objects);
@@ -720,7 +724,7 @@ export function NotebookView({
       maxBottom = Math.max(maxBottom, b.y + b.h);
     }
     if (maxBottom <= floor + 0.5) return;
-    const full = (A4.h - 2 * A4.margin) / pdf.scale;
+    const full = (sheet.h - 2 * sheet.margin) / pdf.scale;
     const extra: typeof pdf.pages = [];
     let y = floor;
     for (let guard = 0; maxBottom - y > 0.5 && guard < 30; guard++) {
@@ -2882,8 +2886,8 @@ export function NotebookView({
         if (pg && r) {
           const zView = pdfZoomRef.current || 1;
           const off = (cy - r.top) / zView;
-          const cyCanvas = Math.min(pg.y + pg.h, Math.max(pg.y, pg.y + (off - A4.margin - pg.titleBlock) / pdf.scale));
-          const cxCanvas = pg.x + (A4.w / 2 - A4.margin) / pdf.scale;
+          const cyCanvas = Math.min(pg.y + pg.h, Math.max(pg.y, pg.y + (off - sheet.margin - pg.titleBlock) / pdf.scale));
+          const cxCanvas = pg.x + (sheet.w / 2 - sheet.margin) / pdf.scale;
           const z = pdfCamZ.current ?? cam.z;
           restoreCamRef.current = { z, x: cam.w / 2 - cxCanvas * z, y: cam.h / 2 - cyCanvas * z };
         }
@@ -2913,7 +2917,7 @@ export function NotebookView({
         const el = els?.[want.page];
         if (!sc || !el || !pg) return;
         const zView = pdfZoomRef.current || 1;
-        const off = (A4.margin + pg.titleBlock + want.frac * pg.h * pdf.scale) * zView;
+        const off = (sheet.margin + pg.titleBlock + want.frac * pg.h * pdf.scale) * zView;
         sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top + off - sc.clientHeight / 2;
       });
     });
@@ -2991,12 +2995,33 @@ export function NotebookView({
     };
   }, [pdf]);
 
+  /** Portrait or landscape export pages for this note; the preview re-cuts once the note has it. */
+  const togglePageOrientation = () => {
+    if (!noteRef.current || expired) return;
+    snapshot("pages");
+    updateNote((cur) => {
+      const { page_orientation, ...canvas } = cur.doc.canvas;
+      return {
+        ...cur,
+        doc: { ...cur.doc, canvas: page_orientation === "landscape" ? canvas : { ...canvas, page_orientation: "landscape" } },
+      };
+    });
+  };
+  const orientation = note?.doc.canvas.page_orientation ?? "portrait";
+  const lastOrientation = useRef(orientation);
+  useEffect(() => {
+    if (lastOrientation.current === orientation) return;
+    lastOrientation.current = orientation;
+    if (pdf) computePdf();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-cut only when the orientation flips
+  }, [orientation]);
+
   /** Page cuts from Rust `compute_pdf_pages` — same path as export_pdf. */
   const computePdf = (entering = false) => {
     const n = noteRef.current;
     if (!n) return;
     const titleLabel = n.display_title || n.title || "Untitled";
-    const cw = A4.w - 2 * A4.margin;
+    const cw = sheetOf(n).w - 2 * sheetOf(n).margin;
     void (async () => {
       try {
         if (dirtyRef.current) {
@@ -4733,6 +4758,14 @@ export function NotebookView({
                         {Math.round(pdfZoom * 100)}%
                       </button>
                     </label>
+                    <button
+                      type="button"
+                      className={`btn ${sheet === A4_LANDSCAPE ? "active" : ""}`}
+                      title="Export this note on landscape pages. PDF pages and slides stay whole."
+                      onClick={togglePageOrientation}
+                    >
+                      Landscape
+                    </button>
                     <button className="btn" onClick={() => computePdf()}>
                       Refresh
                     </button>
@@ -4744,14 +4777,14 @@ export function NotebookView({
                     {pdf.pages.map((pg, i) => {
                       const z = pdf.scale * pdfZoom;
                       return (
-                      <div key={i} className="pdf-page" style={{ width: A4.w * pdfZoom, height: A4.h * pdfZoom, marginBottom: 26 * pdfZoom }}>
+                      <div key={i} className="pdf-page" style={{ width: sheet.w * pdfZoom, height: sheet.h * pdfZoom, marginBottom: 26 * pdfZoom }}>
                         <div
                           className="content-clip"
                           style={{
-                            left: A4.margin * pdfZoom,
-                            top: A4.margin * pdfZoom,
-                            width: (A4.w - 2 * A4.margin) * pdfZoom,
-                            height: (A4.h - 2 * A4.margin) * pdfZoom,
+                            left: sheet.margin * pdfZoom,
+                            top: sheet.margin * pdfZoom,
+                            width: (sheet.w - 2 * sheet.margin) * pdfZoom,
+                            height: (sheet.h - 2 * sheet.margin) * pdfZoom,
                           }}
                         >
                           {pg.title ? (
@@ -4759,7 +4792,7 @@ export function NotebookView({
                               {pg.title}
                             </div>
                           ) : null}
-                          <div className="pdf-content" style={{ top: pg.titleBlock * pdfZoom, height: (A4.h - 2 * A4.margin - pg.titleBlock) * pdfZoom }}>
+                          <div className="pdf-content" style={{ top: pg.titleBlock * pdfZoom, height: (sheet.h - 2 * sheet.margin - pg.titleBlock) * pdfZoom }}>
                             {pdf.page === i ? (
                               <CanvasEditor
                                 lockedView={{ x: -pg.x * z, y: -pg.y * z, z }}
@@ -4805,8 +4838,8 @@ export function NotebookView({
                                 view={{
                                   x: pg.x,
                                   y: pg.y,
-                                  w: (A4.w - 2 * A4.margin) / pdf.scale,
-                                  h: Math.max(1, (A4.h - 2 * A4.margin - pg.titleBlock) / pdf.scale),
+                                  w: (sheet.w - 2 * sheet.margin) / pdf.scale,
+                                  h: Math.max(1, (sheet.h - 2 * sheet.margin - pg.titleBlock) / pdf.scale),
                                 }}
                                 onActivate={() => setPdf((p) => (p ? { ...p, page: i } : p))}
                               />

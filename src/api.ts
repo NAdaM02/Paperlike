@@ -357,7 +357,13 @@ export type NoteDocument = {
   format: string;
   version: number;
   meta: { created: string; modified: string; app_version: string };
-  canvas: { objects: CanvasObject[]; paper?: PaperStyle; quickCards?: SavedQuickCard[] };
+  canvas: {
+    objects: CanvasObject[];
+    paper?: PaperStyle;
+    quickCards?: SavedQuickCard[];
+    /** PDF export and preview pages. Unset = portrait A4. */
+    page_orientation?: "landscape";
+  };
 };
 
 export type PaperStyle = "blank" | "dots" | "lines" | "grid";
