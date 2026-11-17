@@ -33,7 +33,7 @@ const PdfViewMemo = memo(PdfView);
 const NO_PAGES: number[] = [];
 import { mergePdfParts } from "./pdfDoc";
 import { pdfSize, pdfSlots } from "./pdfLayout";
-import { blocksPlainText, blocksToHtml, htmlToBlocks, FONT_SIZES, readFormatState } from "./richtext";
+import { blocksPlainText, blocksToHtml, htmlToBlocks, readFormatState, stepFontSize } from "./richtext";
 import { normalizeDecorations, setFontSize } from "./formatting";
 import {
   applyCellSelection,
@@ -1275,14 +1275,7 @@ export function CanvasEditor({
             textSelWheelAcc.current = 0;
             const { host } = selTarget;
             const cur = readFormatState(host)?.size ?? defaultSize;
-            let idx = FONT_SIZES.indexOf(cur);
-            if (idx < 0) {
-              idx = FONT_SIZES.findIndex((s) => s >= cur);
-              if (idx < 0) idx = FONT_SIZES.length - 1;
-              else if (idx > 0 && cur - FONT_SIZES[idx - 1] < FONT_SIZES[idx] - cur) idx = idx - 1;
-            }
-            const nextIdx = Math.max(0, Math.min(FONT_SIZES.length - 1, idx + dir));
-            const nextSize = FONT_SIZES[nextIdx];
+            const nextSize = stepFontSize(cur, dir);
             if (nextSize !== cur) {
               if (host !== document.activeElement && !host.contains(document.activeElement)) {
                 host.focus({ preventScroll: true });

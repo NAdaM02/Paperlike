@@ -69,6 +69,9 @@ import {
   DEFAULT_FONT,
   DEFAULT_SIZE,
   FONT_SIZES,
+  MAX_FONT_SIZE,
+  MIN_FONT_SIZE,
+  stepFontSize,
   FONTS,
   FormatState,
   htmlToBlocks,
@@ -1949,7 +1952,7 @@ export function NotebookView({
 
   /** Size: whole window when canvas-highlighted; else caret/selection (typing default). */
   const changeSize = (pt: number) => {
-    const size = Math.max(5, Math.min(200, pt));
+    const size = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, pt));
     updateTextPrefs({ size });
     setSizeDraft(null);
     applyLiveFormat(() => setFontSize(size));
@@ -2052,15 +2055,8 @@ export function NotebookView({
       e.stopPropagation();
       keepTextSelection();
       const cur = formatRef.current?.size ?? defaultSizeRef.current;
-      let i = FONT_SIZES.indexOf(cur);
-      if (i < 0) {
-        i = FONT_SIZES.findIndex((s) => s >= cur);
-        if (i < 0) i = FONT_SIZES.length - 1;
-        else if (i > 0 && cur - FONT_SIZES[i - 1] < FONT_SIZES[i] - cur) i = i - 1;
-      }
       // Scroll up → larger, scroll down → smaller (same feel as zoom)
-      const dir = e.deltaY > 0 ? -1 : 1;
-      changeSizeRef.current(FONT_SIZES[Math.max(0, Math.min(FONT_SIZES.length - 1, i + dir))]);
+      changeSizeRef.current(stepFontSize(cur, e.deltaY > 0 ? -1 : 1));
     };
 
     const onBulletWheel = (e: WheelEvent) => {
@@ -3720,7 +3716,7 @@ export function NotebookView({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const pt = parseInt(sizeDraft ?? "");
-                    if (pt >= 5 && pt <= 200) changeSize(pt);
+                    if (pt >= MIN_FONT_SIZE && pt <= MAX_FONT_SIZE) changeSize(pt);
                     setSizeDraft(null);
                   } else if (e.key === "Escape") {
                     setSizeDraft(null);
@@ -3728,7 +3724,7 @@ export function NotebookView({
                 }}
                 onBlur={() => {
                   const pt = parseInt(sizeDraft ?? "");
-                  if (pt >= 5 && pt <= 200) changeSize(pt);
+                  if (pt >= MIN_FONT_SIZE && pt <= MAX_FONT_SIZE) changeSize(pt);
                   setSizeDraft(null);
                 }}
               />

@@ -32,6 +32,21 @@ export const FONTS = [
 ];
 
 export const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 72];
+/** Limits of the top bar's size box and buttons; scrolling reaches the same range. */
+export const MIN_FONT_SIZE = 5;
+export const MAX_FONT_SIZE = 200;
+const WHEEL_SIZES = [5, 6, 7, ...FONT_SIZES, 96, 128, 160, 200];
+
+/** Next size one scroll step up (`dir` 1) or down (-1) from `cur`, snapping to the nearest step. */
+export function stepFontSize(cur: number, dir: 1 | -1): number {
+  let i = WHEEL_SIZES.indexOf(cur);
+  if (i < 0) {
+    i = WHEEL_SIZES.findIndex((s) => s >= cur);
+    if (i < 0) i = WHEEL_SIZES.length - 1;
+    else if (i > 0 && cur - WHEEL_SIZES[i - 1] < WHEEL_SIZES[i] - cur) i = i - 1;
+  }
+  return WHEEL_SIZES[Math.max(0, Math.min(WHEEL_SIZES.length - 1, i + dir))];
+}
 
 export const DEFAULT_FONT = "Segoe UI";
 export const DEFAULT_SIZE = 11;
