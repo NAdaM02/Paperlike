@@ -226,7 +226,8 @@ export function PdfView({
   const [images, setImages] = useState<Record<number, ImgHit[]>>({});
   const [picked, setPicked] = useState<PickedImage | null>(null);
   const [failed, setFailed] = useState(false);
-  const [menu, setMenu] = useState<{ x: number; y: number; pages: number[] } | null>(null);
+  /** `at` is the page that was right-clicked; `pages` the pages the menu acts on. */
+  const [menu, setMenu] = useState<{ x: number; y: number; pages: number[]; at: number } | null>(null);
   // Once the menu is open, releasing Shift must not freeze the page or dismiss Unlock.
   const inert = !!obj.locked && !shiftHeld && !menu;
   const canvasRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
@@ -549,7 +550,7 @@ export function PdfView({
               const already = chosen.includes(slot.page);
               const pages = already && chosen.length ? [...chosen] : [slot.page];
               if (!already) onChoose([slot.page], false, true);
-              setMenu({ x: e.clientX, y: e.clientY, pages });
+              setMenu({ x: e.clientX, y: e.clientY, pages, at: slot.page });
             }}
           >
             <canvas ref={(node) => { canvasRefs.current[slot.page] = node; }} />
@@ -678,6 +679,16 @@ export function PdfView({
                   disabled: pages.length === 0 || pages.length >= obj.pages.length,
                   onClick: () => onDrop(pages),
                 },
+                ...(() => {
+                  // Cut the joined pages at the clicked page; the cut-off part becomes its own PDF (Ctrl+Z undoes).
+                  const at = obj.pages.indexOf(menu.at);
+                  const below = at > 0 ? obj.pages.slice(at) : [];
+                  const above = at >= 0 && at < obj.pages.length - 1 ? obj.pages.slice(0, at + 1) : [];
+                  return [
+                    { label: "Drop page and all below", disabled: !below.length, onClick: () => onDrop(below) },
+                    { label: "Drop page and all above", disabled: !above.length, onClick: () => onDrop(above) },
+                  ];
+                })(),
                 {
                   label: "Separate all pages",
                   disabled: obj.pages.length < 2,
