@@ -293,6 +293,8 @@ export default function App() {
       question: result.action === "custom" ? "" : result.action,
       selection: "",
       imagePath: result.filePath,
+      imagePaths: result.filePaths,
+      areaMap: result.map,
       imagePreview: result.previewUrl,
       analyze: result.action === "custom" ? undefined : result.action,
       custom: result.action === "custom",

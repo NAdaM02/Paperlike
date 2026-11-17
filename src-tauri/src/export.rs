@@ -1803,6 +1803,148 @@ fn draw_image(
     Ok(())
 }
 
+/// Rasterise one area of the canvas from the note's own data (Analyze): the objects are
+/// drawn exactly as the PDF export draws them, onto a page the size of the area, and Windows
+/// renders that page. Image pixel (px, py) is note point (x + px / k, y + py / k) for
+/// k = `px_per_dip`. Returns the PNG and its size.
+pub fn render_area_png(
+    objects: &[CanvasObject],
+    media: &HashMap<String, Vec<u8>>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    px_per_dip: f64,
+) -> Result<(Vec<u8>, u32, u32)> {
+    if !(w > 0.0 && h > 0.0 && px_per_dip > 0.0) {
+        anyhow::bail!("empty area");
+    }
+    let hidden = crate::note::collapsed_child_ids(objects);
+    let mut objs: Vec<&CanvasObject> = objects.iter().filter(|o| !hidden.contains(o.id())).collect();
+    objs.sort_by_key(|o| o.z());
+
+    let mut doc = PdfDocument::new("Paperlike area");
+    let multiply = doc.add_graphics_state(
+        ExtendedGraphicsState::default()
+            .with_blend_mode(BlendMode::Seperable(SeperableBlendMode::Multiply)),
+    );
+    let mut layer = Layer::new(Some(multiply));
+    layer.size_mm = ((w * DIP_TO_MM) as f32, (h * DIP_TO_MM) as f32);
+    // No margins: the page is the area.
+    let map = Mapper {
+        bx: x,
+        page_top: y,
+        scale: 1.0,
+        page_h: h,
+        content_offset_x: -MARGIN_DIP,
+        content_offset_y: -MARGIN_DIP,
+    };
+    let view = View { top: y, bottom: y + h, left: x, right: x + w };
+    layer.ops.push(Op::SaveGraphicsState);
+    layer.ops.push(Op::DrawPolygon {
+        polygon: Polygon {
+            rings: vec![PolygonRing {
+                points: line_points(vec![
+                    map.point(x, y),
+                    map.point(x + w, y),
+                    map.point(x + w, y + h),
+                    map.point(x, y + h),
+                ]),
+            }],
+            mode: PaintMode::Clip,
+            winding_order: WindingOrder::NonZero,
+        },
+    });
+    let mut cache = HashMap::new();
+    draw_objects(
+        &mut doc,
+        &mut layer,
+        &objs,
+        media,
+        &map,
+        &view,
+        &mut cache,
+        &|slot_w| (slot_w * px_per_dip).clamp(160.0, 4096.0) as u32,
+    );
+    layer.ops.push(Op::RestoreGraphicsState);
+    doc.with_pages(vec![layer.into_page()]);
+    let mut warnings = Vec::new();
+    let pdf = doc.save(&PdfSaveOptions::default(), &mut warnings);
+    let px_w = (w * px_per_dip).round().max(1.0) as u32;
+    let png = crate::pdf_render::render_pdf_page(&pdf, 1, px_w)?;
+    let (pw, ph) = image::ImageReader::new(std::io::Cursor::new(&png))
+        .with_guessed_format()?
+        .into_dimensions()?;
+    if pw == px_w {
+        return Ok((png, pw, ph));
+    }
+    // Windows sizes the render in display pixels (x1.4 at 140 % scaling); bring it back to
+    // the planned size so the pixel <-> note mapping and the size cap hold.
+    let px_h = (h * px_per_dip).round().max(1.0) as u32;
+    let img = image::load_from_memory(&png)?;
+    let small = img.resize_exact(px_w, px_h, image::imageops::FilterType::Triangle);
+    let mut out = Vec::new();
+    small.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok((out, px_w, px_h))
+}
+
+/// One image of an area render: its part of the area in note units, and pixels per unit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AreaShot {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub k: f64,
+    /// A downscaled view of the whole area, sent before its tiles.
+    pub overview: bool,
+}
+
+/// Longest image side the chat sites take without shrinking it much.
+pub const AREA_MAX_SIDE: f64 = 2048.0;
+const AREA_MAX_TILES: usize = 6;
+/// Below this (about 120 dpi) small handwriting gets hard to read, so tile instead.
+const AREA_MIN_SINGLE_K: f64 = 1.25;
+
+/// How to cut an area into images: one image at `k` pixels per note unit when it fits,
+/// else one at a lower k down to ~120 dpi, else an overview plus up to six tiles.
+pub fn plan_area_shots(x: f64, y: f64, w: f64, h: f64, k: f64) -> Vec<AreaShot> {
+    let long = w.max(h);
+    let one = |k: f64, overview: bool| AreaShot { x, y, w, h, k, overview };
+    if long * k <= AREA_MAX_SIDE {
+        return vec![one(k, false)];
+    }
+    let fit = AREA_MAX_SIDE / long;
+    if fit >= AREA_MIN_SINGLE_K {
+        return vec![one(fit, false)];
+    }
+    let mut kt = k;
+    let (mut nx, mut ny);
+    loop {
+        nx = ((w * kt) / AREA_MAX_SIDE).ceil().max(1.0) as usize;
+        ny = ((h * kt) / AREA_MAX_SIDE).ceil().max(1.0) as usize;
+        if nx * ny <= AREA_MAX_TILES || kt <= 0.75 {
+            break;
+        }
+        kt *= 0.9;
+    }
+    let mut out = vec![one(fit, true)];
+    let (tw, th) = (w / nx as f64, h / ny as f64);
+    for j in 0..ny {
+        for i in 0..nx {
+            out.push(AreaShot {
+                x: x + i as f64 * tw,
+                y: y + j as f64 * th,
+                w: tw,
+                h: th,
+                k: kt.min(AREA_MAX_SIDE / tw.max(th)),
+                overview: false,
+            });
+        }
+    }
+    out
+}
+
 /// Renders the note onto A4 pages, matching the in-app PDF preview.
 pub fn export_pdf(
     notes: &[(&NoteFile, &str, Option<&str>)],
@@ -1867,7 +2009,6 @@ pub fn export_pdf(
             let page_top = spec.top;
             let page_bottom = spec.bottom;
             let (page_left, page_right) = (spec.left, spec.right);
-            let across = |x: f64, w: f64| x <= page_right && x + w >= page_left;
             let title_offset = if page_idx == 0 && layout.header.is_some_and(|h| !h.is_empty()) {
                 TITLE_BLOCK_DIP
             } else {
@@ -1902,119 +2043,17 @@ pub fn export_pdf(
                 });
             }
 
-            for obj in &objects {
-                match obj {
-                    CanvasObject::Text(t) => {
-                        for f in layout_text_object(t) {
-                            if f.y < page_top || f.y > page_bottom || !across(f.x, 0.0) || f.text.trim().is_empty() {
-                                continue;
-                            }
-                            // Highlight behind the glyphs (run.hl → CSS background-color).
-                            if let Some(hl) = &f.hl {
-                                let dip = f.size_pt * (96.0 / 72.0);
-                                let ascent = dip * 0.85;
-                                let descent = dip * 0.25;
-                                let tw = text_width(&f.text, f.family, f.size_pt).max(1.0);
-                                let pad = 1.0;
-                                layer.set_fill_color(hex_color(&Some(hl.clone())));
-                                fill_polygon(
-                                    &mut layer,
-                                    vec![
-                                        map.point(f.x - pad, f.y - ascent),
-                                        map.point(f.x + tw + pad, f.y - ascent),
-                                        map.point(f.x + tw + pad, f.y + descent),
-                                        map.point(f.x - pad, f.y + descent),
-                                    ],
-                                );
-                            }
-                            layer.set_fill_color(hex_color(&f.color));
-                            layer.use_text(
-                                pdf_text(&f.text),
-                                (f.size_pt * scale) as f32,
-                                map.mm_x(f.x),
-                                map.mm_y(f.y),
-                                builtin(f.family, f.bold, f.italic),
-                            );
-                        }
-                    }
-                    CanvasObject::Image(img) => {
-                        if img.y > page_bottom || img.y + img.height < page_top || !across(img.x, img.width) {
-                            continue;
-                        }
-                        if let Some(bytes) = layout.note.media.get(&img.media) {
-                            let _ = draw_image(
-                                &mut doc, &mut layer, bytes, &map, img.x, img.y, img.width,
-                                img.height,
-                            );
-                        }
-                    }
-                    CanvasObject::Drawing(d) => {
-                        let (ox, oy, ow, oh) = obj.bbox();
-                        if oy > page_bottom || oy + oh < page_top || !across(ox, ow) {
-                            continue;
-                        }
-                        draw_drawing(&mut layer, d, &map, scale);
-                    }
-                    CanvasObject::Group(_) => {}
-                    CanvasObject::File(f) => {
-                        if f.y > page_bottom || f.y + f.height < page_top || !across(f.x, f.width) {
-                            continue;
-                        }
-                        draw_file_chip(&mut layer, f, &map, scale);
-                    }
-                    CanvasObject::Pdf(pdf) => {
-                        let (ox, oy, ow, oh) = obj.bbox();
-                        if oy > page_bottom || oy + oh < page_top || !across(ox, ow) {
-                            continue;
-                        }
-                        let Some(bytes) = layout.note.media.get(&pdf.media) else {
-                            continue;
-                        };
-                        for slot in pdf.slots() {
-                            let y = pdf.y + slot.y;
-                            if y > page_bottom || y + slot.h < page_top || !across(ox + slot.x, slot.w) {
-                                continue;
-                            }
-                            let px = (slot.w * scale * 2.0).clamp(160.0, 1600.0) as u32;
-                            let key = (pdf.media.clone(), slot.page, px);
-                            let png = if let Some(hit) = pdf_cache.get(&key) {
-                                hit.clone()
-                            } else {
-                                match crate::pdf_render::render_pdf_page(bytes, slot.page, px) {
-                                    Ok(buf) => {
-                                        pdf_cache.insert(key, buf.clone());
-                                        buf
-                                    }
-                                    Err(err) => {
-                                        eprintln!("pdf page {} of {}: {err}", slot.page, pdf.media);
-                                        continue;
-                                    }
-                                }
-                            };
-                            let _ = draw_image(
-                                &mut doc,
-                                &mut layer,
-                                &png,
-                                &map,
-                                ox + slot.x,
-                                y,
-                                slot.w,
-                                slot.h,
-                            );
-                            // Page-number masks: fractions of the page, painted over the render.
-                            for m in pdf.masks.iter().filter(|m| m.page == slot.page) {
-                                layer.set_fill_color(hex_color(&Some(m.color.clone())));
-                                let (x0, y0) = (ox + slot.x + m.x * slot.w, y + m.y * slot.h);
-                                let (x1, y1) = (x0 + m.w * slot.w, y0 + m.h * slot.h);
-                                fill_polygon(
-                                    &mut layer,
-                                    vec![map.point(x0, y0), map.point(x1, y0), map.point(x1, y1), map.point(x0, y1)],
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+            let view = View { top: page_top, bottom: page_bottom, left: page_left, right: page_right };
+            draw_objects(
+                &mut doc,
+                &mut layer,
+                &objects,
+                &layout.note.media,
+                &map,
+                &view,
+                &mut pdf_cache,
+                &|w| (w * scale * 2.0).clamp(160.0, 1600.0) as u32,
+            );
 
             if spec.clip {
                 layer.ops.push(Op::RestoreGraphicsState);
@@ -2050,6 +2089,146 @@ pub fn export_pdf(
     }
 
     save_pdf(doc, pages, dest)
+}
+
+/// The part of the canvas a page shows; objects outside it are skipped.
+struct View {
+    top: f64,
+    bottom: f64,
+    left: f64,
+    right: f64,
+}
+
+/// Draw the canvas objects that fall in `view` onto one page. Shared by the PDF export and
+/// the Analyze area render, so both show the note the same way.
+#[allow(clippy::too_many_arguments)]
+fn draw_objects(
+    doc: &mut PdfDocument,
+    layer: &mut Layer,
+    objects: &[&CanvasObject],
+    media: &HashMap<String, Vec<u8>>,
+    map: &Mapper,
+    view: &View,
+    pdf_cache: &mut HashMap<(String, u32, u32), Vec<u8>>,
+    pdf_px: &dyn Fn(f64) -> u32,
+) {
+    let (page_top, page_bottom, page_left, page_right) = (view.top, view.bottom, view.left, view.right);
+    let across = |x: f64, w: f64| x <= page_right && x + w >= page_left;
+    let scale = map.scale;
+    for obj in objects {
+        match obj {
+            CanvasObject::Text(t) => {
+                for f in layout_text_object(t) {
+                    if f.y < page_top || f.y > page_bottom || !across(f.x, 0.0) || f.text.trim().is_empty() {
+                        continue;
+                    }
+                    // Highlight behind the glyphs (run.hl → CSS background-color).
+                    if let Some(hl) = &f.hl {
+                        let dip = f.size_pt * (96.0 / 72.0);
+                        let ascent = dip * 0.85;
+                        let descent = dip * 0.25;
+                        let tw = text_width(&f.text, f.family, f.size_pt).max(1.0);
+                        let pad = 1.0;
+                        layer.set_fill_color(hex_color(&Some(hl.clone())));
+                        fill_polygon(
+                            layer,
+                            vec![
+                                map.point(f.x - pad, f.y - ascent),
+                                map.point(f.x + tw + pad, f.y - ascent),
+                                map.point(f.x + tw + pad, f.y + descent),
+                                map.point(f.x - pad, f.y + descent),
+                            ],
+                        );
+                    }
+                    layer.set_fill_color(hex_color(&f.color));
+                    layer.use_text(
+                        pdf_text(&f.text),
+                        (f.size_pt * scale) as f32,
+                        map.mm_x(f.x),
+                        map.mm_y(f.y),
+                        builtin(f.family, f.bold, f.italic),
+                    );
+                }
+            }
+            CanvasObject::Image(img) => {
+                if img.y > page_bottom || img.y + img.height < page_top || !across(img.x, img.width) {
+                    continue;
+                }
+                if let Some(bytes) = media.get(&img.media) {
+                    let _ = draw_image(
+                        doc, layer, bytes, map, img.x, img.y, img.width,
+                        img.height,
+                    );
+                }
+            }
+            CanvasObject::Drawing(d) => {
+                let (ox, oy, ow, oh) = obj.bbox();
+                if oy > page_bottom || oy + oh < page_top || !across(ox, ow) {
+                    continue;
+                }
+                draw_drawing(layer, d, map, scale);
+            }
+            CanvasObject::Group(_) => {}
+            CanvasObject::File(f) => {
+                if f.y > page_bottom || f.y + f.height < page_top || !across(f.x, f.width) {
+                    continue;
+                }
+                draw_file_chip(layer, f, map, scale);
+            }
+            CanvasObject::Pdf(pdf) => {
+                let (ox, oy, ow, oh) = obj.bbox();
+                if oy > page_bottom || oy + oh < page_top || !across(ox, ow) {
+                    continue;
+                }
+                let Some(bytes) = media.get(&pdf.media) else {
+                    continue;
+                };
+                for slot in pdf.slots() {
+                    let y = pdf.y + slot.y;
+                    if y > page_bottom || y + slot.h < page_top || !across(ox + slot.x, slot.w) {
+                        continue;
+                    }
+                    let px = pdf_px(slot.w);
+                    let key = (pdf.media.clone(), slot.page, px);
+                    let png = if let Some(hit) = pdf_cache.get(&key) {
+                        hit.clone()
+                    } else {
+                        match crate::pdf_render::render_pdf_page(bytes, slot.page, px) {
+                            Ok(buf) => {
+                                pdf_cache.insert(key, buf.clone());
+                                buf
+                            }
+                            Err(err) => {
+                                eprintln!("pdf page {} of {}: {err}", slot.page, pdf.media);
+                                continue;
+                            }
+                        }
+                    };
+                    let _ = draw_image(
+                        doc,
+                        layer,
+                        &png,
+                        map,
+                        ox + slot.x,
+                        y,
+                        slot.w,
+                        slot.h,
+                    );
+                    // Page-number masks: fractions of the page, painted over the render.
+                    for m in pdf.masks.iter().filter(|m| m.page == slot.page) {
+                        layer.set_fill_color(hex_color(&Some(m.color.clone())));
+                        let (x0, y0) = (ox + slot.x + m.x * slot.w, y + m.y * slot.h);
+                        let (x1, y1) = (x0 + m.w * slot.w, y0 + m.h * slot.h);
+                        fill_polygon(
+                            layer,
+                            vec![map.point(x0, y0), map.point(x1, y0), map.point(x1, y1), map.point(x0, y1)],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 /// A study-sheet PDF from plain text (markdown-ish headings and bullets).
@@ -3273,6 +3452,59 @@ mod tests {
             let room = sheet.content_h() - if i == 0 { TITLE_BLOCK_DIP } else { 0.0 };
             assert!(p.oy >= 0.0 && p.h * p.scale + p.oy <= room + 0.01, "page {i} fits below the title");
         }
+    }
+
+    #[test]
+    fn area_plan_single_then_lower_dpi_then_tiles() {
+        let k = 175.0 / 96.0;
+        // A screen-sized area: one image at full resolution.
+        let one = plan_area_shots(10.0, 20.0, 800.0, 600.0, k);
+        assert_eq!(one.len(), 1);
+        assert!((one[0].k - k).abs() < 1e-9 && !one[0].overview);
+        // Slightly too big: one image, a bit coarser, still above ~120 dpi.
+        let fit = plan_area_shots(0.0, 0.0, 1500.0, 900.0, k);
+        assert_eq!(fit.len(), 1);
+        assert!(fit[0].k * 1500.0 <= AREA_MAX_SIDE + 1e-6 && fit[0].k >= AREA_MIN_SINGLE_K);
+        // A long page: overview first, then tiles that cover the area exactly.
+        let tiles = plan_area_shots(5.0, 7.0, 1000.0, 6000.0, k);
+        assert!(tiles[0].overview && tiles.len() >= 3 && tiles.len() <= AREA_MAX_TILES + 1);
+        let area: f64 = tiles[1..].iter().map(|t| t.w * t.h).sum();
+        assert!((area - 6_000_000.0).abs() < 1e-3);
+        for t in &tiles {
+            assert!(t.w.max(t.h) * t.k <= AREA_MAX_SIDE + 1e-6, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn area_render_draws_ink_at_the_mapped_pixels() {
+        let line = CanvasObject::Drawing(DrawingObject {
+            locked: false,
+            extra: Default::default(),
+            id: "d1".into(),
+            x: 100.0,
+            y: 100.0,
+            z: 1,
+            item: DrawingItem::Arrow {
+                tail: [0.0, 50.0],
+                head: [200.0, 50.0],
+                c1: [60.0, 50.0],
+                c2: [140.0, 50.0],
+                width: 6.0,
+                color: "#000000".into(),
+                head_style: "none".into(),
+                tail_style: "none".into(),
+                body: None,
+                shaft: Vec::new(),
+            },
+        });
+        let k = 2.0;
+        let (png, w, h) = render_area_png(&[line], &HashMap::new(), 50.0, 100.0, 300.0, 100.0, k).unwrap();
+        assert_eq!((w, h), (600, 200));
+        let img = image::load_from_memory(&png).unwrap().to_luma8();
+        // Note point (200, 150) is on the line: pixel ((200-50)*2, (150-100)*2).
+        assert!(img.get_pixel(300, 100)[0] < 100, "ink on the line");
+        // Note point (200, 110) is blank paper.
+        assert!(img.get_pixel(300, 20)[0] > 200, "paper off the line");
     }
 
     #[test]

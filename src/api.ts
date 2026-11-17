@@ -346,6 +346,8 @@ export type SavedQuickCard = {
   imagePngB64?: string;
   anchor?: { x: number; y: number; w: number; h: number };
   area?: { key: string; x: number; y: number; w: number; h: number } | null;
+  /** Pixel <-> note mapping of the rendered capture (noteRender.ts AreaMap). */
+  areaMap?: import("./noteRender").AreaMap;
   place: {
     pinned: true;
     rel: { side: "right" | "left"; gap: number; oy: number; w: number; h: number | null };
@@ -562,6 +564,22 @@ export const api = {
   quickStop: () => invoke("quick_stop"),
   quickRelease: () => invoke("quick_release"),
   stageAnalyzePng: (pngB64: string) => invoke<string>("stage_analyze_png", { pngB64 }),
+  renderNoteArea: (args: {
+    objects: unknown[];
+    media: Record<string, string>;
+    mediaLens: Record<string, number>;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    dpi?: number;
+    noteKey?: string;
+  }) =>
+    invoke<{
+      missing: string[];
+      shots: { path: string; png_b64: string; x: number; y: number; w: number; h: number; px_w: number; px_h: number; overview: boolean }[];
+      map_path: string | null;
+    }>("render_note_area", { args }),
   captureScreenRegion: (x: number, y: number, width: number, height: number) =>
     invoke<string>("capture_screen_region", { x, y, width, height }),
   studyPresetInfo: (presetId: string) => invoke<StudyPresetInfo>("study_preset_info", { presetId }),

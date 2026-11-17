@@ -3041,3 +3041,151 @@ mod tests {
     }
 }
 
+
+/* ── Analyze: render an area from note data ───────────────────────────── */
+
+/// Media bytes the area renderer already received, by key and base64 length. Keys are
+/// random per file and never reused for other content, so a PDF crosses the bridge once.
+static AREA_MEDIA: std::sync::Mutex<Vec<(String, usize, std::sync::Arc<Vec<u8>>)>> =
+    std::sync::Mutex::new(Vec::new());
+const AREA_MEDIA_CAP: usize = 512 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderAreaArgs {
+    /// Canvas objects in the area, as the editor holds them.
+    pub objects: Vec<serde_json::Value>,
+    /// Base64 media the renderer asked for (see `missing`).
+    #[serde(default)]
+    pub media: std::collections::HashMap<String, String>,
+    /// Every media key the objects use, with its base64 length.
+    #[serde(default)]
+    pub media_lens: std::collections::HashMap<String, usize>,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    /// Target resolution; 96 = one pixel per note unit. Default 175.
+    pub dpi: Option<f64>,
+    /// The note the area is in (stored in the map for later use).
+    pub note_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AreaShotOut {
+    pub path: String,
+    /// Only for the first shot (the preview); empty for the rest.
+    pub png_b64: String,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub px_w: u32,
+    pub px_h: u32,
+    pub overview: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenderAreaOut {
+    /// Media keys to send again with their bytes; nothing was rendered.
+    pub missing: Vec<String>,
+    pub shots: Vec<AreaShotOut>,
+    /// JSON beside the PNGs: note area and, per image, pixel ↔ note mapping.
+    pub map_path: Option<String>,
+}
+
+fn render_area_sync(args: RenderAreaArgs) -> Result<RenderAreaOut, String> {
+    use std::sync::Arc;
+    let mut media: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    let mut missing = Vec::new();
+    {
+        let mut cache = AREA_MEDIA.lock().unwrap_or_else(|p| p.into_inner());
+        for (key, b64) in &args.media {
+            let bytes = Arc::new(base64_decode(b64)?);
+            cache.retain(|(k, _, _)| k != key);
+            cache.push((key.clone(), b64.len(), bytes));
+        }
+        let mut total: usize = cache.iter().map(|(_, _, b)| b.len()).sum();
+        while total > AREA_MEDIA_CAP && cache.len() > 1 {
+            total -= cache.remove(0).2.len();
+        }
+        for (key, len) in &args.media_lens {
+            match cache.iter().find(|(k, l, _)| k == key && l == len) {
+                Some((_, _, bytes)) => {
+                    media.insert(key.clone(), bytes.as_ref().clone());
+                }
+                None => missing.push(key.clone()),
+            }
+        }
+    }
+    if !missing.is_empty() {
+        return Ok(RenderAreaOut { missing, shots: Vec::new(), map_path: None });
+    }
+    let objects: Vec<note::CanvasObject> = args
+        .objects
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+    let k = args.dpi.unwrap_or(175.0).clamp(72.0, 400.0) / 96.0;
+    let plan = export::plan_area_shots(args.x, args.y, args.w, args.h, k);
+    let dir = notes_folder().join("briefs").join("attachments");
+    std::fs::create_dir_all(&dir).map_err(err_str)?;
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let stem = format!(
+        "analyze-{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let mut shots = Vec::new();
+    for (i, s) in plan.iter().enumerate() {
+        let (png, px_w, px_h) =
+            export::render_area_png(&objects, &media, s.x, s.y, s.w, s.h, s.k).map_err(err_str)?;
+        let name = if plan.len() == 1 {
+            format!("{stem}.png")
+        } else if s.overview {
+            format!("{stem}-overview.png")
+        } else {
+            format!("{stem}-tile{i}.png")
+        };
+        let path = dir.join(name);
+        std::fs::write(&path, &png).map_err(err_str)?;
+        shots.push(AreaShotOut {
+            path: plain_path(&path),
+            png_b64: if i == 0 { base64_encode(&png) } else { String::new() },
+            x: s.x,
+            y: s.y,
+            w: s.w,
+            h: s.h,
+            px_w,
+            px_h,
+            overview: s.overview,
+        });
+    }
+    let map = serde_json::json!({
+        "version": 1,
+        "note": args.note_key,
+        "area": { "x": args.x, "y": args.y, "w": args.w, "h": args.h },
+        "about": "Pixel (px, py) of a shot is note point (x + px * w / px_w, y + py * h / px_h).",
+        "shots": shots.iter().map(|s| serde_json::json!({
+            "file": Path::new(&s.path).file_name().map(|n| n.to_string_lossy().into_owned()),
+            "x": s.x, "y": s.y, "w": s.w, "h": s.h,
+            "px_w": s.px_w, "px_h": s.px_h, "overview": s.overview,
+        })).collect::<Vec<_>>(),
+    });
+    let map_path = dir.join(format!("{stem}.map.json"));
+    std::fs::write(&map_path, serde_json::to_vec_pretty(&map).map_err(err_str)?).map_err(err_str)?;
+    Ok(RenderAreaOut { missing: Vec::new(), shots, map_path: Some(plain_path(&map_path)) })
+}
+
+/// Render a note area to PNG(s) from the note's objects instead of the screen.
+#[tauri::command]
+pub async fn render_note_area(args: RenderAreaArgs) -> Result<RenderAreaOut, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render_area_sync(args))) {
+            Ok(r) => r,
+            Err(_) => Err("Couldn't render this area.".into()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

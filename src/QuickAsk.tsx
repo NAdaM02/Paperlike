@@ -4,6 +4,8 @@ import { AnalyzeAction, AnalyzeIcon, analyzeLabel, AnalyzeMark, analyzePrompt, A
 import { NoteArea, screenOf, subscribeCanvas } from "./canvasAnchor";
 import { FOLD_MARK_SIZE } from "./group";
 import { noteText, summaryHtml } from "./brief";
+import { renderNoteArea, type AreaMap } from "./noteRender";
+import { selectedNoteArea } from "./canvasAnchor";
 import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHost, privateChats, setDefaultHost, setPrivateChats, subscribeDefaultHost } from "./chat";
 import { ChecklistPanel } from "./Checklist";
 import { toggleCalendar, useCalendarAvailable } from "./CalendarPane";
@@ -48,6 +50,10 @@ export type QuickSeed = {
   selection: string;
   /** Analyze screenshot attached to the first question. */
   imagePath?: string;
+  /** All Analyze images when there are several (overview plus tiles of a large area). */
+  imagePaths?: string[];
+  /** Pixel <-> note mapping of the Analyze images. */
+  areaMap?: AreaMap;
   imagePreview?: string;
   analyze?: AnalyzeAction;
   /** Analyze › Custom: the capture is attached to the first question the user types. */
@@ -86,6 +92,7 @@ export function toSavedQuickCard(input: {
   imagePath?: string;
   anchor?: AnalyzeRect;
   area?: NoteArea | null;
+  areaMap?: AreaMap;
   place?: CardPlace;
 }): SavedQuickCard | null {
   const place = input.place;
@@ -109,6 +116,7 @@ export function toSavedQuickCard(input: {
     imagePngB64,
     anchor: input.anchor,
     area: input.area ?? null,
+    ...(input.areaMap ? { areaMap: input.areaMap } : null),
     place,
   };
 }
@@ -167,6 +175,7 @@ export async function seedFromSavedQuickCard(card: SavedQuickCard): Promise<Quic
     collapsed: card.collapsed ?? false,
     anchor: card.anchor,
     area: card.area ?? null,
+    areaMap: card.areaMap,
     place: card.place,
     prior: { host, turns, url: card.url ?? null },
   };
@@ -438,9 +447,35 @@ export function QuickAskField({
         onSubmit={(e) => {
           e.preventDefault();
           if (disabled || !q.trim()) return;
-          onAsk({ id: Date.now(), question: q.trim(), selection: noteSelection });
+          const question = q.trim();
           setQ("");
           setHistOpen(false);
+          // Objects selected on the canvas go along as an image rendered from the note
+          // (selected text already goes along as text).
+          const area = noteSelection ? null : selectedNoteArea();
+          if (!area) {
+            onAsk({ id: Date.now(), question, selection: noteSelection });
+            return;
+          }
+          void renderNoteArea(area)
+            .catch(() => null)
+            .then((r) =>
+              onAsk({
+                id: Date.now(),
+                question,
+                selection: noteSelection,
+                ...(r
+                  ? {
+                      imagePath: r.filePaths[0],
+                      imagePaths: r.filePaths,
+                      imagePreview: `data:image/png;base64,${r.previewB64}`,
+                      areaMap: r.map,
+                      anchor: screenOf(area)?.rect,
+                      area,
+                    }
+                  : null),
+              }),
+            );
         }}
       >
         <button
@@ -634,6 +669,9 @@ type PendingImage = {
   id: string;
   filePath: string;
   previewUrl: string;
+  /** A rendered area: every image (overview and tiles) and its note mapping. */
+  filePaths?: string[];
+  map?: AreaMap;
 };
 
 async function processImageFile(file: File | Blob): Promise<{ filePath: string; previewUrl: string }> {
@@ -832,21 +870,24 @@ const QuickAskComposer = memo(function QuickAskComposer({
     onRescanErr("");
     const at = areaOnScreen(anchor, area);
     const a = at && visiblePart(at.rect, at.clip);
-    if (!a) {
+    // A note area renders from the note, so it needn't be on screen; a screen capture does.
+    if (!a && !area) {
       onRescanErr("The marked area isn't on screen. Scroll back to it, then rescan.");
       return;
     }
     setRescanning(true);
     try {
       const c = cardRef.current?.getBoundingClientRect();
-      const over = !!c && c.left < a.x + a.w && c.right > a.x && c.top < a.y + a.h && c.bottom > a.y;
-      const next = await captureArea(a, over ? [cardRef.current] : []);
+      const over = !!a && !!c && c.left < a.x + a.w && c.right > a.x && c.top < a.y + a.h && c.bottom > a.y;
+      const next = await captureArea(a ?? anchor, over ? [cardRef.current] : [], area);
       setPendingImages((cur) => [
         ...cur,
         {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           filePath: next.filePath,
           previewUrl: next.previewUrl,
+          filePaths: next.filePaths,
+          map: next.map,
         },
       ]);
     } catch (e) {
@@ -1221,6 +1262,8 @@ export const QuickAskCard = memo(function QuickAskCard({
    */
   /** The image this card asks about: the first capture, then the latest rescan. */
   const imageRef = useRef<string | undefined>(seed.imagePath);
+  /** Pixel <-> note mapping of the latest rendered capture (kept with the pinned card). */
+  const areaMapRef = useRef<AreaMap | undefined>(seed.areaMap);
   const relRef = useRef<CardRel | null>(seed.place?.pinned ? seed.place.rel : null);
   /** Note zoom when the card was first placed: its text is 100% there and scales with the note from it. */
   const zBaseRef = useRef<number | null>(seed.place?.pinned ? seed.place.zBase : null);
@@ -1407,6 +1450,7 @@ export const QuickAskCard = memo(function QuickAskCard({
       imagePath: imageRef.current,
       anchor: seed.anchor,
       area: seed.area,
+      areaMap: areaMapRef.current,
       place: placeNow(),
     });
     fn(saved, seed.id);
@@ -1725,7 +1769,7 @@ export const QuickAskCard = memo(function QuickAskCard({
     // Custom: the capture waits for the question the user types.
     if (seed.custom) return;
     const q = seed.analyze ? analyzePrompt(seed.analyze) : seed.question;
-    const files = seed.imagePath ? [seed.imagePath] : undefined;
+    const files = seed.imagePaths?.length ? seed.imagePaths : seed.imagePath ? [seed.imagePath] : undefined;
     void ask(q, seed.selection, host, files);
     // once per seed; the card is keyed by it
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1734,13 +1778,16 @@ export const QuickAskCard = memo(function QuickAskCard({
   const handleSend = useCallback(
     (question: string, images: PendingImage[]) => {
       const first = !!seed.custom && !turnsRef.current.some((t) => t.role === "user");
+      const firstFiles = seed.imagePaths?.length ? seed.imagePaths : imageRef.current ? [imageRef.current] : [];
       const filePaths = [
-        ...(first && imageRef.current ? [imageRef.current] : []),
-        ...images.map((a) => a.filePath),
+        ...(first ? firstFiles : []),
+        ...images.flatMap((a) => (a.filePaths?.length ? a.filePaths : [a.filePath])),
       ];
       const previewUrls = images.map((a) => a.previewUrl);
       if (images.length > 0) {
         imageRef.current = images[images.length - 1].filePath;
+        const mapped = images.filter((a) => a.map).pop();
+        if (mapped) areaMapRef.current = mapped.map;
       }
       void ask(question, "", hostRef.current, filePaths.length ? filePaths : undefined, previewUrls.length ? previewUrls : undefined);
     },

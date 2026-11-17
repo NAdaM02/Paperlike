@@ -1,18 +1,16 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { NoteArea, noteAreaAt, screenOf, subscribeCanvas } from "./canvasAnchor";
+import { AreaMap, renderNoteArea } from "./noteRender";
 import { CHAT_NAME, ChatHost, defaultHost, setDefaultHost } from "./chat";
 import { messages } from "./copy/messages";
 import { HostLogo, IcAsk, IcClose, IcExplain, IcScan, IcSolve, IcVerify } from "./icons";
 
 export type AnalyzeAction = "explain" | "solve" | "factcheck";
 
-export type AnalyzeResult = {
+export type AnalyzeResult = AnalyzeShot & {
   /** "custom": no preset prompt; the user writes the question. */
   action: AnalyzeAction | "custom";
-  pngB64: string;
-  filePath: string;
-  previewUrl: string;
   /** The captured area, in CSS pixels of the window. */
   rect: AnalyzeRect;
 };
@@ -20,7 +18,16 @@ export type AnalyzeResult = {
 export type AnalyzeRect = { x: number; y: number; w: number; h: number };
 type Rect = AnalyzeRect;
 
-export type AnalyzeShot = { pngB64: string; filePath: string; previewUrl: string };
+export type AnalyzeShot = {
+  pngB64: string;
+  /** The image shown as the preview (the overview when the area was tiled). */
+  filePath: string;
+  previewUrl: string;
+  /** Every image to attach: one, or an overview plus tiles for a large area. */
+  filePaths?: string[];
+  /** Pixel <-> note mapping, when the images were rendered from the note. */
+  map?: AreaMap;
+};
 
 const MIN = 24;
 
@@ -123,10 +130,37 @@ export const AnalyzeMark = memo(function AnalyzeMark({ rect, area }: { rect: Ana
 });
 
 /**
- * Capture what is on the display under `rect` (CSS pixels of the window) and stage it as a PNG.
- * `hide` elements are made invisible for the shot so app chrome isn't in it.
+ * Image(s) of `rect` (CSS pixels of the window) for the chat. Over a note, the area is
+ * rendered from the note's own objects (sharp, no app chrome or covering windows, exact
+ * note mapping), using `area` when given (it works off-screen too). Otherwise, or when
+ * rendering fails, the display under `rect` is captured with `hide` elements made invisible.
  */
-export async function captureArea(rect: AnalyzeRect, hide: (HTMLElement | null | undefined)[] = []): Promise<AnalyzeShot> {
+export async function captureArea(
+  rect: AnalyzeRect,
+  hide: (HTMLElement | null | undefined)[] = [],
+  area?: NoteArea | null,
+): Promise<AnalyzeShot> {
+  const target = area ?? noteAreaAt(rect);
+  if (target) {
+    try {
+      const r = await renderNoteArea(target);
+      if (r) {
+        return {
+          pngB64: r.previewB64,
+          filePath: r.filePaths[0],
+          filePaths: r.filePaths,
+          previewUrl: `data:image/png;base64,${r.previewB64}`,
+          map: r.map,
+        };
+      }
+    } catch (e) {
+      console.warn("Rendering the area from the note failed; capturing the screen instead.", e);
+    }
+  }
+  return captureScreen(rect, hide);
+}
+
+async function captureScreen(rect: AnalyzeRect, hide: (HTMLElement | null | undefined)[]): Promise<AnalyzeShot> {
   const els = hide.filter((el): el is HTMLElement => !!el);
   const prev = els.map((el) => el.style.visibility);
   els.forEach((el) => (el.style.visibility = "hidden"));

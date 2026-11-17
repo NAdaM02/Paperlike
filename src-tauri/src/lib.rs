@@ -209,6 +209,7 @@ pub fn run() {
             commands::quick_release,
             commands::stage_analyze_png,
             commands::capture_screen_region,
+            commands::render_note_area,
             commands::license_price,
             commands::license_status,
             commands::license_refresh,

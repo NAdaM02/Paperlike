@@ -710,7 +710,47 @@ export function CanvasEditor({
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    return registerCanvas({ key: notePathForAnchor, wrap, cam: () => camRef.current });
+    return registerCanvas({
+      key: notePathForAnchor,
+      wrap,
+      cam: () => camRef.current,
+      // Analyze renders areas from these objects (see noteRender.ts).
+      content: (a) => {
+        const all = objectsRef.current;
+        const hidden = collapsedIds(all);
+        const objects = all.filter((o) => {
+          if (o.type === "group" || hidden.has(o.id)) return false;
+          const b = objectBBox(o, heightsRef.current);
+          return b.x <= a.x + a.w && b.x + b.w >= a.x && b.y <= a.y + a.h && b.y + b.h >= a.y;
+        });
+        const media: Record<string, string> = {};
+        for (const o of objects) {
+          if ((o.type === "image" || o.type === "pdf") && noteMediaRef.current[o.media]) {
+            media[o.media] = noteMediaRef.current[o.media];
+          }
+        }
+        return { objects, media };
+      },
+      selection: () => {
+        const ids = new Set(selectedRef.current);
+        if (!ids.size) return null;
+        let x1 = Infinity;
+        let y1 = Infinity;
+        let x2 = -Infinity;
+        let y2 = -Infinity;
+        for (const o of objectsRef.current) {
+          if (!ids.has(o.id)) continue;
+          const b = objectBBox(o, heightsRef.current);
+          x1 = Math.min(x1, b.x);
+          y1 = Math.min(y1, b.y);
+          x2 = Math.max(x2, b.x + b.w);
+          y2 = Math.max(y2, b.y + b.h);
+        }
+        if (!Number.isFinite(x1)) return null;
+        const pad = 12;
+        return { x: x1 - pad, y: y1 - pad, w: x2 - x1 + 2 * pad, h: y2 - y1 + 2 * pad };
+      },
+    });
   }, [notePathForAnchor]);
   const [selected, setSelected] = useState<string[]>([]);
   /** Pages picked inside each selected PDF. Ctrl-click adds pages from other PDFs. */

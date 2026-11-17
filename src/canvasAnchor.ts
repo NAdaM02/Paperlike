@@ -11,7 +11,13 @@ type Entry = {
   key: string;
   wrap: HTMLElement;
   cam: () => Cam;
+  /** The visible objects overlapping an area, and the media they draw (base64), for rendering it. */
+  content?: (area: { x: number; y: number; w: number; h: number }) => AreaContent;
+  /** Box around the objects selected on this canvas, in note units, or null. */
+  selection?: () => { x: number; y: number; w: number; h: number } | null;
 };
+
+export type AreaContent = { objects: unknown[]; media: Record<string, string> };
 
 /** An area in note coordinates. */
 export type NoteArea = { key: string; x: number; y: number; w: number; h: number };
@@ -90,6 +96,23 @@ export function noteAreaAt(rect: AnalyzeRect): NoteArea | null {
       w: rect.w / c.z,
       h: rect.h / c.z,
     };
+  }
+  return null;
+}
+
+/** What an area of a shown note contains, from the editor that shows it. */
+export function areaContent(area: NoteArea): AreaContent | null {
+  for (const e of entries) {
+    if (e.key === area.key && e.content) return e.content(area);
+  }
+  return null;
+}
+
+/** The note area around the objects selected on a shown canvas, if any. */
+export function selectedNoteArea(): NoteArea | null {
+  for (const e of entries) {
+    const b = e.selection?.();
+    if (b) return { key: e.key, ...b };
   }
   return null;
 }
