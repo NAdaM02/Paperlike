@@ -62,6 +62,7 @@ import { pdfAspects, pdfPlacement } from "./pdfDoc";
 import { PdfView, type PdfCanvasView } from "./PdfView";
 import { pdfSize } from "./pdfLayout";
 import { isGifBase64, StillImage } from "./stillImage";
+import { quizHistoryOf, setOpenQuizNote, withQuiz } from "./quizHistory";
 import { ERASER_SIZES, EraserMode, EraserSize } from "./eraser";
 import { CustomColorPicker, pushColorHistory } from "./colorPicker";
 import {
@@ -1287,6 +1288,33 @@ export function NotebookView({
     onRegisterQuickPersist?.(write);
     return () => onRegisterQuickPersist?.(null);
   }, [onRegisterQuickPersist, updateNote]);
+
+  // Marked quizzes are kept on the note they covered (Study → Review results).
+  const quizNotePath = note?.path;
+  const quizNoteTitle = note ? note.display_title || note.title || "Untitled" : "";
+  const quizList = note?.doc.canvas.quizHistory;
+  useEffect(() => {
+    if (!quizNotePath) {
+      setOpenQuizNote(null);
+      return;
+    }
+    setOpenQuizNote({
+      path: quizNotePath,
+      title: quizNoteTitle,
+      history: quizHistoryOf(quizList),
+      write: (record, id) => {
+        if (noteRef.current?.read_only) return;
+        updateNote((n) => {
+          const next = withQuiz(n.doc.canvas.quizHistory, record, id);
+          const canvas = { ...n.doc.canvas };
+          if (next.length) canvas.quizHistory = next;
+          else delete canvas.quizHistory;
+          return { ...n, doc: { ...n.doc, canvas } };
+        });
+      },
+    });
+    return () => setOpenQuizNote(null);
+  }, [quizNotePath, quizNoteTitle, quizList, updateNote]);
 
   /* Auto-save, or without it a recovery copy, shortly after the last edit. */
   useEffect(() => {

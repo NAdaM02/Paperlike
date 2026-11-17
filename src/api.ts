@@ -363,6 +363,8 @@ export type NoteDocument = {
     objects: CanvasObject[];
     paper?: PaperStyle;
     quickCards?: SavedQuickCard[];
+    /** Finished quizzes on this note, oldest first. */
+    quizHistory?: import("./quiz").QuizRecord[];
     /** PDF export and preview pages. Unset = portrait A4. */
     page_orientation?: "landscape";
   };

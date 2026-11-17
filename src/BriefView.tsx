@@ -14,10 +14,40 @@ import {
   summaryHtml,
   wordCount,
 } from "./brief";
-import { askInBackground, CHAT_NAME, ChatHost } from "./chat";
+import { askInBackground, CHAT_NAME, ChatHost, savableNotePath } from "./chat";
 import { IcAttach, IcClose, IcDoc, IcSend } from "./icons";
 import { QuizDesk } from "./QuizDesk";
-import { parseCards, parseReview, QuizCard, QuizReport, quizGradePrompt, quizStudyPrompt } from "./quiz";
+import {
+  chatQuizPrompt,
+  loadQuizPrefs,
+  parseCards,
+  parseReview,
+  QUIZ_COUNTS,
+  QUIZ_KINDS,
+  QuizCard,
+  QuizCount,
+  QuizKind,
+  QuizRecord,
+  QuizReport,
+  QuizScope,
+  quizGradePrompt,
+  quizScore,
+  quizStudyPrompt,
+} from "./quiz";
+import { recordQuiz } from "./quizHistory";
+
+/** A quiz started from the Study menu: what to ask, and for the marked-area scope, the pictures. */
+export type QuizStart = {
+  count: QuizCount;
+  kind: QuizKind;
+  scope: QuizScope;
+  /** Rendered PNGs of the marked area (noteRender), attached instead of whole notes. */
+  images?: string[];
+  areaNote?: string;
+  areaTitle?: string;
+  /** Write the cards as soon as the notes are read. */
+  autoStart?: boolean;
+};
 
 type Prefs = { task: BriefTask; depth: BriefDepth; lane: ChatHost };
 
@@ -53,14 +83,21 @@ type Props = {
   onToast: (msg: string) => void;
   /** Open the in-app browser beside the note and attach the real files. */
   onAskHere: (host: ChatHost, notePaths: string[], question: string) => void;
+  quiz?: QuizStart;
 };
 
-export function BriefView({ notebookPath, notebookName, initialPaths, onClose, onOpenNote, onToast, onAskHere }: Props) {
+export function BriefView({ notebookPath, notebookName, initialPaths, onClose, onOpenNote, onToast, onAskHere, quiz }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [topic, setTopic] = useState("");
   const [prefs] = useState(loadPrefs);
-  const [task, setTask] = useState<BriefTask>(prefs.task);
+  const [task, setTask] = useState<BriefTask>(quiz ? "quiz" : prefs.task);
+  const [quizPrefs] = useState(loadQuizPrefs);
+  const [quizCount, setQuizCount] = useState<QuizCount>(quiz?.count ?? quizPrefs.count);
+  const [quizKind, setQuizKind] = useState<QuizKind>(quiz?.kind ?? quizPrefs.kind);
+  const areaImages = quiz?.images?.length ? quiz.images : null;
+  const answersRef = useRef<Record<string, string>>({});
+  const autoRef = useRef(!!quiz?.autoStart);
   const [depth, setDepth] = useState<BriefDepth>(prefs.depth);
   const [lane, setLane] = useState<ChatHost>(prefs.lane);
   const [busy, setBusy] = useState<string | null>(null);
@@ -227,13 +264,14 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
   /* The prompt shown is the one for the chat beside the note, where the notes go as files. */
   const generated = useMemo(() => {
     const notes = rows.filter((r) => r.checked).map((r) => ({ title: r.title, text: r.text }));
-    if (!notes.length) return null;
+    if (!notes.length && !(task === "quiz" && areaImages)) return null;
     if (task === "quiz") {
-      return { prompt: quizStudyPrompt({ depth, topic, notes, attached: true }), file: "", pastedAll: true };
+      const prompt = quizStudyPrompt({ count: quizCount, kind: quizKind, topic, notes, attached: true, area: !!areaImages });
+      return { prompt, file: "", pastedAll: true };
     }
     return buildPrompt({ task, depth, topic, notes, attached: true });
-  }, [rows, task, depth, topic]);
-  const generatedKey = `${task}|${depth}|${topic}|${rows
+  }, [rows, task, depth, topic, quizCount, quizKind, areaImages]);
+  const generatedKey = `${task}|${depth}|${quizCount}|${quizKind}|${topic}|${rows
     .filter((r) => r.checked)
     .map((r) => `${r.path}:${r.text.length}`)
     .join(",")}`;
@@ -255,6 +293,10 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
   };
 
   const requireNotes = (typedOnly: boolean) => {
+    if (!typedOnly && task === "quiz" && areaImages) {
+      setError("");
+      return true;
+    }
     if (!picked.length) {
       setError("Check at least one note.");
       return false;
@@ -269,7 +311,10 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
 
   const openWeb = (which: ChatHost) => {
     if (!requireNotes(false)) return;
-    const prompt = promptDraft.trim() || buildPrompt({ task, depth, topic, notes: notesFor(false), attached: true }).prompt;
+    const prompt =
+      task === "quiz"
+        ? chatQuizPrompt({ count: quizCount, kind: quizKind, topic })
+        : promptDraft.trim() || buildPrompt({ task, depth, topic, notes: notesFor(false), attached: true }).prompt;
     onAskHere(which, picked.map((r) => r.path), prompt);
   };
 
@@ -325,16 +370,17 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
     abortRef.current = ctrl;
     try {
       const notes = notesFor(false);
-      const canonical = quizStudyPrompt({ depth, topic, notes, attached: false });
+      const canonical = quizStudyPrompt({ count: quizCount, kind: quizKind, topic, notes, attached: false, area: !!areaImages });
       const edited = promptDraft.trim() && generated && promptDraft !== generated.prompt;
-      const notesAt = canonical.indexOf("Notes:");
+      const notesAt = areaImages && !notes.length ? -1 : canonical.indexOf("Notes:");
       const prompt =
         edited && notesAt >= 0 ? `${promptDraft.trim()}\n\n${canonical.slice(notesAt)}` : canonical;
       const reply = await askInBackground({
         host: lane,
         text: prompt,
         fresh: true,
-        notePaths: picked.map((r) => r.path),
+        notePaths: picked.length ? picked.map((r) => r.path) : undefined,
+        filePaths: areaImages ?? undefined,
         signal: ctrl.signal,
         onText: () => setStatus(`${CHAT_NAME[lane]} is writing the cards…`),
       });
@@ -349,6 +395,7 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
         setStatus("");
         return;
       }
+      answersRef.current = {};
       setCards(parsed);
       setStatus("Answer the cards, then submit them for review.");
     } catch (e) {
@@ -363,6 +410,7 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
 
   const gradeCards = async (answers: Record<string, string>) => {
     if (!cards || busy) return;
+    answersRef.current = answers;
     setBusy("grade");
     setError("");
     setStatus(`${CHAT_NAME[lane]} is marking the cards…`);
@@ -384,6 +432,24 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
       }
       setReport(parsed);
       setStatus("");
+      const record: QuizRecord = {
+        id: newId("q"),
+        at: new Date().toISOString(),
+        host: lane,
+        kind: quizKind,
+        count: cards.length,
+        scope: quiz?.scope ?? (areaImages ? "area" : picked.length === 1 ? "note" : "notes"),
+        ...(topic.trim() ? { topic: topic.trim() } : {}),
+        notes: areaImages ? [quiz?.areaTitle || "Marked area"] : picked.map((r) => r.title),
+        cards,
+        answers: answersRef.current,
+        report: parsed,
+      };
+      const paths = areaImages ? (quiz?.areaNote ? [quiz.areaNote] : []) : picked.map((r) => r.path);
+      const score = quizScore(parsed).pct;
+      void recordQuiz(paths, record).then((n) => {
+        if (n) setStatus(`${score}% · kept in the quiz history of ${n === 1 ? "the note" : `${n} notes`} (Study → Review results).`);
+      });
     } catch (e) {
       setStatus("");
       setError(e instanceof Error ? e.message : String(e));
@@ -393,6 +459,13 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
       void api.quickRelease();
     }
   };
+
+  useEffect(() => {
+    if (!autoRef.current || loading || busy) return;
+    if (!areaImages && !picked.some((r) => r.text.trim() || savableNotePath(r.path))) return;
+    autoRef.current = false;
+    void makeCards();
+  });
 
   primaryRef.current = () => {
     if (busy) return;
@@ -591,10 +664,12 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
       {!popped && (
       <header key="top" className="brief-top">
         <div>
-          <div className="brief-kicker">Brief</div>
-          <h1>Summaries from the notes you pick</h1>
+          <div className="brief-kicker">{quiz ? "Quiz" : "Brief"}</div>
+          <h1>{quiz ? (areaImages ? "Quiz me on the marked area" : "Quiz me on the notes you pick") : "Summaries from the notes you pick"}</h1>
           <p>
-            {notebookPath
+            {areaImages
+              ? `From “${quiz?.areaTitle || "this note"}”: what you selected or marked, as the app draws it.`
+              : notebookPath
               ? `Pick notes from ${notebookName || "this notebook"}, choose what to make, and send. Nothing leaves the computer before that.`
               : initialPaths.length
                 ? "This note is checked. Add others, choose what to make, and send."
@@ -623,6 +698,31 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
               </button>
             ))}
           </div>
+          {task === "quiz" ? (
+            <div className="brief-choices">
+              {QUIZ_COUNTS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`brief-chip ${quizCount === n ? "on" : ""}`}
+                  onClick={() => setQuizCount(n)}
+                >
+                  {n} cards
+                </button>
+              ))}
+              {QUIZ_KINDS.map((k) => (
+                <button
+                  key={k.id}
+                  type="button"
+                  className={`brief-chip ${quizKind === k.id ? "on" : ""}`}
+                  title={k.hint}
+                  onClick={() => setQuizKind(k.id)}
+                >
+                  {k.label}
+                </button>
+              ))}
+            </div>
+          ) : (
           <div className="brief-choices">
             {DEPTHS.map((d) => (
               <button
@@ -635,7 +735,10 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
               </button>
             ))}
           </div>
-          <p className="brief-hint">{TASKS.find((t) => t.id === task)?.hint}</p>
+          )}
+          <p className="brief-hint">
+            {task === "quiz" ? QUIZ_KINDS.find((k) => k.id === quizKind)?.hint : TASKS.find((t) => t.id === task)?.hint}
+          </p>
 
           <div className="brief-lanes">
             <button type="button" className={`brief-lane ${lane === "claude" ? "on" : ""}`} onClick={() => setLane("claude")}>
@@ -683,7 +786,12 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
                     Stop
                   </button>
                 ) : (
-                  <button className="btn primary" type="button" disabled={!picked.length || !!busy} onClick={() => void makeCards()}>
+                  <button
+                    className="btn primary"
+                    type="button"
+                    disabled={(!picked.length && !areaImages) || !!busy}
+                    onClick={() => void makeCards()}
+                  >
                     Make cards
                   </button>
                 )
@@ -712,17 +820,20 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
                 <button
                   className="btn"
                   type="button"
-                  disabled={!promptDraft.trim() || !!busy}
-                  title="Places the prompt and notes in the chat beside the note."
+                  disabled={!picked.length || !!busy}
+                  title="Opens Ask beside the note with the checked notes attached; the chat asks one question at a time."
                   onClick={() => openWeb(lane)}
                 >
-                  <IcSend size={14} /> Prepare in {CHAT_NAME[lane]}
+                  <IcSend size={14} /> Quiz in {CHAT_NAME[lane]} chat
                 </button>
               )}
             </div>
             {task === "quiz" ? (
               <p className="brief-fine">
-                Make cards writes the questions here from the checked notes. Answer them, then one submit sends the set back for a mark, the solution, and what to revise.
+                {areaImages
+                  ? "Make cards writes the questions from the marked area (sent as pictures). Answer them, then one submit sends the set back for a mark, the solution, and what to revise."
+                  : "Make cards writes the questions here from the checked notes. Answer them, then one submit sends the set back for a mark, the solution, and what to revise."}{" "}
+                Marked quizzes are kept on the note: Study → Review results.
               </p>
             ) : (
               <>
@@ -745,6 +856,12 @@ export function BriefView({ notebookPath, notebookName, initialPaths, onClose, o
         <div className="brief-split is-row" title="Drag to resize" onPointerDown={(e) => dragBetween(e, "y")} />
 
         <section className="brief-col brief-notes">
+          {areaImages && (
+            <p className="brief-attach-line">
+              <IcAttach size={14} />
+              {`The marked area goes along as ${areaImages.length === 1 ? "one picture" : `${areaImages.length} pictures`}. Check notes below only to add their full text.`}
+            </p>
+          )}
           <label className="brief-topic">
             <span>Topic</span>
             <input

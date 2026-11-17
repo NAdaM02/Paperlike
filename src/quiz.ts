@@ -1,4 +1,4 @@
-import { BriefDepth } from "./brief";
+import type { ChatHost } from "./chat";
 
 export type QuizCard = {
   id: string;
@@ -21,22 +21,106 @@ export type QuizReport = {
   focus: string[];
 };
 
-const COUNT: Record<BriefDepth, string> = {
-  short: "6",
-  study: "10",
-  full: "14",
+export type QuizKind = "mixed" | "recall" | "why" | "problems";
+
+export const QUIZ_KINDS: { id: QuizKind; label: string; hint: string }[] = [
+  { id: "mixed", label: "Mixed", hint: "Recall, why a step holds, and what breaks when a condition changes." },
+  { id: "recall", label: "Recall", hint: "Definitions, formulas and facts, as the notes give them." },
+  { id: "why", label: "Why & conditions", hint: "Why a step holds, what it assumes, and what changes with a condition." },
+  { id: "problems", label: "Problems", hint: "Short problems to solve, like the notes' examples." },
+];
+
+export const QUIZ_COUNTS = [5, 10, 15] as const;
+export type QuizCount = (typeof QUIZ_COUNTS)[number];
+
+const KIND_RULE: Record<QuizKind, string> = {
+  mixed: "Mix recall, why a step holds, and what breaks if a condition changes.",
+  recall: "Ask for definitions, formulas, symbols and facts exactly as the notes give them. No derivations.",
+  why: "Ask why a step or formula holds, which assumption it needs, and what breaks or changes if a condition changes.",
+  problems:
+    "Each card is a short problem to solve, set up like the notes' examples. The answer shows the key steps and the result. Use only methods in the notes. If the notes give no values, keep the problem symbolic.",
 };
+
+export type QuizScope = "note" | "area" | "notes";
+
+export type QuizPrefs = { count: QuizCount; kind: QuizKind; scope: QuizScope; chat: boolean };
+
+const PREFS_KEY = "pl.quiz.prefs";
+
+export function loadQuizPrefs(): QuizPrefs {
+  const fallback: QuizPrefs = { count: 10, kind: "mixed", scope: "note", chat: false };
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Partial<QuizPrefs>;
+    return {
+      count: QUIZ_COUNTS.includes(saved.count as QuizCount) ? (saved.count as QuizCount) : fallback.count,
+      kind: QUIZ_KINDS.some((k) => k.id === saved.kind) ? saved.kind! : fallback.kind,
+      scope: saved.scope === "area" || saved.scope === "notes" ? saved.scope : "note",
+      chat: saved.chat === true,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveQuizPrefs(prefs: QuizPrefs) {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+}
+
+/** One finished quiz, kept on each note it covered (canvas.quizHistory). */
+export type QuizRecord = {
+  id: string;
+  /** ISO time the review came back. */
+  at: string;
+  host: ChatHost;
+  kind: QuizKind;
+  count: number;
+  scope: QuizScope;
+  topic?: string;
+  /** Titles of the notes it covered. */
+  notes?: string[];
+  cards: QuizCard[];
+  answers: Record<string, string>;
+  report: QuizReport;
+};
+
+export function quizScore(report: QuizReport): { correct: number; partial: number; incorrect: number; pct: number } {
+  const t = { correct: 0, partial: 0, incorrect: 0 };
+  for (const r of report.reviews) t[r.mark] += 1;
+  const n = report.reviews.length || 1;
+  return { ...t, pct: Math.round(((t.correct + t.partial / 2) / n) * 100) };
+}
+
+const AREA_LINE =
+  "The attached image(s) show the part of my notes to quiz on: typed text, handwriting, drawings and slides. Quiz only on what they show.";
+
+/** Quiz in a chat, one question at a time (the Ask pane or a quick card). */
+export function chatQuizPrompt(opts: { count: number; kind: QuizKind; topic?: string; area?: boolean }): string {
+  const topic = opts.topic?.trim();
+  return [
+    `Quiz me from ${opts.area ? "the attached part of my notes" : "these notes"} only, one question at a time, ${opts.count} questions in all.`,
+    KIND_RULE[opts.kind],
+    topic ? `Stay on this topic: ${topic}.` : "",
+    "Wait for my answer before saying what I missed and asking the next question. After the last one, give my score and up to three topics to revise.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
 /** What the model must emit so the cards can be built without guessing. */
 export function quizStudyPrompt(opts: {
-  depth: BriefDepth;
+  count: number;
+  kind: QuizKind;
   topic: string;
   notes: { title: string; text: string }[];
   attached: boolean;
+  /** Rendered images of a marked area are attached. */
+  area?: boolean;
 }): string {
   const titles = opts.notes.map((n) => n.title.trim() || "Untitled");
   const topic = opts.topic.trim();
-  const body = opts.attached
+  const body = opts.area && !opts.notes.length
+    ? AREA_LINE
+    : opts.attached
     ? `Each note is attached as a PDF (the page, with drawings and slides) and as Markdown. Notes: ${titles.join(", ")}.`
     : [
         "Notes:",
@@ -55,7 +139,7 @@ export function quizStudyPrompt(opts: {
     "You are writing a closed-book quiz from a student's own notes.",
     "Use only what is in the notes. If a number, formula, or claim is not there, the answer says it is not in the notes. Do not invent values.",
     "Keep the notes' notation. LaTeX inside $...$ is fine. Do not rewrite a formula into a different one.",
-    `Write exactly ${COUNT[opts.depth]} cards. Mix recall, why a step holds, and what breaks if a condition changes.`,
+    `Write exactly ${opts.count} cards. ${KIND_RULE[opts.kind]}`,
     topic ? `Stay on this topic: ${topic}. Skip anything in the notes that does not bear on it.` : "Cover the notes they included.",
     "Reply with nothing except this block:",
     "",
@@ -71,7 +155,7 @@ export function quizStudyPrompt(opts: {
     "answer is a few short lines in the same shape, not a paragraph.",
     "Inside a JSON string, a line break is the two characters \\n and a blank line is \\n\\n. Bold is **like this**. Do not put a raw line break inside the JSON.",
     "",
-    body,
+    opts.area && opts.notes.length ? `${AREA_LINE}\n\n${body}` : body,
   ].join("\n");
 }
 

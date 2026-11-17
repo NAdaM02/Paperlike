@@ -3260,6 +3260,27 @@ svg.hl .hl-ink {
 .md-read hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .brief-math { overflow-x: auto; overflow-y: hidden; margin: 6px 0; }
 .quiz-desk { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.quiz-history.modal { width: min(1040px, 96vw); }
+.quiz-history-body { display: grid; grid-template-columns: 260px 1fr; gap: 14px; min-height: 360px; max-height: 70vh; }
+.quiz-history-list { display: flex; flex-direction: column; gap: 6px; overflow: auto; padding-right: 4px; }
+.quiz-history-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.quiz-history-row strong { grid-row: span 2; font-size: 18px; align-self: center; }
+.quiz-history-row span { font-size: 13px; }
+.quiz-history-row small { color: var(--ink-3); font-size: 12px; }
+.quiz-history-row.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.quiz-history-view { overflow: auto; min-width: 0; }
+.quiz-history-actions { display: flex; justify-content: flex-end; }
 .quiz-top, .quiz-actions, .quiz-card header { display: flex; align-items: center; gap: 8px; }
 .quiz-top { justify-content: space-between; color: var(--ink-3); font-size: 12.5px; }
 .quiz-jumps, .quiz-filters { display: flex; flex-wrap: wrap; gap: 6px; }

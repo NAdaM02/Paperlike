@@ -24,13 +24,16 @@ export function QuizDesk({
   busy,
   report,
   onSubmit,
+  initialAnswers,
 }: {
   cards: QuizCard[];
   busy: boolean;
   report: QuizReport | null;
   onSubmit: (answers: Record<string, string>) => void;
+  /** Answers given earlier (Review results shows a kept quiz). */
+  initialAnswers?: Record<string, string>;
 }) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>(() => initialAnswers ?? {});
   const [index, setIndex] = useState(0);
   const [filter, setFilter] = useState<"all" | QuizMark>("all");
   const card = cards[Math.min(index, cards.length - 1)];
