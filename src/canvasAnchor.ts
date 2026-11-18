@@ -15,6 +15,11 @@ type Entry = {
   content?: (area: { x: number; y: number; w: number; h: number }) => AreaContent;
   /** Box around the objects selected on this canvas, in note units, or null. */
   selection?: () => { x: number; y: number; w: number; h: number } | null;
+  /**
+   * Pan (same zoom) so `area` sits inside the view. Returns a function that puts
+   * the camera back. Omitted on locked previews.
+   */
+  ensureVisible?: (area: { x: number; y: number; w: number; h: number }) => () => void;
 };
 
 export type AreaContent = { objects: unknown[]; media: Record<string, string> };
@@ -137,6 +142,21 @@ function snapOf(e: Entry): ViewSnap {
   s = { b: e.wrap.getBoundingClientRect(), c: e.cam(), clip: clipBox(e.wrap) };
   viewSnap.set(e.key, s);
   return s;
+}
+
+/** Like `screenOf`, but reads the camera now instead of the cached frame. */
+export function liveScreenOf(area: NoteArea): { rect: AnalyzeRect; clip: DOMRect } | null {
+  viewSnapGen++;
+  viewSnap.clear();
+  return screenOf(area);
+}
+
+/** Pan the note so `area` is in view, and return how to undo that pan. */
+export function revealNoteArea(area: NoteArea): (() => void) | null {
+  for (const e of entries) {
+    if (e.key === area.key && e.ensureVisible) return e.ensureVisible(area);
+  }
+  return null;
 }
 
 /** Where a note area is on screen now, and the visible box it is clipped to; null when its note isn't shown. */

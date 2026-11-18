@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { IcClose } from "./icons";
+import { imageDataUrl } from "./stillImage";
 
 /* ── Modal ── */
 export function Modal({
@@ -277,7 +278,7 @@ export function imageSize(b64: string): Promise<{ width: number; height: number 
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth || 1, height: img.naturalHeight || 1 });
     img.onerror = () => resolve({ width: 320, height: 220 });
-    img.src = `data:image/*;base64,${b64}`;
+    img.src = imageDataUrl(b64);
   });
 }
 

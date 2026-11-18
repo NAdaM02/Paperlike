@@ -2280,6 +2280,63 @@ pub fn stage_analyze_png(png_b64: String) -> Result<String, String> {
     Ok(plain_path(&path))
 }
 
+/// Paint a CSS-pixel rectangle of the main window at `scale` (1 = one pixel per CSS pixel).
+/// The picture is the page as shown, including folds. PNG base64, no data-URL prefix.
+#[tauri::command]
+pub async fn capture_view_region(
+    app: tauri::AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    scale: f64,
+) -> Result<String, String> {
+    if !x.is_finite() || !y.is_finite() || !width.is_finite() || !height.is_finite() || width < 1.0 || height < 1.0 {
+        return Err("Capture area is empty.".into());
+    }
+    let mut scale = if scale.is_finite() { scale.clamp(0.5, 8.0) } else { 1.0 };
+    let long = width.max(height);
+    if long * scale > 4096.0 {
+        scale = (4096.0 / long).clamp(0.5, 8.0);
+    }
+    let view = app.get_webview("main").ok_or("The window isn't open.")?;
+    let clip = serde_json::json!({ "x": x, "y": y, "width": width, "height": height, "scale": scale });
+    // Paint again at `scale` so type and ink stay sharp. If that isn't available,
+    // copy the same rectangle from the window surface.
+    let painted = cdp(
+        &view,
+        "Page.captureScreenshot",
+        serde_json::json!({
+            "format": "png",
+            "fromSurface": false,
+            "captureBeyondViewport": true,
+            "clip": clip,
+        }),
+    )
+    .await;
+    let res = match painted {
+        Ok(v) => v,
+        Err(_) => {
+            cdp(
+                &view,
+                "Page.captureScreenshot",
+                serde_json::json!({
+                    "format": "png",
+                    "fromSurface": true,
+                    "captureBeyondViewport": false,
+                    "clip": { "x": x, "y": y, "width": width, "height": height, "scale": scale },
+                }),
+            )
+            .await?
+        }
+    };
+    res.get("data")
+        .and_then(|v| v.as_str())
+        .map(|s| s.chars().filter(|c| !c.is_whitespace()).collect::<String>())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Couldn't capture this area.".into())
+}
+
 /// Capture a rectangle of the desktop (physical pixels: `screenX`/`screenY` style) as PNG base64.
 #[tauri::command]
 pub fn capture_screen_region(x: i32, y: i32, width: u32, height: u32) -> Result<String, String> {

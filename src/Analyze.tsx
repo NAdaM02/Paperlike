@@ -1,7 +1,8 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { NoteArea, noteAreaAt, screenOf, subscribeCanvas } from "./canvasAnchor";
-import { AreaMap, renderNoteArea } from "./noteRender";
+import { capturePaintedArea } from "./pageCapture";
+import { AreaMap } from "./noteRender";
 import { CHAT_NAME, ChatHost, defaultHost, setDefaultHost } from "./chat";
 import { messages } from "./copy/messages";
 import { HostLogo, IcAsk, IcClose, IcExplain, IcScan, IcSolve, IcVerify } from "./icons";
@@ -131,9 +132,10 @@ export const AnalyzeMark = memo(function AnalyzeMark({ rect, area }: { rect: Ana
 
 /**
  * Image(s) of `rect` (CSS pixels of the window) for the chat. Over a note, the area is
- * rendered from the note's own objects (sharp, no app chrome or covering windows, exact
- * note mapping), using `area` when given (it works off-screen too). Otherwise, or when
- * rendering fails, the display under `rect` is captured with `hide` elements made invisible.
+ * the page as painted — folds, type and ink — at a resolution high enough to read.
+ * `area` is used when the selection has already been mapped into the note (it can be
+ * brought back on screen). Otherwise the display under `rect` is captured, with `hide`
+ * elements made invisible.
  */
 export async function captureArea(
   rect: AnalyzeRect,
@@ -143,7 +145,11 @@ export async function captureArea(
   const target = area ?? noteAreaAt(rect);
   if (target) {
     try {
-      const r = await renderNoteArea(target);
+      const r = await capturePaintedArea(
+        target,
+        175,
+        hide.filter((el): el is HTMLElement => !!el),
+      );
       if (r) {
         return {
           pngB64: r.previewB64,

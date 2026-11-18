@@ -191,7 +191,9 @@ pressure is filled as an outline; every other stroke stays a centreline.
 A fold owns other objects by id; those objects keep ordinary
 absolute coordinates and are drawn above everything that is not in a fold.
 `fill` (0–1, omitted by default) is how solid the paper wash behind the members
-is. The editor uses about 0.88 when it is omitted. Content created inside the frame joins `children` and stays a member (the frame
+is. The editor uses about 0.88 when it is omitted. `paper` (omitted = blank) is
+the pattern on that wash; dots, lines and grid are anchored at the collapse
+chevron, not the page grid. Content created inside the frame joins `children` and stays a member (the frame
 grows to wrap it). Collapsing hides the members and leaves a small note icon at
 `marker_x`,`marker_y` (fallback: `x`,`y` when those fields are absent — older
 notes). Deleting the fold deletes its members.
@@ -205,6 +207,7 @@ notes). Deleting the fold deletes its members.
   "marker_x": 34,            // optional; collapsed icon top-left (chevron center)
   "marker_y": 18,
   "fill": 0.88,              // optional paper wash, 0–1; omitted uses the default
+  "paper": "dots",           // optional: blank | dots | lines | grid; omitted = blank wash
   "children": ["t_…", "d_…"] // omitted when empty
 }
 ```

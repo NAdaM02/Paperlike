@@ -679,6 +679,24 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
   color: var(--ink-2);
   font-size: 12px;
 }
+.fold-papers {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 2px;
+}
+.menu .fold-papers button {
+  width: 28px;
+  height: 26px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+}
+.menu .fold-papers button.on,
+.menu .fold-papers button:hover { border-color: var(--accent); background: transparent; }
 .menu-slider input { width: 100%; margin: 0; }
 .menu button.danger { color: var(--danger); }
 .menu hr { border: none; border-top: 1px solid var(--border); margin: 5px 6px; }
@@ -2064,9 +2082,45 @@ textarea.field-textarea:focus, .feedback-box:focus, .brief-prompt-text:focus {
 .content table.plt.plt-resizing td { caret-color: transparent; }
 
 /* OneNote-style Insert Table grid picker */
-.table-picker-wrap {
+.table-picker-wrap,
+.media-menu-wrap {
   position: relative;
   flex: none;
+}
+.media-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  min-width: 148px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  animation: pop-in 0.12s ease-out;
+}
+.media-pop button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.media-pop button:hover { background: var(--accent-soft-2); }
+.draw-fold-slot {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .table-pop {
   position: absolute;
@@ -4920,13 +4974,22 @@ svg.hl .hl-ink {
 }
 .gif-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: auto;
+  align-items: start;
   gap: 6px;
   padding: 8px;
   overflow: auto;
   min-height: 180px;
+  flex: 1;
+  min-width: 0;
 }
 .gif-cell {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
   border: 0;
   padding: 0;
   border-radius: 8px;
@@ -4935,7 +4998,15 @@ svg.hl .hl-ink {
   cursor: pointer;
   aspect-ratio: 1;
 }
-.gif-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gif-cell img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  object-fit: cover;
+  display: block;
+}
 .gif-cell:hover { outline: 2px solid var(--accent); }
 .gif-url {
   display: flex;

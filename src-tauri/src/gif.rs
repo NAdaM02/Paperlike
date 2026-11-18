@@ -54,6 +54,17 @@ fn https_preview(raw: &str) -> Option<String> {
     Some(url.to_string())
 }
 
+/// GIF, or a WebP (often animated) from the same hosts. Anything else is refused.
+fn image_kind(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 6 && &bytes[..3] == b"GIF" {
+        return Some("gif");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    None
+}
+
 fn dim(row: &serde_json::Value, key: &str) -> u32 {
     row.get(key).and_then(|n| n.as_u64()).unwrap_or(0) as u32
 }
@@ -201,7 +212,7 @@ pub fn gif_fetch(url: String) -> Result<GifBytes, String> {
         .take(12 * 1024 * 1024)
         .read_to_end(&mut bytes)
         .map_err(|_| "The download stopped.".to_string())?;
-    if bytes.len() < 6 || &bytes[..3] != b"GIF" {
+    if image_kind(&bytes).is_none() {
         return Err("That file isn't a GIF.".into());
     }
     if bytes.len() >= 12 * 1024 * 1024 {
@@ -220,6 +231,16 @@ pub struct GifBytes {
 #[cfg(test)]
 mod tests {
     use super::parse_search;
+
+    #[test]
+    fn accepts_gif_and_animated_webp() {
+        assert_eq!(super::image_kind(b"GIF89a...."), Some("gif"));
+        let mut webp = b"RIFF".to_vec();
+        webp.extend_from_slice(&[0, 0, 0, 0]);
+        webp.extend_from_slice(b"WEBP");
+        assert_eq!(super::image_kind(&webp), Some("webp"));
+        assert!(super::image_kind(b"not a gif").is_none());
+    }
 
     #[test]
     fn parses_tenor_media() {

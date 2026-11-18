@@ -34,6 +34,7 @@ import {
   NotebookUiState,
   PaperStyle,
   PdfObject,
+  pdfNumberingDefault,
   resolveAutoHideMode,
   SavedQuickCard,
   Separators,
@@ -61,7 +62,7 @@ import { relativeDay, useToday } from "./relativeDate";
 import { pdfAspects, pdfPlacement } from "./pdfDoc";
 import { PdfView, type PdfCanvasView } from "./PdfView";
 import { pdfSize } from "./pdfLayout";
-import { isGifBase64, StillImage } from "./stillImage";
+import { imageDataUrl, imageMime, isMotionBase64, StillImage } from "./stillImage";
 import { quizHistoryOf, setOpenQuizNote, withQuiz } from "./quizHistory";
 import { openStudyMenu } from "./StudyMenu";
 import { ERASER_SIZES, EraserMode, EraserSize } from "./eraser";
@@ -139,6 +140,8 @@ import {
   IcLasso,
   IcLast,
   IcImage,
+  IcGif,
+  IcMedia,
   IcPdf,
   IcFold,
   IcMath,
@@ -2515,7 +2518,8 @@ export function NotebookView({
       const center = viewRef.current?.center() ?? { x: 360, y: 300 };
       const z = latest.doc.canvas.objects.reduce((m, o) => Math.max(m, o.z), 0) + 1;
       const media = { ...latest.media_b64 };
-      const mp = `media/${newId("m").slice(2)}.gif`;
+      const ext = imageMime(b64) === "image/webp" ? "webp" : "gif";
+      const mp = `media/${newId("m").slice(2)}.${ext}`;
       media[mp] = b64;
       const obj: ImageObject = {
         type: "image",
@@ -2530,8 +2534,9 @@ export function NotebookView({
       const box = (o: (typeof latest.doc.canvas.objects)[number]) => objectBBox(o, heightsRef.current);
       const placed = placeNew(latest.doc.canvas.objects, obj, obj.x + width / 2, obj.y + height / 2, box);
       noteChanged({ ...latest, media_b64: media, doc: { ...latest.doc, canvas: { ...latest.doc.canvas, objects: placed } } });
-    } catch {
-      onToast("Couldn't add that GIF.");
+    } catch (e) {
+      const text = (e instanceof Error ? e.message : typeof e === "string" ? e : "").trim();
+      onToast(text || "Couldn't add that GIF.");
     }
   };
 
@@ -2585,6 +2590,7 @@ export function NotebookView({
         layout: "stack",
         pageWidth,
         gap: 14,
+        numbering: pdfNumberingDefault(),
       };
       placed = placeNew(placed, obj, obj.x + pageWidth / 2, obj.y + 8, box);
       y += pdfSize(obj).h + 40;
@@ -2637,6 +2643,7 @@ export function NotebookView({
       layout: "stack",
       pageWidth,
       gap: 14,
+      numbering: pdfNumberingDefault(),
     };
     const placed = placeNew(
       latest.doc.canvas.objects,
@@ -3852,21 +3859,6 @@ export function NotebookView({
                 endRibbon();
               }}
             />
-            <button className="btn" onClick={insertImages}>
-              <IcImage size={15} /> Image
-            </button>
-            <button className="btn" title="Browse and add a GIF" onClick={() => setGifOpen(true)}>
-              GIF
-            </button>
-            <button className="btn" title="Insert a PDF as one joined set of pages" onClick={insertPdfs}>
-              <IcPdf size={15} /> PDF
-            </button>
-            <button className="btn" title={messages.fileInsertHint} onClick={() => void insertFiles()}>
-              <IcAttach size={15} /> File
-            </button>
-            <button className="btn" title="Collapsible note — draw and type inside it" onClick={insertFold}>
-              <IcFold size={15} /> Fold
-            </button>
             <button
               className="btn"
               title="Insert math (Ctrl+M)"
@@ -3875,6 +3867,15 @@ export function NotebookView({
             >
               <IcMath size={15} /> Math
             </button>
+            <button className="btn" title="Collapsible note — draw and type inside it" onClick={insertFold}>
+              <IcFold size={15} /> Fold
+            </button>
+            <MediaMenu
+              onPdf={insertPdfs}
+              onImage={insertImages}
+              onGif={() => setGifOpen(true)}
+              onFile={() => void insertFiles()}
+            />
           </div>
         )}
 
@@ -4139,6 +4140,18 @@ export function NotebookView({
                 </button>
               </>
             )}
+            <div className="draw-fold-slot">
+              <div className="sep" />
+              <button
+                type="button"
+                className="btn icon"
+                title="Collapsible note — draw and type inside it"
+                aria-label="Fold"
+                onClick={insertFold}
+              >
+                <IcFold size={15} />
+              </button>
+            </div>
           </div>
         )}
 
@@ -5703,6 +5716,76 @@ function FontPicker({
   );
 }
 
+/* ─── Media insert menu ────────────────────────────────────────────────── */
+
+function MediaMenu({
+  onPdf,
+  onImage,
+  onGif,
+  onFile,
+}: {
+  onPdf: () => void;
+  onImage: () => void;
+  onGif: () => void;
+  onFile: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const items: { label: string; title: string; icon: ReactNode; onClick: () => void }[] = [
+    { label: "Pdf", title: "Insert a PDF as one joined set of pages", icon: <IcPdf size={15} />, onClick: onPdf },
+    { label: "Image", title: "Insert an image", icon: <IcImage size={15} />, onClick: onImage },
+    { label: "Gif", title: "Browse and add a GIF", icon: <IcGif size={15} />, onClick: onGif },
+    { label: "File", title: messages.fileInsertHint, icon: <IcAttach size={15} />, onClick: onFile },
+  ];
+  return (
+    <div className="media-menu-wrap" ref={rootRef}>
+      <button
+        type="button"
+        className={`btn ${open ? "active" : ""}`}
+        title="Pdf, image, GIF or file"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <IcMedia size={15} /> Media
+      </button>
+      {open && (
+        <div className="media-pop" role="menu">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              title={item.title}
+              onClick={() => {
+                setOpen(false);
+                item.onClick();
+              }}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── OneNote-style table grid picker ──────────────────────────────────── */
 
 const TABLE_PICK_MAX = 8;
@@ -6051,7 +6134,7 @@ function PdfStatic({ note, view, only }: { note: NotePayload; view: PdfCanvasVie
           if (o.type === "image") {
             const src = note.media_b64[o.media];
             return src ? (
-              isGifBase64(src) ? (
+              isMotionBase64(src) ? (
                 <StillImage
                   key={o.id}
                   b64={src}
@@ -6060,7 +6143,7 @@ function PdfStatic({ note, view, only }: { note: NotePayload; view: PdfCanvasVie
               ) : (
               <img
                 key={o.id}
-                src={`data:image/*;base64,${src}`}
+                src={imageDataUrl(src)}
                 style={{ position: "absolute", left: o.x, top: o.y, width: o.width, height: o.height, zIndex: 2 + o.z }}
                 alt=""
               />

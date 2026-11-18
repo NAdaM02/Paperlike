@@ -24,6 +24,7 @@ import {
   FileObject,
   PdfObject,
   pdfCustomNumbers,
+  rememberPdfNumbering,
   TextObject,
 } from "./api";
 import { blockedIn, collapsedIds, FOLD_MARK_SIZE, foldAt, foldIndex, groupAtPoint, groupFrame, GROUP_MIN_H, placeNew, pruneGroups, withChild } from "./group";
@@ -60,7 +61,7 @@ import { studyMenuItems } from "./StudyMenu";
 import { dotPoints, EraserMode, eraseSweep, lassoHits, smoothPoints, strokePath } from "./eraser";
 import { drawingTouchesRect, lassoLoop, pushLassoPoint, refineSmartStroke } from "./inkGesture";
 import { markerOutlinePath, outlinePath, pressureHitWidth, pushPenSample, smoothInk, strokeOutline, strokeRuns } from "./ink";
-import { isGifBase64, StillImage } from "./stillImage";
+import { imageDataUrl, isMotionBase64, StillImage } from "./stillImage";
 import { ArrowInk } from "./ArrowInk";
 import { FileChip, IMAGE_EXTS, fileExt } from "./fileChip";
 import { messages } from "./copy/messages";
@@ -169,6 +170,39 @@ function paperBackground(paper: PaperStyle, cam: { x: number; y: number; z: numb
     backgroundImage: "radial-gradient(var(--canvas-dot) 1.2px, transparent 1.2px)",
     backgroundSize: `${step}px ${step}px`,
     backgroundPosition: `${cam.x - step / 2}px ${cam.y - step / 2}px`,
+  };
+}
+
+/**
+ * Pattern inside a fold. The page pattern is locked to the note; a fold's pattern
+ * is locked to its collapse chevron (8px right of the frame, 8px above it) so the
+ * dots travel with the fold.
+ */
+function foldPaperStyle(g: GroupObject): React.CSSProperties {
+  const wash = `color-mix(in srgb, var(--paper) ${Math.round((g.fill ?? 0.88) * 100)}%, transparent)`;
+  const paper = g.paper ?? "blank";
+  if (paper === "blank") return { background: wash };
+  const step = paper === "lines" ? 28 : 22;
+  const line = "var(--canvas-line)";
+  const dot = "var(--canvas-dot)";
+  // Chevron center, in the field's own coordinates.
+  const anchorX = 8;
+  const anchorY = -8;
+  const image =
+    paper === "lines"
+      ? `linear-gradient(to bottom, ${line} 1px, transparent 1px)`
+      : paper === "grid"
+        ? `linear-gradient(to right, ${line} 1px, transparent 1px), linear-gradient(to bottom, ${line} 1px, transparent 1px)`
+        : `radial-gradient(${dot} 1.2px, transparent 1.2px)`;
+  // A dot sits in the middle of its tile; a grid line sits on the tile's edge.
+  const oy = paper === "dots" ? anchorY - step / 2 : anchorY;
+  const ox = paper === "dots" ? anchorX - step / 2 : anchorX;
+  return {
+    backgroundColor: wash,
+    backgroundImage: image,
+    backgroundSize: paper === "lines" ? `100% ${step}px` : `${step}px ${step}px`,
+    backgroundPosition: paper === "lines" ? `0 ${oy}px` : `${ox}px ${oy}px`,
+    backgroundRepeat: "repeat",
   };
 }
 
@@ -691,6 +725,8 @@ export function CanvasEditor({
     canvasMoved();
     setCam(c);
   };
+  const flushCamRef = useRef(flushCam);
+  flushCamRef.current = flushCam;
   useEffect(() => {
     if (lockedView) flushCam(lockedView);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync locked preview camera only
@@ -748,6 +784,36 @@ export function CanvasEditor({
         const pad = 12;
         return { x: x1 - pad, y: y1 - pad, w: x2 - x1 + 2 * pad, h: y2 - y1 + 2 * pad };
       },
+      // Same zoom: a capture of an area that has scrolled away still shows the page as it looks.
+      ensureVisible: lockedRef.current
+        ? undefined
+        : (area) => {
+            const wrap = wrapRef.current;
+            const prev = { ...camRef.current };
+            if (!wrap) return () => {};
+            const c = camRef.current;
+            const z = c.z || 1;
+            const left = c.x + area.x * z;
+            const top = c.y + area.y * z;
+            const right = left + area.w * z;
+            const bottom = top + area.h * z;
+            const pad = 12;
+            const vw = wrap.clientWidth;
+            const vh = wrap.clientHeight;
+            let x = c.x;
+            let y = c.y;
+            if (area.w * z <= vw - pad * 2) {
+              if (left < pad) x += pad - left;
+              else if (right > vw - pad) x -= right - (vw - pad);
+            } else x = pad - area.x * z;
+            if (area.h * z <= vh - pad * 2) {
+              if (top < pad) y += pad - top;
+              else if (bottom > vh - pad) y -= bottom - (vh - pad);
+            } else y = pad - area.y * z;
+            if (Math.abs(x - c.x) < 0.5 && Math.abs(y - c.y) < 0.5) return () => {};
+            flushCamRef.current({ x, y, z });
+            return () => flushCamRef.current(prev);
+          },
     });
   }, [notePathForAnchor]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -899,7 +965,7 @@ export function CanvasEditor({
       hit.b64 = b64;
       return hit.url;
     }
-    const url = `data:image/*;base64,${b64}`;
+    const url = imageDataUrl(b64);
     imageUrls.current.set(media, { b64, url });
     return url;
   };
@@ -3203,6 +3269,19 @@ export function CanvasEditor({
     updateObjects((objs) => objs.map((o) => (o.type === "group" && o.id === id ? { ...o, fill } : o)));
   };
 
+  const setFoldPaper = (id: string, paper: PaperStyle) => {
+    snapshot("fold-paper");
+    updateObjects((objs) =>
+      objs.map((o) => {
+        if (o.type !== "group" || o.id !== id) return o;
+        const next = { ...o };
+        if (paper === "blank") delete next.paper;
+        else next.paper = paper;
+        return next;
+      }),
+    );
+  };
+
   const choosePdf = (id: string, pages: number[], additive: boolean, keepOthers = false) => {
     const curSel = selectedRef.current;
     const curPick = pdfPickRef.current;
@@ -3538,6 +3617,7 @@ export function CanvasEditor({
         if (numbering) {
           next.numbering = numbering;
           delete next.hideNumbers;
+          rememberPdfNumbering(numbering);
         }
         return next;
       }),
@@ -4084,7 +4164,7 @@ export function CanvasEditor({
                 onPointerDown={(e) => startMove(e, o.id)}
               >
                 {src ? (
-                  lockedView && isGifBase64(src) ? (
+                  lockedView && isMotionBase64(src) ? (
                     <StillImage b64={src} />
                   ) : (
                     <img src={imageUrl(o.media, src)} alt="" draggable={false} />
@@ -4132,7 +4212,7 @@ export function CanvasEditor({
                     top: frame.y,
                     width: frame.w,
                     height: frame.h,
-                    background: `color-mix(in srgb, var(--paper) ${Math.round((g.fill ?? 0.88) * 100)}%, transparent)`,
+                    ...foldPaperStyle(g),
                   }}
                 />
               )}
@@ -4182,7 +4262,7 @@ export function CanvasEditor({
                         onPointerDown={(e) => startMove(e, o.id)}
                       >
                         {src ? (
-                          lockedView && isGifBase64(src) ? (
+                          lockedView && isMotionBase64(src) ? (
                             <StillImage b64={src} />
                           ) : (
                             <img src={imageUrl(o.media, src)} alt="" draggable={false} />
@@ -4427,18 +4507,36 @@ export function CanvasEditor({
             const only = ids.length === 1 ? objects.find((o) => o.id === ids[0]) : undefined;
             if (!only || only.type !== "group") return null;
             const pct = Math.round((only.fill ?? 0.88) * 100);
+            const paper = only.paper ?? "blank";
             return (
-              <label className="menu-slider">
-                Background
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={pct}
-                  aria-label="Fold background"
-                  onChange={(e) => setFoldFill(only.id, Number(e.target.value) / 100)}
-                />
-              </label>
+              <>
+                <div className="fold-papers" role="group" aria-label="Fold background">
+                  {(["blank", "dots", "lines", "grid"] as PaperStyle[]).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      className={paper === p ? "on" : ""}
+                      title={p[0].toUpperCase() + p.slice(1)}
+                      aria-label={p[0].toUpperCase() + p.slice(1)}
+                      aria-pressed={paper === p}
+                      onClick={() => setFoldPaper(only.id, p)}
+                    >
+                      <span className={`paper-swatch ps-${p}`} />
+                    </button>
+                  ))}
+                </div>
+                <label className="menu-slider">
+                  Background
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={pct}
+                    aria-label="Fold background"
+                    onChange={(e) => setFoldFill(only.id, Number(e.target.value) / 100)}
+                  />
+                </label>
+              </>
             );
           })()}
           items={((): MenuItem[] => {

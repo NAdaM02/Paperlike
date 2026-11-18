@@ -275,6 +275,8 @@ export type GroupObject = {
   marker_y?: number;
   /** Paper fill strength, 0–1. Omitted means the default, about 88%. */
   fill?: number;
+  /** Pattern on the fold. Omitted is a plain wash. Anchored at the collapse chevron, not the page. */
+  paper?: PaperStyle;
   /** Ids of objects that belong to this fold. They cannot leave it. */
   children: string[];
 };
@@ -589,6 +591,9 @@ export const api = {
     }>("render_note_area", { args }),
   captureScreenRegion: (x: number, y: number, width: number, height: number) =>
     invoke<string>("capture_screen_region", { x, y, width, height }),
+  /** Paint a CSS-pixel rectangle of the window at `scale`, as PNG base64. */
+  captureViewRegion: (x: number, y: number, width: number, height: number, scale: number) =>
+    invoke<string>("capture_view_region", { x, y, width, height, scale }),
   studyPresetInfo: (presetId: string) => invoke<StudyPresetInfo>("study_preset_info", { presetId }),
   createStudyPreset: (presetId: string, root: string, createFolders: boolean) =>
     invoke<StudyCreateSummary>("create_study_preset", { presetId, root, createFolders }),
@@ -614,3 +619,23 @@ export function newId(prefix: string) {
  *  numbers and found printed ones to cover count as custom. Same rule as Rust `custom_numbers`. */
 export const pdfCustomNumbers = (o: { numbering?: "default" | "custom"; hideNumbers?: boolean; masks?: unknown[] }) =>
   o.numbering ? o.numbering === "custom" : !!(o.hideNumbers && o.masks?.length);
+
+const PDF_NUMBERING_KEY = "paperlike.pdf.numbering";
+
+/** Numbering for a PDF that was just added. Custom until one is changed; then the last choice. */
+export function pdfNumberingDefault(): "default" | "custom" {
+  try {
+    return localStorage.getItem(PDF_NUMBERING_KEY) === "default" ? "default" : "custom";
+  } catch {
+    return "custom";
+  }
+}
+
+/** Remember the numbering last chosen on any PDF, for the next one added. */
+export function rememberPdfNumbering(mode: "default" | "custom") {
+  try {
+    localStorage.setItem(PDF_NUMBERING_KEY, mode);
+  } catch {
+    /* private mode */
+  }
+}

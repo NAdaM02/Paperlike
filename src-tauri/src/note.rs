@@ -177,6 +177,10 @@ pub struct GroupObject {
     pub collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<f64>,
+    /// "blank" | "dots" | "lines" | "grid". Omitted is a plain wash.
+    /// The pattern is anchored at the fold's collapse chevron, not the page grid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper: Option<String>,
     /// Always written. An omitted list crashes the canvas, which treats it as missing.
     #[serde(default)]
     pub children: Vec<String>,

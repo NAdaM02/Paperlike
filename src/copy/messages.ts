@@ -392,7 +392,7 @@ export const tourSteps: TourStep[] = [
   },
   {
     title: "Edit",
-    text: "Edit has text styles, lists, tables and pictures.",
+    text: "Edit has text styles, lists, tables, math, folds and media.",
     at: "nb-edit",
     until: "ribbon-edit",
     hint: "Click the Edit tab.",

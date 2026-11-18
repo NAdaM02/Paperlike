@@ -180,11 +180,19 @@ over only the styles that were actually set, never the plain default font or col
   Delete (or Cut) in the context menu still removes a locked object. When two
   or more pieces from the same PDF are selected, Join pages stacks them into one
   object (mixed files stay disabled). Shift-drag a page inside a joined PDF to
-  reorder it; releasing outside the object drops that page out. Hide page numbers
-  covers a detected printed number with a mask that stays put when the page is resized.
+  reorder it; releasing outside the object drops that page out. The numbering entry
+  reads **Original page numbering** or **Custom page numbering**, whichever is in
+  use, and a separator sits between it and the drop options. Custom covers a
+  detected printed number with a mask that stays put when the page is resized,
+  and draws this note's own index (1 / n). A newly added PDF uses custom
+  numbering until one is switched; after that, new PDFs use the last choice.
+  A PDF saved without a numbering mode keeps its printed numbers.
 - **Fold** (collapsible note): a frame at the viewport centre with a translucent
-  paper fill. It blocks selecting what is underneath. Right-click the fold for a
-  background slider (default about 88% paper; older folds use that too). Anything created inside it
+  paper fill. It blocks selecting what is underneath. Right-click the fold for
+  the background pattern — blank, dots, lines or grid, icons only — and a
+  background slider (default about 88% paper; older folds use that too). Dots,
+  lines and grid use the page spacing, anchored at the collapse chevron so they
+  move with the fold instead of lining up with the page. Anything created inside it
   belongs to it. Dragging a member past the edge grows the frame instead of
   releasing the member. Drag the top grip to move the fold and its contents;
   drag the side edges, the bottom edge, or the bottom-right corner to set a
@@ -201,6 +209,8 @@ over only the styles that were actually set, never the plain default font or col
   also work.
 - Insertion embeds the bytes into the note's `media/` (converted to PNG only when
   the source format is not in the allowed set; otherwise original bytes kept).
+  GIF search does the same: a result that arrives as an animated WebP is stored
+  as WebP, and it stays on its first frame in PDF Preview.
 - Resize via frame handles keeps aspect ratio; Alt+drag resizes freely.
 
 ### 2.7 File chips (any other file)
@@ -221,6 +231,9 @@ over only the styles that were actually set, never the plain default font or col
 - Right-click → **Save as…** writes the original bytes anywhere.
 - Markdown export writes "Attached file: NAME (SIZE)."; PDF export draws the chip.
 
+The Edit ribbon's insert controls are **Table**, **Math**, **Fold**, then **Media**
+(Pdf, Image, Gif, File).
+
 ---
 
 ## 3. Draw tools (ribbon "Draw")
@@ -239,7 +252,8 @@ the current colour and width to the last stroke.
 Tool keys only fire while no text field/window has focus; choosing a draw tool by
 key opens the Draw ribbon. Choosing any Draw tool switches the canvas out of text
 mode; Esc or choosing Select returns. Pen and marker colour/width and eraser
-settings persist app-wide.
+settings persist app-wide. An icon-only Fold button at the far right of Draw
+inserts a fold.
 
 - **Pen**: freehand. Sub-pixel jitter (< 1.2 screen px) is dropped while drawing,
   a light 1-2-1 smoothing pass is applied on release, and rendering uses

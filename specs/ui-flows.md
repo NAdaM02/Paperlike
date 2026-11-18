@@ -141,7 +141,7 @@ bar beneath. The action bar contents:
   notebook) · Save (Ctrl+S; disabled when auto-save on and clean) · Export note
   (grayed out when no note open) · Export multiple · Import .md.
   Flows: [`export.md`](export.md) §3, [`md.md`](md.md) §4.
-- **Edit**: text/list/table/image/PDF/fold controls per [`editor.md`](editor.md) §2.3–2.6.
+- **Edit**: text, lists, then Table, Math, Fold and Media (Pdf, Image, Gif, File) per [`editor.md`](editor.md) §2.3–2.6.
 - **Draw**: tools per [`editor.md`](editor.md) §3.
 - **View**: theme toggle · **Paper** (Blank / Dots / Lines / Grid — per note, saved
   in the note, undoable, never printed; see [`file-formats.md`](file-formats.md)
@@ -254,7 +254,10 @@ Gemini and sets the app-wide default model), **Explain**, **Solve**, **Verify**,
 card beside it with the preset prompt already sent. **Custom** opens the card with
 the capture and an empty field ("Ask {model} about this area…"); the image goes with
 the first question typed. **Recapture** in the card footer captures the same area
-again and re-asks the preset prompt, or for Custom the first question.
+again and re-asks the preset prompt, or for Custom the first question. The picture
+is the open page as it is painted — folds, type and ink included — at about 175 dpi
+and never coarser than the screen. If that capture fails, the same rectangle of
+the screen is used.
 
 ## 8. Checklist and note-list auto-hide
 

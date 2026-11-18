@@ -487,6 +487,19 @@ export function PdfView({
     }
   };
 
+  // A new PDF with custom numbering covers printed numbers once its pages have painted.
+  const autoNum = useRef<string | null>(null);
+  useEffect(() => {
+    if (autoNum.current === obj.id) return;
+    if (!editable || !pdfCustomNumbers(obj) || obj.masks?.length || !b64 || obj.pages.length < 2) return;
+    const id = obj.id;
+    const t = window.setTimeout(() => {
+      autoNum.current = id;
+      void findPrintedNumbers();
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [obj.id, b64, obj.numbering, obj.masks, editable, obj.pages.length]);
+
   return (
     <div
       ref={objRef}
@@ -668,23 +681,19 @@ export function PdfView({
               items.push(
                 "sep",
                 {
-                  label: "Default page numbering",
-                  icon: custom ? undefined : "\u2713",
-                  title: "The PDF's own printed page numbers",
+                  label: custom ? "Custom page numbering" : "Original page numbering",
+                  title: custom
+                    ? "Numbered here (1 / n). Click for the PDF's own page numbers."
+                    : "The PDF's own page numbers. Click to number the pages here (1 / n).",
                   onClick: () => {
                     if (custom) onMasks?.(undefined, "default");
+                    else {
+                      onMasks?.(obj.masks, "custom");
+                      void findPrintedNumbers();
+                    }
                   },
                 },
-                {
-                  label: "Custom page numbering",
-                  icon: custom ? "\u2713" : undefined,
-                  title: "Cover the printed page numbers and number the pages here (1 / n)",
-                  onClick: () => {
-                    if (custom) return;
-                    onMasks?.(obj.masks, "custom");
-                    void findPrintedNumbers();
-                  },
-                },
+                "sep",
                 {
                   label: pages.length > 1 ? "Drop selected pages" : "Drop selected page",
                   disabled: pages.length === 0 || pages.length >= obj.pages.length,

@@ -1,12 +1,12 @@
 /**
- * Analyze images rendered from the note itself rather than screenshotted: the canvas
- * objects in an area (strokes, text boxes, pictures, PDF pages) are drawn offscreen by the
- * same code as the PDF export, at ~175 dpi, and large areas come back as an overview plus
- * tiles. Each image keeps an exact pixel <-> note mapping (`AreaMap`), which is also written
- * as JSON beside the PNGs, so answers can point back at places in the note later.
+ * Analyze images of a note area. The page is captured as it is painted (folds included),
+ * at about 175 dpi so it stays readable. When that note isn't open, the same area is drawn
+ * offscreen by the PDF export instead. Each image keeps an exact pixel <-> note mapping
+ * (`AreaMap`), so answers can point back at places in the note later.
  */
 import { api } from "./api";
 import { areaContent, type NoteArea } from "./canvasAnchor";
+import { capturePaintedArea } from "./pageCapture";
 
 export type AreaShot = {
   path: string;
@@ -43,8 +43,20 @@ export function noteToPixel(map: AreaMap, i: number, x: number, y: number): { px
   return { px: ((x - s.x) * s.px_w) / s.w, py: ((y - s.y) * s.px_h) / s.h };
 }
 
-/** Render `area` from its note; null when that note isn't open in an editor. */
-export async function renderNoteArea(area: NoteArea, dpi = 175): Promise<RenderedArea | null> {
+/** Render `area` from its note; null when that note isn't open and the page can't be captured. */
+export async function renderNoteArea(
+  area: NoteArea,
+  dpi = 175,
+  hide: HTMLElement[] = [],
+): Promise<RenderedArea | null> {
+  // The painted page matches what is on screen, including folds. The export redraw
+  // is only for a note that isn't open.
+  try {
+    const painted = await capturePaintedArea(area, dpi, hide);
+    if (painted) return painted;
+  } catch (e) {
+    console.warn("Capturing the page failed.", e);
+  }
   const content = areaContent(area);
   if (!content) return null;
   const mediaLens: Record<string, number> = {};

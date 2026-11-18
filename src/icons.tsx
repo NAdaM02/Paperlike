@@ -89,6 +89,12 @@ export const IcFold = (p: P) => (
 export const IcImage = (p: P) => (
   <I {...p} d="M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4M9 9.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1" />
 );
+/** Motion mark: a GIF, including an animated WebP from search. */
+export const IcGif = (p: P) => (
+  <I {...p} d="M4 6h16v12H4zM10 9.2v5.6l5-2.8-5-2.8Z" />
+);
+/** Stacked page: Pdf, image, GIF and file. */
+export const IcMedia = (p: P) => <I {...p} d="M7 5h13v10M4 8h13v11H4z" />;
 export const IcPen = (p: P) => (
   <I {...p} d="m3 21 1.7-5L17 3.7a2 2 0 0 1 2.8 0l.5.5a2 2 0 0 1 0 2.8L8 19.3 3 21Z" />
 );

@@ -210,6 +210,7 @@ pub fn run() {
             commands::chat_status,
             commands::stage_analyze_png,
             commands::capture_screen_region,
+            commands::capture_view_region,
             commands::render_note_area,
             commands::license_price,
             commands::license_status,
