@@ -1839,7 +1839,7 @@ pub fn render_area_png(
         content_offset_x: -MARGIN_DIP,
         content_offset_y: -MARGIN_DIP,
     };
-    let view = View { top: y, bottom: y + h, left: x, right: x + w };
+    let view = View { top: y, bottom: y + h, left: x, right: x + w, only: None };
     layer.ops.push(Op::SaveGraphicsState);
     layer.ops.push(Op::DrawPolygon {
         polygon: Polygon {
@@ -2043,7 +2043,13 @@ pub fn export_pdf(
                 });
             }
 
-            let view = View { top: page_top, bottom: page_bottom, left: page_left, right: page_right };
+            let view = View {
+                top: page_top,
+                bottom: page_bottom,
+                left: page_left,
+                right: page_right,
+                only: spec.only.as_deref(),
+            };
             draw_objects(
                 &mut doc,
                 &mut layer,
@@ -2092,11 +2098,13 @@ pub fn export_pdf(
 }
 
 /// The part of the canvas a page shows; objects outside it are skipped.
-struct View {
+struct View<'a> {
     top: f64,
     bottom: f64,
     left: f64,
     right: f64,
+    /// Draw only these objects and PDF pages (see `PageFilter`).
+    only: Option<&'a PageFilter>,
 }
 
 /// Draw the canvas objects that fall in `view` onto one page. Shared by the PDF export and
@@ -2108,7 +2116,7 @@ fn draw_objects(
     objects: &[&CanvasObject],
     media: &HashMap<String, Vec<u8>>,
     map: &Mapper,
-    view: &View,
+    view: &View<'_>,
     pdf_cache: &mut HashMap<(String, u32, u32), Vec<u8>>,
     pdf_px: &dyn Fn(f64) -> u32,
 ) {
@@ -2116,6 +2124,9 @@ fn draw_objects(
     let across = |x: f64, w: f64| x <= page_right && x + w >= page_left;
     let scale = map.scale;
     for obj in objects {
+        if view.only.is_some_and(|f| !matches!(obj, CanvasObject::Pdf(_)) && !f.ids.contains(obj.id())) {
+            continue;
+        }
         match obj {
             CanvasObject::Text(t) => {
                 for f in layout_text_object(t) {
@@ -2183,7 +2194,10 @@ fn draw_objects(
                 let Some(bytes) = media.get(&pdf.media) else {
                     continue;
                 };
-                for slot in pdf.slots() {
+                for (slot_idx, slot) in pdf.slots().into_iter().enumerate() {
+                    if view.only.is_some_and(|f| !f.slots.contains(&(pdf.id.clone(), slot_idx))) {
+                        continue;
+                    }
                     let y = pdf.y + slot.y;
                     if y > page_bottom || y + slot.h < page_top || !across(ox + slot.x, slot.w) {
                         continue;
@@ -3067,6 +3081,12 @@ pub struct PageRect {
     pub oy: f64,
     /// Only the area shows (a slide page); otherwise content may run past the cut.
     pub clip: bool,
+    /// When set, the page shows only these objects (not PDFs) ...
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ids: Option<Vec<String>>,
+    /// ... and only these PDF pages (canvas x, y, w, h).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdf_slots: Option<Vec<[f64; 4]>>,
 }
 
 /// One export page: the canvas area it shows and where that lands on the sheet.
@@ -3082,19 +3102,30 @@ struct PageSpec {
     off_x: f64,
     off_y: f64,
     clip: bool,
+    /// Set when the note mixes main-PDF pages with other content: what this page draws.
+    only: Option<std::sync::Arc<PageFilter>>,
 }
 
-/// Pages of a note. Notes with PDFs (portrait or landscape) get one page per PDF page,
-/// fitted to the width or height and centred, plus pages for anything beside or between
-/// the PDF pages. Everything else is cut top to bottom at the page width.
+/// What a page draws when main-PDF pages and the rest of the note are paged apart.
+/// Every object belongs to exactly one kind of page, so nothing is cut off or drawn twice.
+#[derive(Debug, Default)]
+struct PageFilter {
+    /// Objects other than PDFs.
+    ids: HashSet<String>,
+    /// PDF pages, as (PDF id, page slot index).
+    slots: HashSet<(String, usize)>,
+}
+
+/// Pages of a note. Pages of a main PDF (see `pdf_pages_layout`) get an export page each;
+/// everything else is cut top to bottom at the page width.
 fn note_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Vec<PageSpec> {
-    if let Some(pages) = slide_pages(note, sheet, with_title) {
+    if let Some(pages) = pdf_pages_layout(note, sheet, with_title) {
         return pages;
     }
     let (bx, by, bw, bh) = page_content_bbox(note).unwrap_or_else(|| empty_pagination_bbox(sheet));
     let scale = sheet.scale(note, bw);
     let (first_span, full_span, _) = paginate_spans(bh, scale, with_title, sheet);
-    let cuts = page_cuts(note, by, by + bh, first_span, full_span);
+    let cuts = page_cuts(note, by, by + bh, first_span, full_span, None);
     cuts.iter()
         .enumerate()
         .map(|(i, &top)| PageSpec {
@@ -3107,49 +3138,135 @@ fn note_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Vec<PageSpec> 
             off_x: 0.0,
             off_y: 0.0,
             clip: false,
+            only: None,
         })
         .collect()
 }
 
-fn slide_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Option<Vec<PageSpec>> {
+/// Extent of what an object shows, for deciding which page it belongs to. Text is its
+/// laid-out lines (its box is a fixed 80px); strokes get a little room for their width.
+fn shown_box(obj: &CanvasObject) -> Option<(f64, f64, f64, f64)> {
+    match obj {
+        CanvasObject::Group(_) | CanvasObject::Pdf(_) => None,
+        CanvasObject::Text(t) => {
+            let (mut y0, mut y1) = (f64::INFINITY, f64::NEG_INFINITY);
+            for f in layout_text_object(t) {
+                if f.text.trim().is_empty() {
+                    continue;
+                }
+                let top = f.y - f.size_pt * 0.95;
+                y0 = y0.min(top);
+                y1 = y1.max(top + f.size_pt * (96.0 / 72.0) * 1.35);
+            }
+            y0.is_finite().then(|| (t.x, y0, t.width.max(1.0), y1 - y0))
+        }
+        CanvasObject::Drawing(_) => {
+            let (x, y, w, h) = obj.bbox();
+            Some((x - 4.0, y - 4.0, w + 8.0, h + 8.0))
+        }
+        _ => Some(obj.bbox()),
+    }
+}
+
+/// A PDF is the main thing on the note (its pages get an export page each) when its pages
+/// are big and about as wide as the note: a lecture PDF with notes around it, not a small
+/// PDF placed among handwriting or two PDFs side by side.
+fn is_main_pdf(widest_page: f64, note_w: f64) -> bool {
+    widest_page >= 320.0 && widest_page >= 0.55 * note_w
+}
+
+/// Pages for notes with a main PDF (see `is_main_pdf`), portrait or landscape:
+/// - Each main-PDF page gets its own export page. Its box is the PDF page plus the ink that
+///   belongs to it (on the page, or touching it and running a bit past an edge), scaled
+///   to fit the width or height and centred, so ink past an edge is never cut off: the
+///   PDF shrinks a little to make room.
+/// - Everything else (notes beside or between the PDFs, small PDFs) runs in the usual top
+///   to bottom flow, with cuts that do not slice text lines, drawings or small-PDF pages.
+/// - Pages follow the canvas from top to bottom; page 1 keeps room for the title.
+/// Every object is drawn on exactly one kind of page (`PageFilter`).
+fn pdf_pages_layout(note: &NoteFile, sheet: Sheet, with_title: bool) -> Option<Vec<PageSpec>> {
+    use std::sync::Arc;
+    type Rect = (f64, f64, f64, f64);
     let objects = &note.doc.canvas.objects;
     let hidden = crate::note::collapsed_child_ids(objects);
-    let mut slots: Vec<(f64, f64, f64, f64)> = Vec::new();
-    for obj in objects {
-        if let CanvasObject::Pdf(pdf) = obj {
-            if hidden.contains(obj.id()) {
-                continue;
-            }
-            for s in pdf.slots() {
-                slots.push((pdf.x + s.x, pdf.y + s.y, s.w, s.h));
-            }
-        }
+    let (_, _, note_w, _) = page_content_bbox(note)?;
+
+    struct Main {
+        pdf: String,
+        idx: usize,
+        rect: Rect,
+        ink: Vec<Rect>,
+        ids: HashSet<String>,
     }
-    if slots.is_empty() {
-        return None;
-    }
-    let hits = |b: (f64, f64, f64, f64), r: &(f64, f64, f64, f64)| {
-        b.0 < r.0 + r.2 && b.0 + b.2 > r.0 && b.1 < r.1 + r.3 && b.1 + b.3 > r.1
-    };
-    // Content on no slide (notes beside or between slides) gets its own pages.
-    let mut loose: Vec<(f64, f64, f64, f64)> = Vec::new();
+    let mut mains: Vec<Main> = Vec::new();
+    let mut flow = PageFilter::default();
+    let mut flow_boxes: Vec<Rect> = Vec::new();
+    // Tallest small-PDF page, which has to fit on one page.
+    let mut flow_tallest: Vec<Rect> = Vec::new();
     for obj in objects {
-        if hidden.contains(obj.id()) || matches!(obj, CanvasObject::Pdf(_) | CanvasObject::Group(_)) {
+        if hidden.contains(obj.id()) {
             continue;
         }
-        if let CanvasObject::Text(t) = obj {
-            if text_content_empty(t) {
-                continue;
+        if let CanvasObject::Pdf(pdf) = obj {
+            let slots = pdf.slots();
+            let widest = slots.iter().fold(0.0_f64, |m, s| m.max(s.w));
+            for (idx, s) in slots.iter().enumerate() {
+                let rect = (pdf.x + s.x, pdf.y + s.y, s.w.max(1.0), s.h.max(1.0));
+                if is_main_pdf(widest, note_w) {
+                    mains.push(Main { pdf: pdf.id.clone(), idx, rect, ink: Vec::new(), ids: HashSet::new() });
+                } else {
+                    flow.slots.insert((pdf.id.clone(), idx));
+                    flow_boxes.push(rect);
+                    flow_tallest.push(rect);
+                }
             }
         }
-        let b = obj.bbox();
-        if !slots.iter().any(|r| hits(b, r)) {
-            loose.push(b);
+    }
+    if mains.is_empty() {
+        return None;
+    }
+
+    let overlap = |a: Rect, b: Rect| {
+        let w = (a.0 + a.2).min(b.0 + b.2) - a.0.max(b.0);
+        let h = (a.1 + a.3).min(b.1 + b.3) - a.1.max(b.1);
+        if w >= 0.0 && h >= 0.0 { Some(w * h) } else { None }
+    };
+    let grow = |r: Rect, dx: f64, dy: f64| (r.0 - dx, r.1 - dy, r.2 + 2.0 * dx, r.3 + 2.0 * dy);
+    let inside = |a: Rect, b: Rect| a.0 >= b.0 && a.1 >= b.1 && a.0 + a.2 <= b.0 + b.2 && a.1 + a.3 <= b.1 + b.3;
+    for obj in objects {
+        if hidden.contains(obj.id()) || matches!(obj, CanvasObject::Pdf(_)) {
+            continue;
+        }
+        let Some(b) = shown_box(obj) else { continue };
+        // Ink belongs to a main-PDF page when it is on it or touches it (within `near`) and
+        // runs past its edges by no more than about a third of the page.
+        let mut best: Option<(usize, f64)> = None;
+        for (k, m) in mains.iter().enumerate() {
+            let near = (0.04 * m.rect.2.max(m.rect.3)).max(24.0);
+            let Some(area) = overlap(b, grow(m.rect, near, near)) else { continue };
+            if !inside(b, grow(m.rect, 0.35 * m.rect.2, 0.35 * m.rect.3)) {
+                continue;
+            }
+            if best.is_none_or(|(_, a)| area > a) {
+                best = Some((k, area));
+            }
+        }
+        match best {
+            Some((k, _)) => {
+                mains[k].ink.push(b);
+                mains[k].ids.insert(obj.id().to_string());
+            }
+            None => {
+                flow.ids.insert(obj.id().to_string());
+                flow_boxes.push(b);
+            }
         }
     }
-    loose.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+    // Flow content in bands: things that overlap top to bottom (or nearly) page together.
+    flow_boxes.sort_by(|a, b| a.1.total_cmp(&b.1));
     let mut bands: Vec<(f64, f64, f64, f64)> = Vec::new();
-    for b in loose {
+    for b in flow_boxes {
         if let Some(last) = bands.last_mut() {
             if b.1 <= last.3 + 24.0 {
                 last.0 = last.0.min(b.0);
@@ -3160,50 +3277,78 @@ fn slide_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Option<Vec<Pa
         }
         bands.push((b.0, b.1, b.0 + b.2, b.1 + b.3));
     }
-    let mut regions: Vec<(f64, f64, f64, f64, bool)> = slots.iter().map(|s| (s.0, s.1, s.2, s.3, true)).collect();
-    regions.extend(bands.iter().map(|b| (b.0, b.1, b.2 - b.0, b.3 - b.1, false)));
-    regions.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)));
+
+    // Canvas order: (top, left, Some(main index) | None for a band index).
+    let mut order: Vec<(f64, f64, Result<usize, usize>)> = Vec::new();
+    order.extend(mains.iter().enumerate().map(|(k, m)| (m.rect.1, m.rect.0, Ok(k))));
+    order.extend(bands.iter().enumerate().map(|(k, b)| (b.1, b.0, Err(k))));
+    order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
 
     let avail_w = sheet.content_w();
-    let room_h = |first: bool| sheet.content_h() - if first && with_title { TITLE_BLOCK_DIP } else { 0.0 };
+    let title_h = if with_title { TITLE_BLOCK_DIP } else { 0.0 };
+    let room_h = |first: bool| sheet.content_h() - if first { title_h } else { 0.0 };
+    let flow = Arc::new(flow);
     let mut pages: Vec<PageSpec> = Vec::new();
-    for (x, y, w, h, slide) in regions {
-        let (w, h) = (w.max(1.0), h.max(1.0));
-        if slide {
-            let avail_h = room_h(pages.is_empty());
-            let scale = (avail_w / w).min(avail_h / h);
-            pages.push(PageSpec {
-                origin_x: x,
-                left: x,
-                top: y,
-                right: x + w,
-                bottom: y + h,
-                scale,
-                off_x: (avail_w - w * scale) / 2.0,
-                off_y: (avail_h - h * scale) / 2.0,
-                clip: true,
-            });
-        } else {
-            // Notes keep their size (shrunk only to fit the width) and run on to more pages.
-            let scale = (avail_w / w).min(1.0);
-            let mut top = y;
-            for _ in 0..200 {
-                if top >= y + h - 0.5 {
-                    break;
+    for (_, _, which) in order {
+        match which {
+            Ok(k) => {
+                let m = &mains[k];
+                let (mut x0, mut y0) = (m.rect.0, m.rect.1);
+                let (mut x1, mut y1) = (m.rect.0 + m.rect.2, m.rect.1 + m.rect.3);
+                for b in &m.ink {
+                    x0 = x0.min(b.0);
+                    y0 = y0.min(b.1);
+                    x1 = x1.max(b.0 + b.2);
+                    y1 = y1.max(b.1 + b.3);
                 }
-                let bottom = (top + room_h(pages.is_empty()) / scale).min(y + h);
+                let (w, h) = (x1 - x0, y1 - y0);
+                let avail_h = room_h(pages.is_empty());
+                let scale = (avail_w / w).min(avail_h / h);
+                let mut only = PageFilter { ids: m.ids.clone(), slots: HashSet::new() };
+                only.slots.insert((m.pdf.clone(), m.idx));
                 pages.push(PageSpec {
-                    origin_x: x,
-                    left: x,
-                    top,
-                    right: x + w,
-                    bottom,
+                    origin_x: x0,
+                    left: x0,
+                    top: y0,
+                    right: x1,
+                    bottom: y1,
                     scale,
-                    off_x: 0.0,
-                    off_y: 0.0,
+                    off_x: (avail_w - w * scale) / 2.0,
+                    off_y: (avail_h - h * scale) / 2.0,
                     clip: true,
+                    only: Some(Arc::new(only)),
                 });
-                top = bottom;
+            }
+            Err(k) => {
+                // The usual flow: keep the size (shrink only to fit the width, or so a
+                // small-PDF page fits on one page) and run on to more pages.
+                let (x0, y0, x1, y1) = bands[k];
+                let w = (x1 - x0).max(1.0);
+                let mut scale = (avail_w / w).min(1.0);
+                let tallest = flow_tallest
+                    .iter()
+                    .filter(|r| r.1 >= y0 - 0.5 && r.1 + r.3 <= y1 + 0.5)
+                    .fold(0.0_f64, |t, r| t.max(r.3));
+                if tallest * scale > room_h(true) && tallest > 0.0 {
+                    scale = room_h(true) / tallest;
+                }
+                let first_span = room_h(pages.is_empty()) / scale;
+                let full_span = sheet.content_h() / scale;
+                let cuts = page_cuts(note, y0, y1, first_span, full_span, Some(flow.as_ref()));
+                for (i, &top) in cuts.iter().enumerate() {
+                    pages.push(PageSpec {
+                        origin_x: x0,
+                        left: x0,
+                        top,
+                        right: x1,
+                        bottom: cuts.get(i + 1).copied().unwrap_or(y1),
+                        scale,
+                        off_x: 0.0,
+                        off_y: 0.0,
+                        clip: true,
+                        only: Some(flow.clone()),
+                    });
+                }
             }
         }
     }
@@ -3212,12 +3357,22 @@ fn slide_pages(note: &NoteFile, sheet: Sheet, with_title: bool) -> Option<Vec<Pa
 
 /// Page tops. A cut that would slice a text line, or an image or drawing that fits on a
 /// page, moves up to just above it, but never by more than 40% of the page.
-fn page_cuts(note: &NoteFile, top: f64, bottom: f64, first_span: f64, full_span: f64) -> Vec<f64> {
+fn page_cuts(
+    note: &NoteFile,
+    top: f64,
+    bottom: f64,
+    first_span: f64,
+    full_span: f64,
+    only: Option<&PageFilter>,
+) -> Vec<f64> {
     let hidden = crate::note::collapsed_child_ids(&note.doc.canvas.objects);
     let mut lines: Vec<(f64, f64)> = Vec::new();
     let mut wholes: Vec<(f64, f64)> = Vec::new();
     for obj in &note.doc.canvas.objects {
         if hidden.contains(obj.id()) {
+            continue;
+        }
+        if only.is_some_and(|f| !matches!(obj, CanvasObject::Pdf(_)) && !f.ids.contains(obj.id())) {
             continue;
         }
         match obj {
@@ -3239,7 +3394,25 @@ fn page_cuts(note: &NoteFile, top: f64, bottom: f64, first_span: f64, full_span:
         }
     }
     // PDF pages (slides) are kept whole: a cut may move up to any page top on the sheet.
-    let pdf_pages = pdf_slot_spans(note);
+    let pdf_pages: Vec<(f64, f64)> = match only {
+        None => pdf_slot_spans(note),
+        Some(f) => note
+            .doc
+            .canvas
+            .objects
+            .iter()
+            .filter(|o| !hidden.contains(o.id()))
+            .filter_map(|o| if let CanvasObject::Pdf(p) = o { Some(p) } else { None })
+            .flat_map(|p| {
+                p.slots()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(i, _)| f.slots.contains(&(p.id.clone(), *i)))
+                    .map(|(_, sl)| (p.y + sl.y, sl.h))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+    };
     let mut cuts = vec![top];
     let mut y = top;
     let mut first = true;
@@ -3337,9 +3510,27 @@ fn empty_pagination_bbox(sheet: Sheet) -> (f64, f64, f64, f64) {
 /// Compute locked page rects for PDF Preview. Must match `export_pdf`.
 pub fn compute_pages(note: &NoteFile) -> Vec<PageRect> {
     let sheet = Sheet::of(note);
+    let mut slot_rects: HashMap<(String, usize), [f64; 4]> = HashMap::new();
+    for obj in &note.doc.canvas.objects {
+        if let CanvasObject::Pdf(p) = obj {
+            for (i, sl) in p.slots().into_iter().enumerate() {
+                slot_rects.insert((p.id.clone(), i), [p.x + sl.x, p.y + sl.y, sl.w, sl.h]);
+            }
+        }
+    }
     note_pages(note, sheet, true)
         .into_iter()
         .map(|p| PageRect {
+            ids: p.only.as_ref().map(|f| {
+                let mut v: Vec<String> = f.ids.iter().cloned().collect();
+                v.sort();
+                v
+            }),
+            pdf_slots: p.only.as_ref().map(|f| {
+                let mut keys: Vec<&(String, usize)> = f.slots.iter().collect();
+                keys.sort();
+                keys.into_iter().filter_map(|k| slot_rects.get(k).copied()).collect()
+            }),
             x: p.origin_x,
             y: p.top,
             w: if p.clip { p.right - p.left } else { sheet.content_w() / p.scale },
@@ -3498,6 +3689,96 @@ mod tests {
     fn portrait_sheet_never_splits_a_slide() {
         let note = slides_note(false);
         assert!(cuts_on_slide_tops(&note));
+    }
+
+    fn stroke_obj(id: &str, pts: &[[f64; 2]]) -> CanvasObject {
+        serde_json::from_value(serde_json::json!({
+            "type": "drawing", "id": id, "x": 0.0, "y": 0.0, "z": 5,
+            "item": { "kind": "stroke", "points": pts, "width": 3.0, "color": "#2060ff" }
+        }))
+        .unwrap()
+    }
+
+    fn pdf_obj(id: &str, x: f64, y: f64, width: f64, aspects: &[f64]) -> CanvasObject {
+        let pages: Vec<u32> = (1..=aspects.len() as u32).collect();
+        serde_json::from_value(serde_json::json!({
+            "type": "pdf", "id": id, "x": x, "y": y, "z": 1, "media": format!("{id}.pdf"),
+            "pages": pages, "aspects": aspects, "layout": "stack", "pageWidth": width, "gap": 14.0
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn ink_past_a_pdf_page_edge_is_kept_and_the_page_shrinks() {
+        for landscape in [false, true] {
+            let mut note = pdf_note(landscape, 0.5625);
+            // Brackets drawn just outside the first slide, left and right.
+            note.doc.canvas.objects.push(stroke_obj("l", &[[-25.0, 100.0], [-35.0, 100.0], [-35.0, 300.0], [-25.0, 300.0]]));
+            note.doc.canvas.objects.push(stroke_obj("r", &[[925.0, 100.0], [935.0, 100.0], [935.0, 300.0], [925.0, 300.0]]));
+            let sheet = Sheet::of(&note);
+            let pages = compute_pages(&note);
+            assert_eq!(pages.len(), 5, "no extra page for the brackets");
+            let p = &pages[0];
+            // The page box holds both brackets (stroke room included) and still fits the sheet.
+            assert!(p.x <= -39.0 && p.x + p.w >= 939.0, "{p:?}");
+            assert!(p.w * p.scale <= sheet.content_w() + 0.01);
+            let fit = sheet.content_w() / 900.0;
+            assert!(p.scale < fit - 1e-6, "the slide shrinks to make room");
+            assert_eq!(p.ids.as_deref(), Some(&["l".to_string(), "r".to_string()][..]));
+            assert_eq!(p.pdf_slots.as_ref().map(|v| v.len()), Some(1));
+            // Other slides are unaffected and carry no stray ink.
+            for q in &pages[1..] {
+                assert!((q.w - 900.0).abs() < 0.01 && q.ids.as_ref().is_some_and(|v| v.is_empty()), "{q:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn small_pdf_among_handwriting_stays_in_the_flow() {
+        let mut objects = Vec::new();
+        for i in 0..30 {
+            let y = 40.0 + i as f64 * 60.0;
+            objects.push(stroke_obj(&format!("w{i}"), &[[0.0, y], [300.0, y + 10.0], [700.0, y]]));
+        }
+        // A small two-page PDF placed among the notes.
+        objects.push(pdf_obj("small", 380.0, 500.0, 300.0, &[1.4142, 1.4142]));
+        let note = note_with(objects, HashMap::new());
+        let pages = compute_pages(&note);
+        assert!(pages.len() >= 2);
+        assert!(pages.iter().all(|p| !p.clip && p.ids.is_none()), "regular flow: {pages:?}");
+        // No page of the small PDF is sliced by a cut.
+        let tops: Vec<f64> = pages.iter().map(|p| p.y).collect();
+        for (y, h) in [(500.0, 300.0 * 1.4142), (500.0 + 300.0 * 1.4142 + 14.0, 300.0 * 1.4142)] {
+            assert!(!tops.iter().any(|t| *t > y + 1.0 && *t < y + h - 1.0), "cut inside the PDF page at {y}: {tops:?}");
+        }
+    }
+
+    #[test]
+    fn two_pdfs_page_in_canvas_order_with_notes_between() {
+        let a_h = 900.0 * 0.5625;
+        let a_bottom = 2.0 * a_h + 14.0;
+        let objects = vec![
+            pdf_obj("a", 0.0, 0.0, 900.0, &[0.5625, 0.5625]),
+            // Notes between the two PDFs, clear of both.
+            stroke_obj("mid", &[[50.0, a_bottom + 150.0], [800.0, a_bottom + 200.0]]),
+            pdf_obj("b", 0.0, a_bottom + 400.0, 900.0, &[1.4142, 1.4142]),
+            // Ink on B's first page.
+            stroke_obj("onb", &[[100.0, a_bottom + 500.0], [400.0, a_bottom + 520.0]]),
+        ];
+        let note = note_with(objects, HashMap::new());
+        let pages = compute_pages(&note);
+        assert_eq!(pages.len(), 5, "{pages:?}");
+        let slots = |i: usize| pages[i].pdf_slots.clone().unwrap_or_default();
+        let ids = |i: usize| pages[i].ids.clone().unwrap_or_default();
+        assert!(slots(0).len() == 1 && (slots(0)[0][1] - 0.0).abs() < 0.01);
+        assert!(slots(1).len() == 1 && (slots(1)[0][1] - (a_h + 14.0)).abs() < 0.01);
+        assert!(slots(2).is_empty() && ids(2).contains(&"mid".to_string()), "notes between: {:?}", pages[2]);
+        assert!(slots(3).len() == 1 && (slots(3)[0][1] - (a_bottom + 400.0)).abs() < 0.01);
+        assert_eq!(ids(3), vec!["onb".to_string()]);
+        assert!(slots(4).len() == 1 && ids(4).is_empty());
+        // Page 1 keeps room for the title.
+        let sheet = Sheet::PORTRAIT;
+        assert!(pages[0].oy + pages[0].h * pages[0].scale <= sheet.content_h() - TITLE_BLOCK_DIP + 0.01);
     }
 
     #[test]

@@ -698,7 +698,8 @@ export function NotebookView({
     scale: number;
     page: number;
     /** Canvas area per sheet: `scale` canvas -> sheet, (`ox`, `oy`) its offset inside the margins
-     *  below the title. `clip` pages (one PDF page each, or notes beside them) show only their `w` × `h` area. */
+     *  below the title. `clip` pages (one PDF page each, or notes beside them) show only their `w` × `h` area.
+     *  `only`: the objects and PDF pages this page draws, when PDF pages and notes are paged apart. */
     pages: {
       x: number;
       y: number;
@@ -708,6 +709,7 @@ export function NotebookView({
       ox: number;
       oy: number;
       clip: boolean;
+      only: PageOnly | null;
       titleBlock: number;
       title?: string;
     }[];
@@ -3086,7 +3088,18 @@ export function NotebookView({
           if (!ok) return;
         }
         const rects = await invoke<
-          { x: number; y: number; w: number; h: number; scale: number; ox: number; oy: number; clip: boolean }[]
+          {
+            x: number;
+            y: number;
+            w: number;
+            h: number;
+            scale: number;
+            ox: number;
+            oy: number;
+            clip: boolean;
+            ids?: string[];
+            pdf_slots?: [number, number, number, number][];
+          }[]
         >("compute_pdf_pages", {
           notePath: n.path,
         });
@@ -3101,6 +3114,7 @@ export function NotebookView({
           ox: r.ox ?? 0,
           oy: r.oy ?? 0,
           clip: !!r.clip,
+          only: r.ids ? { ids: new Set(r.ids), pdfSlots: r.pdf_slots ?? [] } : null,
           titleBlock: i === 0 ? PDF_TITLE_BLOCK : 0,
           title: i === 0 ? titleLabel : undefined,
         }));
@@ -4896,6 +4910,7 @@ export function NotebookView({
                                 scale={z}
                                 originX={pg.x}
                                 originY={pg.y}
+                                only={pg.only}
                                 view={{
                                   x: pg.x,
                                   y: pg.y,
@@ -5950,12 +5965,17 @@ function ColorControl({
 
 /* ─── static render for pages you are not editing ─────────────────────── */
 
+/** What one export page draws when PDF pages and notes are paged apart (Rust `PageFilter`):
+ *  these objects (not PDFs) and these PDF pages (canvas x, y, w, h). */
+type PageOnly = { ids: Set<string>; pdfSlots: [number, number, number, number][] };
+
 function LazyPdfStatic({
   note,
   view,
   scale,
   originX,
   originY,
+  only,
   onActivate,
 }: {
   note: NotePayload;
@@ -5963,6 +5983,7 @@ function LazyPdfStatic({
   scale: number;
   originX: number;
   originY: number;
+  only: PageOnly | null;
   onActivate: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -5988,21 +6009,27 @@ function LazyPdfStatic({
             transform: `scale(${scale}) translate(${-originX}px, ${-originY}px)`,
           }}
         >
-          <PdfStatic note={note} view={view} />
+          <PdfStatic note={note} view={view} only={only} />
         </div>
       )}
     </div>
   );
 }
 
-function PdfStatic({ note, view }: { note: NotePayload; view: PdfCanvasView }) {
+function PdfStatic({ note, view, only }: { note: NotePayload; view: PdfCanvasView; only: PageOnly | null }) {
   const hidden = collapsedIds(note.doc.canvas.objects);
+  // PDFs show only this page's PDF pages: clip them to those rectangles (canvas px).
+  const slotClip = only?.pdfSlots.length
+    ? `path('${only.pdfSlots.map(([x, y, w, h]) => `M${x} ${y}H${x + w}V${y + h}H${x}Z`).join("")}')`
+    : null;
   return (
     <>
       {[...note.doc.canvas.objects]
         .sort((a, b) => (a.type === "pdf" ? 0 : 1) - (b.type === "pdf" ? 0 : 1) || a.z - b.z)
         .map((o) => {
           if (hidden.has(o.id)) return null;
+          if (only && o.type !== "pdf" && !only.ids.has(o.id)) return null;
+          if (only && o.type === "pdf" && !slotClip) return null;
           if (o.type === "text") {
             return (
               <div
@@ -6050,7 +6077,7 @@ function PdfStatic({ note, view }: { note: NotePayload; view: PdfCanvasView }) {
             );
           }
           if (o.type === "pdf") {
-            return (
+            const view_ = (
               <PdfView
                 key={o.id}
                 obj={o}
@@ -6068,6 +6095,13 @@ function PdfStatic({ note, view }: { note: NotePayload; view: PdfCanvasView }) {
                 shiftHeld={false}
                 onToggleLock={() => {}}
               />
+            );
+            return slotClip ? (
+              <div key={o.id} style={{ position: "absolute", left: 0, top: 0, width: 0, height: 0, clipPath: slotClip }}>
+                {view_}
+              </div>
+            ) : (
+              view_
             );
           }
           const it = o.item;
