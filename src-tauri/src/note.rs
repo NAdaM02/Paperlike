@@ -207,9 +207,14 @@ pub struct PdfObject {
     /// Cover-up rectangles (printed page numbers). Fractions 0-1 of the page width/height.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub masks: Vec<PdfMask>,
-    /// Hide the on-page index. Printed numbers stay covered by `masks` when we found them.
+    /// Older notes: hid the on-page index and printed numbers both. Read only through
+    /// `custom_numbers` (hidden with masks found counts as custom numbering).
     #[serde(default, skip_serializing_if = "is_false")]
     pub hide_numbers: bool,
+    /// "default": the PDF's own printed page numbers. "custom": printed numbers covered by
+    /// `masks`, and our own "i / n" index on each page instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numbering: Option<String>,
     /// Fields this version does not know, kept so a save writes them back.
     #[serde(flatten)]
     pub extra: Extra,
@@ -239,6 +244,14 @@ pub struct PdfSlot {
 }
 
 impl PdfObject {
+    /// Custom page numbering (see `numbering`); same rule as `pdfCustomNumbers` in the app.
+    pub fn custom_numbers(&self) -> bool {
+        match self.numbering.as_deref() {
+            Some(n) => n == "custom",
+            None => self.hide_numbers && !self.masks.is_empty(),
+        }
+    }
+
     /// Same placement as the editor (`pdfSlots` in the frontend).
     pub fn slots(&self) -> Vec<PdfSlot> {
         let gap = if self.gap.is_finite() { self.gap } else { 14.0 };

@@ -303,8 +303,11 @@ export type PdfObject = {
   gap: number;
   /** Cover-up rects (printed page numbers); x/y/w/h are fractions 0-1 of the page. */
   masks?: PdfMask[];
-  /** Hide the page index we draw, and any printed page numbers we could cover. */
+  /** Older notes: hid our page index and printed numbers both. Read via `pdfCustomNumbers`. */
   hideNumbers?: boolean;
+  /** "default": the PDF's own printed page numbers. "custom": printed numbers covered by
+   *  `masks`, and our own "i / n" index on each page instead. */
+  numbering?: "default" | "custom";
   /** Blank stand-in while a Moodle PDF is still downloading. Not written to the note. */
   pending?: boolean;
 };
@@ -606,3 +609,8 @@ export function newId(prefix: string) {
       : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
   return `${prefix}_${uuid.replace(/-/g, "").slice(0, 16)}`;
 }
+
+/** Custom page numbering on a PDF (see `PdfObject.numbering`). Older notes that hid the
+ *  numbers and found printed ones to cover count as custom. Same rule as Rust `custom_numbers`. */
+export const pdfCustomNumbers = (o: { numbering?: "default" | "custom"; hideNumbers?: boolean; masks?: unknown[] }) =>
+  o.numbering ? o.numbering === "custom" : !!(o.hideNumbers && o.masks?.length);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { PdfLayout, PdfMask, PdfObject } from "./api";
+import { PdfLayout, PdfMask, PdfObject, pdfCustomNumbers } from "./api";
 import { IcPdfEven, IcPdfOdd, IcPdfRow, IcPdfStack } from "./icons";
 import { openPdf, pageTextRuns, recordedImageBoxes } from "./pdfDoc";
 import { PDF_LAYOUTS, pdfInsertIndex, pdfSlots, PdfSlot } from "./pdfLayout";
@@ -208,7 +208,8 @@ export function PdfView({
   onReorder?: (pages: number[], aspects: number[]) => void;
   /** Shift-drag released outside the object: drop this one page, keeping `pages` order. */
   onDropPage?: (page: number, pages: number[], aspects: number[]) => void;
-  onMasks?: (masks: PdfMask[] | undefined, hideNumbers?: boolean) => void;
+  /** New printed-number masks; with `numbering`, also switch the page numbering. */
+  onMasks?: (masks: PdfMask[] | undefined, numbering?: "default" | "custom") => void;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const shown: PdfObject = preview
@@ -458,7 +459,9 @@ export function PdfView({
     };
   };
 
-  const hideNumbers = async () => {
+  const custom = pdfCustomNumbers(obj);
+  /** Find the PDF's printed page numbers so custom numbering can cover them. */
+  const findPrintedNumbers = async () => {
     if (!b64 || obj.pages.length < 2) return;
     try {
       const doc = await openPdf(obj.media, b64);
@@ -477,7 +480,7 @@ export function PdfView({
           ...m,
           color: sampleMaskColor(canvasRefs.current[m.page] ?? null, m),
         })),
-        true,
+        "custom",
       );
     } catch (e) {
       console.warn("page number detection failed", e);
@@ -498,7 +501,7 @@ export function PdfView({
         if (!visibleSet.has(i)) return null;
         const basisIndex = preview ? preview.order[i] : i;
         const lifted = !!preview && preview.order[i] === preview.dragIndex;
-        const pageMasks = (obj.masks ?? []).filter((m) => m.page === slot.page);
+        const pageMasks = custom ? (obj.masks ?? []).filter((m) => m.page === slot.page) : [];
         const translate = lifted
           ? `translate(${preview.ghostX}px, ${preview.ghostY}px) scale(1.04)`
           : `translate(${slot.x}px, ${slot.y}px)`;
@@ -554,7 +557,7 @@ export function PdfView({
             }}
           >
             <canvas ref={(node) => { canvasRefs.current[slot.page] = node; }} />
-            {!obj.hideNumbers && !obj.pending && <span className="pdf-num">{i + 1} / {slots.length}</span>}
+            {custom && !obj.pending && <span className="pdf-num">{i + 1} / {slots.length}</span>}
             <div className="pdf-textlayer">
               {(runs[slot.page] ?? []).map((run, ri) => {
                 const cx = (run.x + run.w / 2) / slot.w;
@@ -665,13 +668,21 @@ export function PdfView({
               items.push(
                 "sep",
                 {
-                  label: obj.hideNumbers || obj.masks?.length ? "Show page numbers" : "Hide page numbers",
+                  label: "Default page numbering",
+                  icon: custom ? undefined : "\u2713",
+                  title: "The PDF's own printed page numbers",
                   onClick: () => {
-                    if (obj.hideNumbers || obj.masks?.length) onMasks?.(undefined, false);
-                    else {
-                      onMasks?.(undefined, true);
-                      void hideNumbers();
-                    }
+                    if (custom) onMasks?.(undefined, "default");
+                  },
+                },
+                {
+                  label: "Custom page numbering",
+                  icon: custom ? "\u2713" : undefined,
+                  title: "Cover the printed page numbers and number the pages here (1 / n)",
+                  onClick: () => {
+                    if (custom) return;
+                    onMasks?.(obj.masks, "custom");
+                    void findPrintedNumbers();
                   },
                 },
                 {

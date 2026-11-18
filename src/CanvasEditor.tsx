@@ -23,6 +23,7 @@ import {
   PdfMask,
   FileObject,
   PdfObject,
+  pdfCustomNumbers,
   TextObject,
 } from "./api";
 import { blockedIn, collapsedIds, FOLD_MARK_SIZE, foldAt, foldIndex, groupAtPoint, groupFrame, GROUP_MIN_H, placeNew, pruneGroups, withChild } from "./group";
@@ -3400,6 +3401,7 @@ export function CanvasEditor({
       pageWidth: anchor.pageWidth,
       gap: anchor.gap,
       masks: masks.length ? masks : undefined,
+      numbering: sorted.some(pdfCustomNumbers) ? "custom" : undefined,
     };
     const remove = new Set(pdfs.map((p) => p.id));
     snapshot("pdf-join");
@@ -3475,6 +3477,7 @@ export function CanvasEditor({
         pageWidth: anchor.pageWidth,
         gap: anchor.gap,
         masks: masks.length ? masks : undefined,
+        numbering: sorted.some(pdfCustomNumbers) ? "custom" : undefined,
       };
       snapshot("pdf-join");
       onUpdate((n) => {
@@ -3525,15 +3528,17 @@ export function CanvasEditor({
     updateObjects((objs) => objs.map((o) => (o.id === id && o.type === "pdf" ? { ...o, pages, aspects } : o)));
   };
 
-  const setPdfMasks = (id: string, masks: PdfMask[] | undefined, hideNumbers?: boolean) => {
+  const setPdfMasks = (id: string, masks: PdfMask[] | undefined, numbering?: "default" | "custom") => {
     if (!canEdit) return;
     snapshot("pdf-masks");
     updateObjects((objs) =>
       objs.map((o) => {
         if (o.id !== id || o.type !== "pdf") return o;
         const next: PdfObject = { ...o, masks: masks?.length ? masks : undefined };
-        if (hideNumbers === true) next.hideNumbers = true;
-        else if (hideNumbers === false) next.hideNumbers = undefined;
+        if (numbering) {
+          next.numbering = numbering;
+          delete next.hideNumbers;
+        }
         return next;
       }),
     );
@@ -3653,7 +3658,7 @@ export function CanvasEditor({
         onToggleLock={stableFn(k("lock"), () => setLocked([o.id], !o.locked))}
         onReorder={stableFn(k("reorder"), ((pages, aspects) => reorderPdf(o.id, pages, aspects)) as NonNullable<PdfProps["onReorder"]>)}
         onDropPage={stableFn(k("droppage"), ((page, pages, aspects) => splitPdf(o.id, "drop", { pages, aspects, drop: [page] })) as NonNullable<PdfProps["onDropPage"]>)}
-        onMasks={stableFn(k("masks"), ((masks, hideNumbers) => setPdfMasks(o.id, masks, hideNumbers)) as NonNullable<PdfProps["onMasks"]>)}
+        onMasks={stableFn(k("masks"), ((masks, numbering) => setPdfMasks(o.id, masks, numbering)) as NonNullable<PdfProps["onMasks"]>)}
       />
     );
   };

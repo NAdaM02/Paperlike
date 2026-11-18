@@ -2194,7 +2194,10 @@ fn draw_objects(
                 let Some(bytes) = media.get(&pdf.media) else {
                     continue;
                 };
-                for (slot_idx, slot) in pdf.slots().into_iter().enumerate() {
+                let custom = pdf.custom_numbers();
+                let all_slots = pdf.slots();
+                let slot_count = all_slots.len();
+                for (slot_idx, slot) in all_slots.into_iter().enumerate() {
                     if view.only.is_some_and(|f| !f.slots.contains(&(pdf.id.clone(), slot_idx))) {
                         continue;
                     }
@@ -2228,7 +2231,18 @@ fn draw_objects(
                         slot.w,
                         slot.h,
                     );
-                    // Page-number masks: fractions of the page, painted over the render.
+                    // Custom numbering: printed page numbers are covered (masks are fractions
+                    // of the page, painted over the render) and our index goes bottom right,
+                    // like `.pdf-num` in the app.
+                    if !custom {
+                        continue;
+                    }
+                    let (sx, sy) = (ox + slot.x, y);
+                    let label = format!("{} / {}", slot_idx + 1, slot_count);
+                    let size_pt = 7.5; // 10px
+                    let tw = text_width(&label, FontFamily::Sans, size_pt);
+                    let (r, b) = (sx + slot.w - 20.0, sy + slot.h - 6.0);
+                    let (l, t) = (r - tw - 8.0, b - 14.0);
                     for m in pdf.masks.iter().filter(|m| m.page == slot.page) {
                         layer.set_fill_color(hex_color(&Some(m.color.clone())));
                         let (x0, y0) = (ox + slot.x + m.x * slot.w, y + m.y * slot.h);
@@ -2238,6 +2252,16 @@ fn draw_objects(
                             vec![map.point(x0, y0), map.point(x1, y0), map.point(x1, y1), map.point(x0, y1)],
                         );
                     }
+                    layer.set_fill_color(Color::Rgb(Rgb::new(0.97, 0.97, 0.96, None)));
+                    fill_polygon(layer, vec![map.point(l, t), map.point(r, t), map.point(r, b), map.point(l, b)]);
+                    layer.set_fill_color(Color::Rgb(Rgb::new(0.3, 0.27, 0.25, None)));
+                    layer.use_text(
+                        label,
+                        (size_pt * map.scale) as f32,
+                        map.mm_x(l + 4.0),
+                        map.mm_y(b - 4.5),
+                        BuiltinFont::Helvetica,
+                    );
                 }
             }
         }
@@ -3706,6 +3730,30 @@ mod tests {
             "pages": pages, "aspects": aspects, "layout": "stack", "pageWidth": width, "gap": 14.0
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn page_numbering_default_custom_and_old_notes() {
+        let with = |extra: serde_json::Value| -> crate::note::PdfObject {
+            let mut v = serde_json::json!({
+                "id": "p", "x": 0.0, "y": 0.0, "z": 1, "media": "m.pdf", "pages": [1, 2],
+                "aspects": [1.4, 1.4], "layout": "stack", "pageWidth": 600.0, "gap": 14.0
+            });
+            for (k, val) in extra.as_object().unwrap() {
+                v[k] = val.clone();
+            }
+            serde_json::from_value(v).unwrap()
+        };
+        let mask = serde_json::json!([{ "page": 1, "x": 0.9, "y": 0.95, "w": 0.05, "h": 0.03, "color": "#ffffff" }]);
+        // New PDFs and old ones that showed both: the PDF's own numbers.
+        assert!(!with(serde_json::json!({})).custom_numbers());
+        // Old "hidden" with printed numbers found and covered: our numbering.
+        assert!(with(serde_json::json!({ "hideNumbers": true, "masks": mask })).custom_numbers());
+        // Old "hidden" with nothing to cover: the PDF's own numbers.
+        assert!(!with(serde_json::json!({ "hideNumbers": true })).custom_numbers());
+        // An explicit choice wins.
+        assert!(with(serde_json::json!({ "numbering": "custom" })).custom_numbers());
+        assert!(!with(serde_json::json!({ "numbering": "default", "hideNumbers": true, "masks": mask })).custom_numbers());
     }
 
     #[test]
