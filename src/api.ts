@@ -80,6 +80,8 @@ export type Settings = {
   pen_pressure?: boolean;
   /** Ignore touch while a pen is down, hovering, or was just used. */
   palm_rejection?: boolean;
+  /** Sideways scroll and Shift+scroll move the note the other way. Missing means off. */
+  invert_horizontal_scroll?: boolean;
   /** Hide the note title after the canvas scrolls below the top. Missing means on. */
   title_auto_hide?: boolean;
   /** 3-mode auto-collapse: "none" | "dynamic" | "hover" */

@@ -101,6 +101,9 @@ pub struct Settings {
     /// Ignore touch pointer-downs while a pen is down, hovering, or was just used.
     #[serde(default = "default_true")]
     pub palm_rejection: bool,
+    /// Sideways scroll and Shift+scroll move the note the other way. Off by default.
+    #[serde(default)]
+    pub invert_horizontal_scroll: bool,
     /// Calendar button in the top-right tools. Missing means on.
     #[serde(default = "default_true")]
     pub calendar_enabled: bool,
@@ -164,6 +167,7 @@ impl Default for Settings {
             pen_always_draws: true,
             pen_pressure: true,
             palm_rejection: true,
+            invert_horizontal_scroll: false,
             calendar_enabled: true,
             title_auto_hide: true,
             title_autohide_mode: None,

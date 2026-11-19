@@ -879,6 +879,8 @@ export function CanvasEditor({
 
   const dragRef = useRef<Drag | null>(null);
   const penSettingsRef = useRef<PenSettings>(penSettingsFrom({}));
+  /** Settings → Drawing. Read from the wheel listener, which is not re-bound. */
+  const invertScrollXRef = useRef(false);
   const [penSettings, setPenSettings] = useState<PenSettings>(penSettingsRef.current);
   const penDownRef = useRef(false);
   const penHoverRef = useRef(false);
@@ -1443,10 +1445,12 @@ export function CanvasEditor({
         if (e.shiftKey) {
           // The canvas takes the wheel; nothing around it should scroll too.
           e.preventDefault();
-          nudgeCam((c) => ({ ...c, x: c.x - e.deltaY }));
+          const xSign = invertScrollXRef.current ? -1 : 1;
+          nudgeCam((c) => ({ ...c, x: c.x - e.deltaY * xSign }));
         } else {
           e.preventDefault();
-          nudgeCam((c) => ({ x: c.x - e.deltaX, y: c.y - e.deltaY, z: c.z }));
+          const xSign = invertScrollXRef.current ? -1 : 1;
+          nudgeCam((c) => ({ x: c.x - e.deltaX * xSign, y: c.y - e.deltaY, z: c.z }));
         }
       }
       window.clearTimeout(wheelCamFlush.current);
@@ -1740,6 +1744,7 @@ export function CanvasEditor({
         if (!alive) return;
         const next = penSettingsFrom(s);
         penSettingsRef.current = next;
+        invertScrollXRef.current = s.invert_horizontal_scroll === true;
         setPenSettings((cur) =>
           cur.pen_enabled === next.pen_enabled &&
           cur.pen_always_draws === next.pen_always_draws &&

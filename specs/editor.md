@@ -18,7 +18,9 @@ Golden rules (from the project owner — never violate):
 - The canvas extends infinitely in all four directions; the viewport starts at
   (0,0) top-left for a new note.
 - **Pan**: middle-mouse drag, or Space+left-drag, or scroll wheel (vertical) /
-  Shift+wheel (horizontal). Touchpad two-finger scroll pans.
+  Shift+wheel (horizontal). Touchpad two-finger scroll pans. Settings → Drawing →
+  Reverse horizontal scroll flips only the sideways part (two-finger sideways and
+  Shift+wheel). Up and down stay as they are.
 - **Zoom**: Ctrl+wheel, 10%–3000%, steps of ~10% (multiplicative 1.1). Ctrl+0 resets
   to 100%. Zoom centers on the cursor position. The round button above the zoom %
   chip shows the whole note: it zooms out (never in past 100%) until every object
@@ -240,11 +242,12 @@ The Edit ribbon's insert controls are **Table**, **Math**, **Fold**, then **Medi
 
 Mouse-first vector drawing. Tools (left to right in the action bar, single-key
 shortcut in brackets): **Select** [V], **Lasso** [S], **Pen** [P], **Marker** [H],
-**Eraser** [E], then icon-only **Rectangle** [R], **Ellipse** [O], **Line** [L],
-**Arrow** [A] (letters only switch tools when nothing is selected, no caret is
+**Eraser** [E], then **Line** [L], **Arrow** [A], **Rectangle** [R],
+**Ellipse** [O] (letters only switch tools when nothing is selected, no caret is
 active and no type-to-create point is pending; otherwise they are text), plus stroke width presets 1/2/4/8 (`[` / `]` step through them)
 and pen colour: quick swatches (theme ink, red, blue, green, orange) + the full
-palette/custom picker. Theme ink resolves to dark ink on light/Mix paper and light
+palette/custom picker. Stroke width also steps with Alt+F (thinner) and Alt+G
+(thicker), the same steps as `[` and `]`. Theme ink resolves to dark ink on light/Mix paper and light
 ink on dark paper at the moment of drawing.
 Colour and width changes restyle drawings that are selected. Changing the width
 does not restyle the last stroke unless it is selected. The Last button applies
@@ -360,8 +363,8 @@ Ctrl+S save · Ctrl+Z/Y undo/redo · Ctrl+B/I/U styles · Ctrl+X/C/V clipboard �
 Ctrl+A select all in window · Ctrl+F search in note (see
 [`search.md`](search.md)) · Ctrl+J chat pane beside the note,
 Ctrl+K quick question (see [`brief.md`](brief.md)) · Ctrl+wheel zoom · Ctrl+0 reset zoom (or click the
-zoom % chip in the canvas corner) · V/S/P/H/E/R/O/L/A draw tools · `[` `]` stroke
-width · Shift+E eraser mode · Shift while drawing = straight · hold right mouse in
+zoom % chip in the canvas corner) · V/S/P/H/E/R/O/L/A draw tools · `[` `]` or
+Alt+F / Alt+G stroke width · Shift+E eraser mode · Ctrl+Shift+A Analyze · Shift while drawing = straight · hold right mouse in
 Pen/Marker = erase · mouse thumb buttons: lower = undo, upper = redo ·
 Esc: exit draw tool → clear selection → (nothing).
 Finishing a rectangle, ellipse, line, or arrow leaves its handles up so it can be

@@ -318,6 +318,9 @@ export const messages = {
   penPressureHint: "Lines get thicker where you press harder.",
   palmRejection: "Palm rejection",
   palmRejectionHint: "Ignores touch while you write. Scrolling and the touchpad still work.",
+  settingsScrolling: "Scrolling",
+  reverseHorizontalScroll: "Reverse horizontal scroll",
+  reverseHorizontalScrollHint: "Sideways swipes and Shift + scroll move the page the other way. Up and down stay the same.",
 
 };
 

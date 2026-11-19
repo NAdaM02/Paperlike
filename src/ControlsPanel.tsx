@@ -39,8 +39,12 @@ export function ControlsOverview() {
           <ul className="shortcuts-list">
             {ACTIONS.filter((a) => a.group === g).map((a) => (
               <li key={a.id}>
-                <kbd className="shortcuts-keys">{b[a.id].length ? b[a.id].map(formatChord).join(" / ") : "—"}</kbd>
-                <span>{a.label}</span>
+                <span className="shortcuts-keys">
+                  {(b[a.id].length ? b[a.id] : ["—"]).map((c) => (
+                    <kbd key={c}>{c === "—" ? c : formatChord(c)}</kbd>
+                  ))}
+                </span>
+                <span className="shortcuts-action">{a.label}</span>
               </li>
             ))}
           </ul>
@@ -52,8 +56,10 @@ export function ControlsOverview() {
           <ul className="shortcuts-list">
             {g.rows.map((r) => (
               <li key={r.keys}>
-                <kbd className="shortcuts-keys">{r.keys}</kbd>
-                <span>{r.action}</span>
+                <span className="shortcuts-keys">
+                  <kbd>{r.keys}</kbd>
+                </span>
+                <span className="shortcuts-action">{r.action}</span>
               </li>
             ))}
           </ul>
@@ -125,12 +131,11 @@ export function ControlsEditor({ onToast }: { onToast: (msg: string) => void }) 
           <h3>{g}</h3>
           {ACTIONS.filter((a) => a.group === g).map((a) => (
             <div className="controls-row" key={a.id}>
-              <span className="controls-label">{a.label}</span>
               <span className="controls-chips">
                 {b[a.id].map((c) => (
                   <span className="controls-chip" key={c}>
                     <kbd>{formatChord(c)}</kbd>
-                    <button type="button" title="Remove" aria-label={`Remove ${formatChord(c)}`} onClick={() => removeChord(a.id, c)}>
+                    <button type="button" title="Remove" aria-label={`Remove ${formatChord(c)} from ${a.label}`} onClick={() => removeChord(a.id, c)}>
                       ×
                     </button>
                   </span>
@@ -143,6 +148,7 @@ export function ControlsEditor({ onToast }: { onToast: (msg: string) => void }) 
                   {capture === a.id ? "Press a key or mouse button…" : "+ Add"}
                 </button>
               </span>
+              <span className="controls-label">{a.label}</span>
             </div>
           ))}
         </section>

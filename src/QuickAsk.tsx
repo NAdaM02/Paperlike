@@ -10,6 +10,7 @@ import { askInBackground, CHAT_HOSTS, CHAT_NAME, ChatError, ChatHost, defaultHos
 import { ChecklistPanel } from "./Checklist";
 import { toggleCalendar, useCalendarAvailable } from "./CalendarPane";
 import { messages } from "./copy/messages";
+import { bindings, CONTROLS_EVENT, formatChord } from "./controls";
 import { HostLogo, IcAnalyzeMarker, IcCalc, IcCalendar, IcCheck, IcChevron, IcChevronUp, IcClose, IcCopy, IcHistory, IcImage, IcIncognito, IcPin, IcScan, IcSend, IcSpark, IcStop, IcWide } from "./icons";
 
 /** Added to the first message of a conversation; the chat sites have no other place for it. */
@@ -277,6 +278,12 @@ export function QuickAskField({
   // Wide while focused or the model menu is open; a short delay on blur stops the
   // width from jumping when focus moves between the input and the model button.
   const [fieldWide, setFieldWide] = useState(false);
+  const [analyzeKeys, setAnalyzeKeys] = useState(() => bindings().analyze.map(formatChord));
+  useEffect(() => {
+    const on = () => setAnalyzeKeys(bindings().analyze.map(formatChord));
+    window.addEventListener(CONTROLS_EVENT, on);
+    return () => window.removeEventListener(CONTROLS_EVENT, on);
+  }, []);
   const [listOpen, setListOpen] = useState(false);
   const calendarOn = useCalendarAvailable();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -429,7 +436,7 @@ export function QuickAskField({
           <button
             type="button"
             className="btn icon qa-tool"
-            title="Analyze an area of the screen"
+            title={analyzeKeys.length ? `Analyze an area of the screen (${analyzeKeys.join(", ")})` : "Analyze an area of the screen"}
             aria-label="Analyze"
             disabled={disabled}
             onClick={onAnalyze}

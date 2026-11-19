@@ -247,7 +247,8 @@ The pane docks on the right, about 46% of the notebook. Sign in inside the pane,
 
 ## 7. Analyze (screen area)
 
-Drag a rectangle over the note; a toolbar sits under it (or above/inside when there
+Ctrl+Shift+A (Settings → Controls) starts it from Home or a note, and presses it
+again to leave. Drag a rectangle over the note; a toolbar sits under it (or above/inside when there
 is no room). From left: the model logo (click or wheel cycles Claude → ChatGPT →
 Gemini and sets the app-wide default model), **Explain**, **Solve**, **Verify**,
 **Custom**, close. The preset actions capture the area and open the quick-question

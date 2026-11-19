@@ -23,6 +23,7 @@ export type ActionId =
   | "searchAll"
   | "ask"
   | "quickAsk"
+  | "analyze"
   | "back"
   | "forward"
   | "tool.select"
@@ -52,6 +53,7 @@ export const ACTIONS: ActionDef[] = [
   { id: "searchAll", label: "Search everywhere", group: "App", layer: "app", defaults: ["Ctrl+Shift+F"] },
   { id: "ask", label: "Study menu (Ask, Quiz me, AI)", group: "App", layer: "app", defaults: ["Ctrl+J"] },
   { id: "quickAsk", label: "Quick ask field", group: "App", layer: "app", defaults: ["Ctrl+K"] },
+  { id: "analyze", label: "Analyze", group: "App", layer: "app", defaults: ["Ctrl+Shift+A"] },
   { id: "back", label: "Back", group: "App", layer: "app", defaults: ["Alt+ArrowLeft", "Mouse4"] },
   { id: "forward", label: "Forward", group: "App", layer: "app", defaults: ["Alt+ArrowRight", "Mouse5"] },
   { id: "tool.select", label: "Select", group: "Tools", layer: "canvas", defaults: ["V"] },
@@ -60,12 +62,12 @@ export const ACTIONS: ActionDef[] = [
   { id: "tool.highlighter", label: "Marker", group: "Tools", layer: "canvas", defaults: ["H"] },
   { id: "tool.smart", label: "Smart ink", group: "Tools", layer: "canvas", defaults: ["G"] },
   { id: "tool.eraser", label: "Eraser", group: "Tools", layer: "canvas", defaults: ["E"] },
-  { id: "tool.rect", label: "Rectangle", group: "Tools", layer: "canvas", defaults: ["R"] },
-  { id: "tool.ellipse", label: "Ellipse", group: "Tools", layer: "canvas", defaults: ["O"] },
   { id: "tool.line", label: "Line", group: "Tools", layer: "canvas", defaults: ["L"] },
   { id: "tool.arrow", label: "Arrow", group: "Tools", layer: "canvas", defaults: ["A"] },
-  { id: "width.down", label: "Thinner stroke", group: "Tools", layer: "canvas", defaults: ["["] },
-  { id: "width.up", label: "Thicker stroke", group: "Tools", layer: "canvas", defaults: ["]"] },
+  { id: "tool.rect", label: "Rectangle", group: "Tools", layer: "canvas", defaults: ["R"] },
+  { id: "tool.ellipse", label: "Ellipse", group: "Tools", layer: "canvas", defaults: ["O"] },
+  { id: "width.down", label: "Thinner stroke", group: "Tools", layer: "canvas", defaults: ["[", "Alt+F"] },
+  { id: "width.up", label: "Thicker stroke", group: "Tools", layer: "canvas", defaults: ["]", "Alt+G"] },
   { id: "eraser.mode", label: "Eraser: area / whole stroke", group: "Tools", layer: "canvas", defaults: ["Shift+E"] },
 ];
 

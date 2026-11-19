@@ -47,7 +47,8 @@ state files).
   "git_sync": false,                  // Sync github (§6), off by default
   "git_sync_dir": null,               // the repository folder it syncs
   "checklist_path": null,             // absolute path of checklist.md; null → AppData default
-  "sidebar_auto_hide": false          // note list hides to a rail, slides out on hover
+  "sidebar_auto_hide": false,         // note list hides to a rail, slides out on hover
+  "invert_horizontal_scroll": false   // sideways pan and Shift+scroll go the other way
 }
 ```
 

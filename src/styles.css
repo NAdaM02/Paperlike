@@ -4821,8 +4821,8 @@ svg.hl .hl-ink {
 /* Keyboard shortcuts sheet */
 .shortcuts-sheet {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 18px 24px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 18px 28px;
 }
 .shortcuts-group-title {
   margin: 0 0 8px;
@@ -4841,14 +4841,23 @@ svg.hl .hl-ink {
   gap: 6px;
   font-size: 13px;
 }
+.shortcuts-group { min-width: 0; }
 .shortcuts-list li {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
+  display: grid;
+  /* Cards stay in the left column; the action name stays in the right. A long
+     chord wraps inside its cell instead of sliding onto the next action. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 10px;
 }
 .shortcuts-keys {
-  flex: none;
-  min-width: 5.5em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.shortcuts-keys kbd {
   font: inherit;
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
@@ -4857,7 +4866,10 @@ svg.hl .hl-ink {
   border: 1px solid var(--border-2);
   background: var(--bg-2);
   color: var(--ink-2);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
+.shortcuts-action { min-width: 0; padding-top: 3px; }
 .home-grid-hint {
   padding: 0 20px 10px;
   font-size: 12.5px;
@@ -6307,12 +6319,21 @@ body.analyzing .analyze-mark { visibility: hidden !important; }
 /* Settings, Controls */
 .controls-editor { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
 .controls-editor .settings-section { gap: 6px; }
-.controls-row { display: flex; align-items: center; gap: 12px; min-height: 30px; }
-.controls-label { flex: 0 0 11em; font-size: 13px; }
-.controls-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.controls-row {
+  display: grid;
+  /* Same columns as the overview: shortcut cards on the left, the action they
+     change on the right, so a wrapped card cannot land on the next row. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 6px 12px;
+  min-height: 30px;
+}
+.controls-label { min-width: 0; font-size: 13px; line-height: 1.35; padding-top: 5px; }
+.controls-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .controls-chip {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   border: 1px solid var(--border-2);
   border-radius: 5px;
   background: var(--bg-2);

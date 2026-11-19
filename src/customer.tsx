@@ -358,7 +358,8 @@ export function SettingsDialog({
               </section>
             )}
             {tab === "drawing" && (
-              <section className="settings-section" style={sectionRest}>
+              <>
+              <section className="settings-section">
                 <h3>{messages.settingsDrawing}</h3>
                 <label className="switch">
                   <input
@@ -409,6 +410,22 @@ export function SettingsDialog({
                   </span>
                 </label>
               </section>
+              <section className="settings-section" style={sectionRest}>
+                <h3>{messages.settingsScrolling}</h3>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={settings.invert_horizontal_scroll === true}
+                    onChange={(e) => void save({ ...settings, invert_horizontal_scroll: e.target.checked })}
+                  />
+                  <span className="track" />
+                  <span>
+                    {messages.reverseHorizontalScroll}
+                    <span className="settings-hint">{messages.reverseHorizontalScrollHint}</span>
+                  </span>
+                </label>
+              </section>
+              </>
             )}
             {tab === "files" && (
               <>

@@ -231,6 +231,8 @@ export default function App() {
   const [calcOpen, setCalcOpen] = useState(false);
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const [changingAreaCardId, setChangingAreaCardId] = useState<number | null>(null);
+  /** Key and mouse handlers stay mounted; they call whatever this was last render. */
+  const toggleAnalyzeRef = useRef<() => void>(() => {});
   /** Outline of the area an Analyze answer is about; `askId` once that chat moved to the Ask pane. */
   const [analyzeMark, setAnalyzeMark] = useState<{ rect: AnalyzeRect; area: NoteArea | null; askId?: number } | null>(null);
   const [recovery, setRecovery] = useState<RecoveryItem[]>([]);
@@ -296,6 +298,14 @@ export default function App() {
     }
     setAnalyzeMark(null);
     setAnalyzeOpen(true);
+  };
+  toggleAnalyzeRef.current = () => {
+    if (analyzeOpen || changingAreaCardId != null) {
+      setAnalyzeOpen(false);
+      setChangingAreaCardId(null);
+      return;
+    }
+    openAnalyze();
   };
 
   const onAnalyzeCapture = (result: AnalyzeResult) => {
@@ -732,6 +742,9 @@ export default function App() {
           return;
         }
         focusQuickField();
+      } else if (act === "analyze") {
+        e.preventDefault();
+        if (!e.repeat) toggleAnalyzeRef.current();
       } else if (act === "back") {
         e.preventDefault();
         goBack();
@@ -766,6 +779,7 @@ export default function App() {
       else if (act === "searchAll") setSearchOpen(true);
       else if (act === "ask") toggleStudy();
       else if (act === "quickAsk" && !premiumOff()) focusQuickField();
+      else if (act === "analyze") toggleAnalyzeRef.current();
     };
     window.addEventListener("mousedown", block, true);
     window.addEventListener("mouseup", onUp, true);

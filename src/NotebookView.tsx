@@ -4049,7 +4049,7 @@ export function NotebookView({
                 <span className="lbl">Width</span>
                 <div
                   className="seg"
-                  title="Marker width — scroll to change ([ and ] too)"
+                  title="Marker width — scroll to change ([ ], Alt+F, Alt+G)"
                   onWheel={(e) => wheelStep(e, HL_WIDTHS, drawPrefs.hlWidth, (v) => updateDrawPrefs({ hlWidth: v }))}
                 >
                   {HL_WIDTHS.map((w, i) => (
@@ -4121,7 +4121,7 @@ export function NotebookView({
                 <span className="lbl">Width</span>
                 <div
                   className="seg"
-                  title="Stroke width — scroll to change ([ and ] too)"
+                  title="Stroke width — scroll to change ([ ], Alt+F, Alt+G)"
                   onWheel={(e) => wheelStep(e, DRAW_WIDTHS, drawWidth, pickDrawWidth)}
                 >
                   {DRAW_WIDTHS.map((w) => (
